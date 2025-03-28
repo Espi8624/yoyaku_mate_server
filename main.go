@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"yoyaku_mate_server/handlers"
 
 	"github.com/rs/cors"
 )
@@ -10,14 +11,15 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// 기본 핸들러
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Hello, This is Yoyaku Mate Server."))
-	})
+	// 핸들러 연결
+	mux.HandleFunc("/", handlers.HomeHandler)
+	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
+	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
+	mux.HandleFunc("/reservations", handlers.ReservationsHandler)
 
 	// CORS 설정
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"https://localhost:3000"},
+		AllowedOrigins:   []string{"http://localhost:3000", "https://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
