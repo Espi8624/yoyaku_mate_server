@@ -13,9 +13,12 @@ func main() {
 
 	// 핸들러 연결
 	mux.HandleFunc("/", handlers.HomeHandler)
+	mux.HandleFunc("/user-info", handlers.UserInfoHandler)
 	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
 	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
 	mux.HandleFunc("/reservations", handlers.ReservationsHandler)
+	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
+	mux.HandleFunc("/reviews", handlers.ReviewsHandler)
 
 	// CORS 설정
 	c := cors.New(cors.Options{

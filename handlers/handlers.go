@@ -1,97 +1,89 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
+	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/utils"
 )
-
-// 자주 방문하는 장소 목록
-var FrequentPlaces = []string{
-	"日の丸美容室",
-	"川崎食堂",
-	"品川食堂",
-	"日本橋皮膚科",
-	"日本橋整形外科",
-}
-
-// 타임라인 데이터 구조체
-type TimeLineItem struct {
-	PlaceName string `json:"placeName"`
-	TimeStamp string `json:"timeStamp"`
-}
-
-// 타임라인 데이터 목록
-var TimeLineData = []TimeLineItem{
-	{PlaceName: "日の丸美容室", TimeStamp: "2025-03-20 13:00"},
-	{PlaceName: "川崎食堂", TimeStamp: "2025-03-23 11:00"},
-	{PlaceName: "品川食堂", TimeStamp: "2025-03-23 17:00"},
-	{PlaceName: "日本橋皮膚科", TimeStamp: "2025-03-24 17:00"},
-	{PlaceName: "日本橋整形外科", TimeStamp: "2025-03-25 12:00"},
-}
-
-// 예약캘린더 데이터 구조체
-type ReservationsItem struct {
-	ID        int    `json:"id"`
-	Details   string `json:"details"`
-	TimeStamp string `json:"timeStamp"`
-}
-
-var ReservationsData = []ReservationsItem{
-	{ID: 1, Details: "日の丸美容室　予約", TimeStamp: "2025-03-20 13:00"},
-	{ID: 2, Details: "川崎食堂　予約", TimeStamp: "2025-03-23 11:00"},
-	{ID: 3, Details: "品川食堂　予約", TimeStamp: "2025-03-23 17:00"},
-	{ID: 4, Details: "日本橋皮膚科　予約", TimeStamp: "2025-03-24 17:00"},
-	{ID: 5, Details: "日本橋整形外科　予約", TimeStamp: "2025-03-24 19:00"},
-	{ID: 6, Details: "川崎食堂　予約", TimeStamp: "2025-03-25 12:00"},
-	{ID: 7, Details: "上野写真館　予約", TimeStamp: "2025-04-04 12:00"},
-}
 
 // 기본 핸들러
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello, This is Yoyaku Mate Server."))
 }
 
+// 유저 정보 반환
+func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var userInfoData models.UserInfoItem
+	userInfoData = data.GetUserInfoData()
+	utils.RespondWithJSON(w, userInfoData, http.StatusOK)
+}
+
 // 자주 방문하는 장소 목록 반환
 func FrequentPlacesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(FrequentPlaces)
-	if err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	var frequentPlacesData []models.FrequentPlaceItem
+	frequentPlacesData = data.GetAllFrequentPlaces()
+	utils.RespondWithJSON(w, frequentPlacesData, http.StatusOK)
 }
 
-// 타임라인 데이터를 반환
+// 타임라인 데이터 반환
 func TimeLineHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(TimeLineData)
-	if err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	var timeLinesData []models.TimeLineItem
+	timeLinesData = data.GetAllTimeLines()
+	utils.RespondWithJSON(w, timeLinesData, http.StatusOK)
 }
 
-// 예약약 데이터를 반환
+// 예약 데이터 반환
 func ReservationsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(ReservationsData)
-	if err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	var reservationsData []models.ReservationItem
+	reservationsData = data.GetAllReservations()
+	utils.RespondWithJSON(w, reservationsData, http.StatusOK)
+}
+
+func NotificationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	// 쿼리 파라미터로 타입 필터링 (예: ?type=store)
+	notificationType := r.URL.Query().Get("type")
+	var notifications []models.NotificationItem
+
+	if notificationType == "" || notificationType == "all" {
+		notifications = data.GetAllNotifications()
+	} else {
+		notifications = data.GetNotificationsByType(notificationType)
+	}
+
+	utils.RespondWithJSON(w, notifications, http.StatusOK)
+}
+
+// 리뷰 데이터 반환
+func ReviewsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var reviews []models.ReviewItem
+	reviews = data.GetAllReviews()
+	utils.RespondWithJSON(w, reviews, http.StatusOK)
 }
