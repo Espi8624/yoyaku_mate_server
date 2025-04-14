@@ -11,7 +11,7 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// 핸들러 연결
+	// client 핸들러 연결
 	mux.HandleFunc("/", handlers.HomeHandler)
 	mux.HandleFunc("/user-info", handlers.UserInfoHandler)
 	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
@@ -19,6 +19,9 @@ func main() {
 	mux.HandleFunc("/reservations", handlers.ReservationsHandler)
 	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
 	mux.HandleFunc("/reviews", handlers.ReviewsHandler)
+
+	// provider 핸들러 연결
+	mux.HandleFunc("/provider/store-info", handlers.StoreInfoHandler)
 
 	// CORS 설정
 	c := cors.New(cors.Options{
