@@ -11,12 +11,12 @@ var notificationsData = []models.NotificationItem{
 	{ID: 6, Message: "앱이 업데이트 되었습니다.", Time: "5시간 전", Type: "system"},
 }
 
-// 모든 알림 반환
+// すべての通知データ取得
 func GetAllNotifications() []models.NotificationItem {
 	return notificationsData
 }
 
-// 타입별 알림 반환
+// タイプ別通知データ取得
 func GetNotificationsByType(notificationType string) []models.NotificationItem {
 	var result []models.NotificationItem
 	for _, n := range notificationsData {

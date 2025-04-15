@@ -2,7 +2,7 @@ package data
 
 import "yoyaku_mate_server/models"
 
-// 타임라인 데이터 목록
+// 予約状況データ目録
 var reservationsData = []models.ReservationItem{
 	{ID: 1, Details: "日の丸美容室　予約", TimeStamp: "2025-03-20 13:00"},
 	{ID: 2, Details: "川崎食堂　予約", TimeStamp: "2025-03-23 11:00"},
@@ -13,7 +13,7 @@ var reservationsData = []models.ReservationItem{
 	{ID: 7, Details: "上野写真館　予約", TimeStamp: "2025-04-04 12:00"},
 }
 
-// 모든 알림 반환
+// 全ての予約状況データ取得
 func GetAllReservations() []models.ReservationItem {
 	return reservationsData
 }

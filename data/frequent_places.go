@@ -10,7 +10,6 @@ var frequentPlacesData = []models.FrequentPlaceItem{
 	{StoreName: "日本橋整形外科", TimeStamp: "2025-03-25 18:00"},
 }
 
-// 모든 알림 반환
 func GetAllFrequentPlaces() []models.FrequentPlaceItem {
 	return frequentPlacesData
 }

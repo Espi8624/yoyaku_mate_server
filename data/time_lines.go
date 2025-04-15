@@ -2,7 +2,7 @@ package data
 
 import "yoyaku_mate_server/models"
 
-// 타임라인 데이터 목록
+// タイムラインデータ目録
 var timeLinesData = []models.TimeLineItem{
 	{StoreName: "日の丸美容室", TimeStamp: "2025-03-20 13:00"},
 	{StoreName: "川崎食堂", TimeStamp: "2025-03-23 11:00"},
@@ -11,7 +11,7 @@ var timeLinesData = []models.TimeLineItem{
 	{StoreName: "日本橋整形外科", TimeStamp: "2025-03-25 12:00"},
 }
 
-// 모든 알림 반환
+// 全てのタイムラインデータ取得
 func GetAllTimeLines() []models.TimeLineItem {
 	return timeLinesData
 }

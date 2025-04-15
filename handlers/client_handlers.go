@@ -7,12 +7,12 @@ import (
 	"yoyaku_mate_server/utils"
 )
 
-// 기본 핸들러
-func HomeHandler(w http.ResponseWriter, r *http.Request) {
+// 基本ハンドラー
+func ClientHomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello, This is Yoyaku Mate Server."))
 }
 
-// 유저 정보 반환
+// ユーザー情報返却
 func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -23,7 +23,7 @@ func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, userInfoData, http.StatusOK)
 }
 
-// 자주 방문하는 장소 목록 반환
+// よく訪問する店目録返却
 func FrequentPlacesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -34,7 +34,7 @@ func FrequentPlacesHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, frequentPlacesData, http.StatusOK)
 }
 
-// 타임라인 데이터 반환
+// タイムラインデータ返却
 func TimeLineHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -45,7 +45,7 @@ func TimeLineHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, timeLinesData, http.StatusOK)
 }
 
-// 예약 데이터 반환
+// 予約データ返却
 func ReservationsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -57,13 +57,14 @@ func ReservationsHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, reservationsData, http.StatusOK)
 }
 
+// お知らせデータ返却
 func NotificationsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 쿼리 파라미터로 타입 필터링 (예: ?type=store)
+	// Query　パラメータでタイプフィルタリング (例: ?type=store)
 	notificationType := r.URL.Query().Get("type")
 	var notifications []models.NotificationItem
 
@@ -76,7 +77,7 @@ func NotificationsHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, notifications, http.StatusOK)
 }
 
-// 리뷰 데이터 반환
+// レヴューデータ返却
 func ReviewsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)

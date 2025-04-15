@@ -11,8 +11,8 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// client 핸들러 연결
-	mux.HandleFunc("/", handlers.HomeHandler)
+	// client handler 接続
+	mux.HandleFunc("/home", handlers.ClientHomeHandler)
 	mux.HandleFunc("/user-info", handlers.UserInfoHandler)
 	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
 	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
@@ -20,10 +20,14 @@ func main() {
 	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
 	mux.HandleFunc("/reviews", handlers.ReviewsHandler)
 
-	// provider 핸들러 연결
+	// provider handler 接続
+	mux.HandleFunc("/provider/home", handlers.ProviderHomeHandler)
 	mux.HandleFunc("/provider/store-info", handlers.StoreInfoHandler)
+	mux.HandleFunc("/provider/store-menus", handlers.StoreMenuHandler)
+	mux.HandleFunc("/provider/store-reservations", handlers.StoreReservationsHandler)
+	mux.HandleFunc("/provider/store-reviews", handlers.StoreReviewsHandler)
 
-	// CORS 설정
+	// CORS 設定
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "https://localhost:3000"},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
@@ -33,7 +37,7 @@ func main() {
 
 	handler := c.Handler(mux)
 
-	// 서버 시작
+	// サーバー起動
 	log.Println("Server starting on :8080...")
 	err := http.ListenAndServe(":8080", handler)
 	if err != nil {

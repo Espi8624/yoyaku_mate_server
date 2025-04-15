@@ -3,7 +3,7 @@ package data
 import "yoyaku_mate_server/models"
 
 // type StoreInfoItem struct {
-// 	ID                   int    `json:"store_id"`
+// 	StoreID                   int    `json:"store_id"`
 // 	StoreName            string `json:"store_name"`
 // 	StoreAddress         string `json:"store_address"`
 // 	StoreTelNumber       string `json:"store_tel_number"`
@@ -13,9 +13,9 @@ import "yoyaku_mate_server/models"
 // 	StoreCloseTime       string `json:"store_close_time"`
 // }
 
-// 타임라인 데이터 목록
-var storeInfo = models.StoreInfoItem{
-	ID:                   1,
+// 店情報データ目録
+var storeInfoData = models.StoreInfoItem{
+	StoreID:              1,
 	StoreName:            "Test Store",
 	StoreAddress:         "Tokyo, Japan",
 	StoreTelNumber:       "03-1234-5678",
@@ -25,7 +25,7 @@ var storeInfo = models.StoreInfoItem{
 	StoreCloseTime:       "18:00",
 }
 
-// 모든 알림 반환
+// 店情報データ取得
 func GetStoreInfoData() models.StoreInfoItem {
-	return storeInfo
+	return storeInfoData
 }

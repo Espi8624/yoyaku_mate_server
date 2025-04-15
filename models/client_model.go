@@ -1,6 +1,6 @@
 package models
 
-// 유저 데이터 구조체
+// ユーザー情報データ構造体
 type UserInfoItem struct {
 	ID          int    `json:"id"`
 	UserName    string `json:"user_name"`
@@ -8,26 +8,26 @@ type UserInfoItem struct {
 	PhoneNumber string `json:"phone_number"`
 }
 
-// 자주 방문하는 장소 데이터 구조체
+// よく訪問する店データ構造体
 type FrequentPlaceItem struct {
 	StoreName string `json:"store_name"`
 	TimeStamp string `json:"time_stamp"`
 }
 
-// 타임라인 데이터 구조체
+// タイムラインデータ構造体
 type TimeLineItem struct {
 	StoreName string `json:"store_name"`
 	TimeStamp string `json:"time_stamp"`
 }
 
-// 예약 캘린더 데이터 구조체
+// 予約カレンダーデータ構造体
 type ReservationItem struct {
 	ID        int    `json:"id"`
 	Details   string `json:"details"`
 	TimeStamp string `json:"time_stamp"`
 }
 
-// 알림 데이터 구조체
+// お知らせデータ構造体
 type NotificationItem struct {
 	ID      int    `json:"id"`
 	Message string `json:"message"`
@@ -35,7 +35,7 @@ type NotificationItem struct {
 	Type    string `json:"type"`
 }
 
-// 리뷰 데이터 구조체
+// レビューデータ構造体
 type ReviewItem struct {
 	ID        int     `json:"id"`
 	StoreName string  `json:"store_name"`
