@@ -8,7 +8,7 @@ import (
 )
 
 // 基本ハンドラー
-func ClientHomeHandler(w http.ResponseWriter, r *http.Request) {
+func CustomerHomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello, This is Yoyaku Mate Server."))
 }
 

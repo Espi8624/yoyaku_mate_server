@@ -28,7 +28,7 @@ type StoreMenuItem struct {
 type StoreReservationItem struct {
 	StoreID      int    `json:"store_id"`
 	StoreName    string `json:"store_name"`
-	ClientName   string `json:"client_name"`
+	CustomerName string `json:"customer_name"`
 	Details      string `json:"details"`
 	ReservedDate string `json:"reserved_date"`
 	ReservedTime string `json:"reserved_time"`

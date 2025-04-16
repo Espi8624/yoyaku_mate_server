@@ -11,8 +11,8 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// client handler 接続
-	mux.HandleFunc("/home", handlers.ClientHomeHandler)
+	// customer side handler 接続
+	mux.HandleFunc("/home", handlers.CustomerHomeHandler)
 	mux.HandleFunc("/user-info", handlers.UserInfoHandler)
 	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
 	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
@@ -20,7 +20,7 @@ func main() {
 	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
 	mux.HandleFunc("/reviews", handlers.ReviewsHandler)
 
-	// provider handler 接続
+	// provider side handler 接続
 	mux.HandleFunc("/provider/home", handlers.ProviderHomeHandler)
 	mux.HandleFunc("/provider/store-info", handlers.StoreInfoHandler)
 	mux.HandleFunc("/provider/store-menus", handlers.StoreMenuHandler)
