@@ -10,6 +10,7 @@ type UserInfoItem struct {
 
 // よく訪問する店データ構造体
 type FrequentPlaceItem struct {
+	StoreID     int    `json:"store_id"`
 	StoreName   string `json:"store_name"`
 	TimeStamp   string `json:"time_stamp"`
 	LastVisited string `json:"last_visited"`
