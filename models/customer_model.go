@@ -19,8 +19,9 @@ type FrequentPlaceItem struct {
 
 // タイムラインデータ構造体
 type TimeLineItem struct {
-	StoreName string `json:"store_name"`
-	TimeStamp string `json:"time_stamp"`
+	ReservationID int    `json:"reservation_id"`
+	StoreName     string `json:"store_name"`
+	TimeStamp     string `json:"time_stamp"`
 }
 
 // 予約カレンダーデータ構造体
