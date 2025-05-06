@@ -1,15 +1,43 @@
 package data
 
-import "yoyaku_mate_server/models"
-
-var frequentPlacesData = []models.FrequentPlaceItem{
-	{StoreID: 1, StoreName: "日の丸美容室", TimeStamp: "2025-03-20 19:00", LastVisited: "2025-03-20", VisitCount: 1},
-	{StoreID: 2, StoreName: "川崎食堂", TimeStamp: "2025-03-23 17:00", LastVisited: "2025-03-23", VisitCount: 2},
-	{StoreID: 3, StoreName: "川崎食堂", TimeStamp: "2025-03-23 17:00", LastVisited: "2025-03-23", VisitCount: 2},
-	{StoreID: 4, StoreName: "品川食堂", TimeStamp: "2025-03-23 21:00", LastVisited: "2025-03-23", VisitCount: 3},
-	{StoreID: 5, StoreName: "日本橋皮膚科", TimeStamp: "2025-03-24 20:00", LastVisited: "2025-03-24", VisitCount: 4},
-}
+import (
+	"sort"
+	"yoyaku_mate_server/models"
+)
 
 func GetAllFrequentPlaces() []models.FrequentPlaceItem {
-	return frequentPlacesData
+	reservationInfoData := GetAllReservationInfo()
+	storeVisitCount := make(map[int]*models.FrequentPlaceItem)
+
+	for _, reservation := range reservationInfoData {
+		if _, exist := storeVisitCount[reservation.StoreID]; !exist {
+			storeVisitCount[reservation.StoreID] = &models.FrequentPlaceItem{
+				StoreID:     reservation.StoreID,
+				StoreName:   reservation.StoreName,
+				LastVisited: reservation.ReservedDate,
+				VisitCount:  0,
+			}
+		}
+		// visit count, last visited データ更新
+		storeVisitCount[reservation.StoreID].VisitCount++
+		if reservation.ReservedDate > storeVisitCount[reservation.StoreID].LastVisited {
+			storeVisitCount[reservation.StoreID].LastVisited = reservation.ReservedDate
+		}
+	}
+
+	// map を slice に変換
+	var frequentPlaces []models.FrequentPlaceItem
+	for _, place := range storeVisitCount {
+		frequentPlaces = append(frequentPlaces, *place)
+	}
+
+	// visit count の降順、visit date の降順でソート
+	sort.Slice(frequentPlaces, func(i, j int) bool {
+		if frequentPlaces[i].VisitCount == frequentPlaces[j].VisitCount {
+			return frequentPlaces[i].LastVisited > frequentPlaces[j].LastVisited
+		}
+		return frequentPlaces[i].VisitCount > frequentPlaces[j].VisitCount
+	})
+
+	return frequentPlaces
 }

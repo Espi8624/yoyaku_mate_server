@@ -8,11 +8,22 @@ type UserInfoItem struct {
 	PhoneNumber string `json:"phone_number"`
 }
 
+// 予約データ構造体
+type ReservationInfoItem struct {
+	ReservationID int    `json:"reservation_id"`
+	UserName      string `json:"user_name"`
+	StoreID       int    `json:"store_id"`
+	StoreName     string `json:"store_name"`
+	Details       string `json:"details"`
+	ReservedDate  string `json:"reserved_date"`
+	ReservedTime  string `json:"reserved_time"`
+	TimeStamp     string `json:"time_stamp"`
+}
+
 // よく訪問する店データ構造体
 type FrequentPlaceItem struct {
 	StoreID     int    `json:"store_id"`
 	StoreName   string `json:"store_name"`
-	TimeStamp   string `json:"time_stamp"`
 	LastVisited string `json:"last_visited"`
 	VisitCount  int    `json:"visit_count"`
 }
@@ -21,14 +32,17 @@ type FrequentPlaceItem struct {
 type TimeLineItem struct {
 	ReservationID int    `json:"reservation_id"`
 	StoreName     string `json:"store_name"`
-	TimeStamp     string `json:"time_stamp"`
+	ReservedDate  string `json:"reserved_date"`
+	ReservedTime  string `json:"reserved_time"`
 }
 
 // 予約カレンダーデータ構造体
-type ReservationItem struct {
-	ID        int    `json:"id"`
-	Details   string `json:"details"`
-	TimeStamp string `json:"time_stamp"`
+type CalenderItem struct {
+	ReservationID int    `json:"reservation_id"`
+	StoreName     string `json:"store_name"`
+	Details       string `json:"details"`
+	ReservedDate  string `json:"reserved_date"`
+	ReservedTime  string `json:"reserved_time"`
 }
 
 // お知らせデータ構造体
