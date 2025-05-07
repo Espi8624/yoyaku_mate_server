@@ -36,15 +36,6 @@ type TimeLineItem struct {
 	ReservedTime  string `json:"reserved_time"`
 }
 
-// 予約カレンダーデータ構造体
-type CalenderItem struct {
-	ReservationID int    `json:"reservation_id"`
-	StoreName     string `json:"store_name"`
-	Details       string `json:"details"`
-	ReservedDate  string `json:"reserved_date"`
-	ReservedTime  string `json:"reserved_time"`
-}
-
 // お知らせデータ構造体
 type NotificationItem struct {
 	ID      int    `json:"id"`

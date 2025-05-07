@@ -3,12 +3,17 @@ package main
 import (
 	"log"
 	"net/http"
+	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/handlers"
 
 	"github.com/rs/cors"
 )
 
 func main() {
+	// MongoDB初期化
+	mongoURI := "mongodb://localhost:27017"
+	db.InitMongoDB(mongoURI)
+
 	mux := http.NewServeMux()
 
 	// customer side handler 接続

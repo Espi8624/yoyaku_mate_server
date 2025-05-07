@@ -52,8 +52,8 @@ func ReservationsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var reservationsData []models.CalenderItem
-	reservationsData = data.GetAllCalender()
+	var reservationsData []models.ReservationInfoItem
+	reservationsData = data.GetAllReservationInfo()
 	utils.RespondWithJSON(w, reservationsData, http.StatusOK)
 }
 

@@ -1,31 +1,31 @@
 package data
 
-import "yoyaku_mate_server/models"
+import (
+	"log"
+	"time"
+	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/models"
 
-// type StoreInfoItem struct {
-// 	StoreID                   int    `json:"store_id"`
-// 	StoreName            string `json:"store_name"`
-// 	StoreAddress         string `json:"store_address"`
-// 	StoreTelNumber       string `json:"store_tel_number"`
-// 	StoreEmail           string `json:"store_email"`
-// 	StoreOfficialWebSite string `json:"store_official_web_site"`
-// 	StoreOpenTime        string `json:"store_open_time"`
-// 	StoreCloseTime       string `json:"store_close_time"`
-// }
-
-// 店情報データ目録
-var storeInfoData = models.StoreInfoItem{
-	StoreID:              1,
-	StoreName:            "Test Store",
-	StoreAddress:         "Tokyo, Japan",
-	StoreTelNumber:       "03-1234-5678",
-	StoreEmail:           "test@example.com",
-	StoreOfficialWebSite: "https://example.com",
-	StoreOpenTime:        "09:00",
-	StoreCloseTime:       "18:00",
-}
+	"go.mongodb.org/mongo-driver/bson"
+	"golang.org/x/net/context"
+)
 
 // 店情報データ取得
-func GetStoreInfoData() models.StoreInfoItem {
-	return storeInfoData
+func GetStoreInfoData(storeID int32) (models.StoreInfoItem, error) {
+	collection := db.GetCollection("yoyaku_mate_db", "store_info")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var storeInfoData models.StoreInfoItem
+	filter := bson.M{"store_id": storeID}
+
+	log.Printf("Querying store_info with filter: %v", filter)
+
+	err := collection.FindOne(ctx, filter).Decode(&storeInfoData)
+	if err != nil {
+		log.Printf("Failed to fetch store info: %v", err)
+		return models.StoreInfoItem{}, err
+	}
+
+	return storeInfoData, nil
 }

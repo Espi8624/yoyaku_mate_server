@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -18,9 +19,31 @@ func StoreInfoHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var storeInfoData models.StoreInfoItem
-	storeInfoData = data.GetStoreInfoData()
-	utils.RespondWithJSON(w, storeInfoData, http.StatusOK)
+
+	// クエリパラメータからstore_idを取得
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		utils.RespondWithError(w, "Missing store_id", http.StatusBadRequest)
+		return
+	}
+
+	// store_idをint32に変換
+	storeIDInt64, err := strconv.ParseInt(storeID, 10, 32)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid store_id", http.StatusBadRequest)
+		return
+	}
+	storeIDInt := int32(storeIDInt64)
+
+	// MongoDBから店情報を取得
+	storeInfo, err := data.GetStoreInfoData(storeIDInt)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch store info", http.StatusInternalServerError)
+		return
+	}
+
+	// JSON 形式でレスポンスを返す
+	utils.RespondWithJSON(w, storeInfo, http.StatusOK)
 }
 
 // 店メニュー情報返却
