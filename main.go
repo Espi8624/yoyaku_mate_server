@@ -23,14 +23,13 @@ func main() {
 	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
 	mux.HandleFunc("/reservations", handlers.ReservationsHandler)
 	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
-	mux.HandleFunc("/reviews", handlers.ReviewsHandler)
 
 	// provider side handler 接続
 	mux.HandleFunc("/provider/home", handlers.ProviderHomeHandler)
 	mux.HandleFunc("/provider/store-info", handlers.StoreInfoHandler)
 	mux.HandleFunc("/provider/store-menus", handlers.StoreMenuHandler)
+	mux.HandleFunc("/provider/store-comments", handlers.StoreCommentHandler)
 	mux.HandleFunc("/provider/store-reservations", handlers.StoreReservationsHandler)
-	mux.HandleFunc("/provider/store-reviews", handlers.StoreReviewsHandler)
 
 	// CORS 設定
 	c := cors.New(cors.Options{

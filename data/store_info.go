@@ -19,7 +19,7 @@ func GetStoreInfoData(storeID int32) (models.StoreInfoItem, error) {
 	var storeInfoData models.StoreInfoItem
 	filter := bson.M{"store_id": storeID}
 
-	log.Printf("Querying store_info with filter: %v", filter)
+	// log.Printf("Querying store_info with filter: %v", filter)
 
 	err := collection.FindOne(ctx, filter).Decode(&storeInfoData)
 	if err != nil {

@@ -1,6 +1,10 @@
 package models
 
-import "go.mongodb.org/mongo-driver/bson/primitive"
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
 
 // 店情報データ構造体
 type StoreInfoItem struct {
@@ -13,6 +17,8 @@ type StoreInfoItem struct {
 	StoreOfficialWebSite string             `bson:"store_official_web_site" json:"store_official_web_site"`
 	StoreDescription     string             `bson:"store_description" json:"store_description"`
 	BusinessHours        BusinessHours      `bson:"business_hours" json:"business_hours"`
+	StoreCategory        string             `bson:"store_category" json:"store_category"`
+	StoreRating          float64            `bson:"store_rating" json:"store_rating"`
 }
 
 // 営業時間データ構造体
@@ -34,14 +40,26 @@ type DayHours struct {
 
 // 店メニューデータ構造体
 type StoreMenuItem struct {
-	StoreID            int     `json:"store_id"`
-	StoreName          string  `json:"store_name"`
-	MenuNumber         int     `json:"menu_number"`
-	MenuName           string  `json:"menu_name"`
-	MenuPrice          float64 `json:"menu_price"`
-	MenuDescription    string  `json:"menu_description"`
-	MenuImage          string  `json:"menu_image"`
-	MenuActivationFlag bool    `json:"menu_activation_flag"`
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	MenuID      string             `bson:"menu_id" json:"menu_id"`
+	StoreID     int32              `bson:"store_id" json:"store_id"`
+	MenuName    string             `bson:"menu_name" json:"menu_name"`
+	Price       float64            `bson:"price" json:"price"`
+	Category    string             `bson:"category" json:"category"`
+	Description string             `bson:"description" json:"description"`
+	Ingredients []string           `bson:"ingredients" json:"ingredients"`
+	Available   bool               `bson:"available" json:"available"`
+}
+
+// コメントデータ構造体
+type StoreCommentItem struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	StoreID     int32              `bson:"store_id" json:"store_id"`
+	Rating      float64            `bson:"rating" json:"rating"`
+	CommentText string             `bson:"comment_text" json:"comment_text"`
+	CommentID   string             `bson:"comment_id" json:"comment_id"`
+	UserName    string             `bson:"user_name" json:"user_name"`
+	Timestamp   time.Time          `bson:"timestamp" json:"timestamp"`
 }
 
 // 店予約状況データ構造体

@@ -43,12 +43,3 @@ type NotificationItem struct {
 	Time    string `json:"time"`
 	Type    string `json:"type"`
 }
-
-// レビューデータ構造体
-type ReviewItem struct {
-	ID        int     `json:"id"`
-	StoreName string  `json:"store_name"`
-	Comments  string  `json:"comments"`
-	Rating    float64 `json:"rating"`
-	TimeStamp string  `json:"time_stamp"`
-}

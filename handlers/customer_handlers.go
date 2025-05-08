@@ -76,15 +76,3 @@ func NotificationsHandler(w http.ResponseWriter, r *http.Request) {
 
 	utils.RespondWithJSON(w, notifications, http.StatusOK)
 }
-
-// レヴューデータ返却
-func ReviewsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var reviews []models.ReviewItem
-	reviews = data.GetAllReviews()
-	utils.RespondWithJSON(w, reviews, http.StatusOK)
-}
