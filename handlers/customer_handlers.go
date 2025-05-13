@@ -12,14 +12,39 @@ func CustomerHomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello, This is Yoyaku Mate Server."))
 }
 
+// // ユーザー情報返却
+// func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
+// 	if r.Method != http.MethodGet {
+// 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+// 		return
+// 	}
+// 	var userInfoData models.UserInfoItem
+// 	userInfoData = data.GetUserInfoData()
+// 	utils.RespondWithJSON(w, userInfoData, http.StatusOK)
+// }
+
 // ユーザー情報返却
 func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var userInfoData models.UserInfoItem
-	userInfoData = data.GetUserInfoData()
+
+	// クエリパラメータからuser_idを取得
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		utils.RespondWithError(w, "Missing user_id", http.StatusBadRequest)
+		return
+	}
+
+	// MongoDBから店メニュー情報を取得
+	userInfoData, err := data.GetUserInfoData(userID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch user info", http.StatusInternalServerError)
+		return
+	}
+
+	// JSON 形式でレスポンスを返す
 	utils.RespondWithJSON(w, userInfoData, http.StatusOK)
 }
 

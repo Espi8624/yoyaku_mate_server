@@ -11,7 +11,7 @@ import (
 )
 
 // 店情報データ取得
-func GetStoreInfoData(storeID int32) (models.StoreInfoItem, error) {
+func GetStoreInfoData(storeID string) (models.StoreInfoItem, error) {
 	collection := db.GetCollection("yoyaku_mate_db", "store_info")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

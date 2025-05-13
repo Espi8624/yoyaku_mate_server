@@ -9,7 +9,7 @@ import (
 // 店情報データ構造体
 type StoreInfoItem struct {
 	ID                   primitive.ObjectID `bson:"_id,omitempty" json:"id"` // MongoDB의 ObjectID
-	StoreID              int32              `bson:"store_id" json:"store_id"`
+	StoreID              string             `bson:"store_id" json:"store_id"`
 	StoreName            string             `bson:"store_name" json:"store_name"`
 	StoreAddress         string             `bson:"store_address" json:"store_address"`
 	StoreTelNumber       string             `bson:"store_tel_number" json:"store_tel_number"`
@@ -42,7 +42,7 @@ type DayHours struct {
 type StoreMenuItem struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	MenuID      string             `bson:"menu_id" json:"menu_id"`
-	StoreID     int32              `bson:"store_id" json:"store_id"`
+	StoreID     string             `bson:"store_id" json:"store_id"`
 	MenuName    string             `bson:"menu_name" json:"menu_name"`
 	Price       float64            `bson:"price" json:"price"`
 	Category    string             `bson:"category" json:"category"`
@@ -54,21 +54,10 @@ type StoreMenuItem struct {
 // コメントデータ構造体
 type StoreCommentItem struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	StoreID     int32              `bson:"store_id" json:"store_id"`
+	StoreID     string             `bson:"store_id" json:"store_id"`
 	Rating      float64            `bson:"rating" json:"rating"`
 	CommentText string             `bson:"comment_text" json:"comment_text"`
 	CommentID   string             `bson:"comment_id" json:"comment_id"`
 	UserName    string             `bson:"user_name" json:"user_name"`
 	Timestamp   time.Time          `bson:"timestamp" json:"timestamp"`
-}
-
-// 店予約状況データ構造体
-type StoreReservationItem struct {
-	StoreID      int    `json:"store_id"`
-	StoreName    string `json:"store_name"`
-	CustomerName string `json:"customer_name"`
-	Details      string `json:"details"`
-	ReservedDate string `json:"reserved_date"`
-	ReservedTime string `json:"reserved_time"`
-	TimeStamp    string `json:"time_stamp"`
 }

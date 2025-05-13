@@ -1,12 +1,12 @@
 package models
 
-// ユーザー情報データ構造体
-type UserInfoItem struct {
-	ID          int    `json:"id"`
-	UserName    string `json:"user_name"`
-	Email       string `json:"email"`
-	PhoneNumber string `json:"phone_number"`
-}
+// // ユーザー情報データ構造体
+// type UserInfoItem struct {
+// 	ID          int    `json:"id"`
+// 	UserName    string `json:"user_name"`
+// 	Email       string `json:"email"`
+// 	PhoneNumber string `json:"phone_number"`
+// }
 
 // 予約データ構造体
 type ReservationInfoItem struct {

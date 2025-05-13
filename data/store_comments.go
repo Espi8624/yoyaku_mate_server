@@ -10,7 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-func GetStoreCommentData(storeID int32) ([]models.StoreCommentItem, error) {
+func GetStoreCommentData(storeID string) ([]models.StoreCommentItem, error) {
 	collection := db.GetCollection("yoyaku_mate_db", "store_comments")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

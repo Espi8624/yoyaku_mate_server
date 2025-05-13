@@ -11,7 +11,7 @@ import (
 )
 
 // すべてのメニューデータ取得
-func GetStoreMenuData(storeID int32) ([]models.StoreMenuItem, error) {
+func GetStoreMenuData(storeID string) ([]models.StoreMenuItem, error) {
 	collection := db.GetCollection("yoyaku_mate_db", "store_menus")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
