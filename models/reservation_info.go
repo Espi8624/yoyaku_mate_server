@@ -7,7 +7,7 @@ import (
 )
 
 // ReservationInfoItem represents a reservation record
-type NewReservationInfoItem struct {
+type ReservationInfoItem struct {
 	ID                 primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	ReservationID      string             `bson:"reservation_id" json:"reservation_id"`
 	ReservationStatus  string             `bson:"reservation_status" json:"reservation_status"`
@@ -23,4 +23,20 @@ type NewReservationInfoItem struct {
 	ReservationDetails string             `bson:"reservation_details" json:"reservation_details"`
 	AdditionalNotes    string             `bson:"additional_notes" json:"additional_notes"`
 	Timestamp          time.Time          `bson:"timestamp" json:"timestamp"`
+}
+
+type TimelineItem struct {
+	ReservationID      string `json:"reservation_id"`
+	StoreName          string `json:"store_name"`
+	ReservationDetails string `json:"reservation_details"`
+	ReservedDate       string `json:"reserved_date"`
+	ReservedTime       string `json:"reserved_time"`
+}
+
+// よく訪問する店データ構造体
+type FrequentStoreItem struct {
+	StoreID     string `json:"store_id"`
+	StoreName   string `json:"store_name"`
+	LastVisited string `json:"last_visited"`
+	VisitCount  int    `json:"visit_count"`
 }

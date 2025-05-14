@@ -48,38 +48,29 @@ func UserInfoHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, userInfoData, http.StatusOK)
 }
 
-// よく訪問する店目録返却
-func FrequentPlacesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var frequentPlacesData []models.FrequentPlaceItem
-	frequentPlacesData = data.GetAllFrequentPlaces()
-	utils.RespondWithJSON(w, frequentPlacesData, http.StatusOK)
-}
-
-// タイムラインデータ返却
-func TimeLineHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var timeLinesData []models.TimeLineItem
-	timeLinesData = data.GetAllTimeLines()
-	utils.RespondWithJSON(w, timeLinesData, http.StatusOK)
-}
-
-// 予約データ返却
-func ReservationsHandler(w http.ResponseWriter, r *http.Request) {
+// 店メニュー情報返却
+func UserCommentsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var reservationsData []models.ReservationInfoItem
-	reservationsData = data.GetAllReservationInfo()
-	utils.RespondWithJSON(w, reservationsData, http.StatusOK)
+	// クエリパラメータからuser_idを取得
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		utils.RespondWithError(w, "Missing store_id", http.StatusBadRequest)
+		return
+	}
+
+	// MongoDBから店メニュー情報を取得
+	userCommentData, err := data.GetUserCommentData(userID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch store menu", http.StatusInternalServerError)
+		return
+	}
+
+	// JSON 形式でレスポンスを返す
+	utils.RespondWithJSON(w, userCommentData, http.StatusOK)
 }
 
 // お知らせデータ返却

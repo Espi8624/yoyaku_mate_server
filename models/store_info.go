@@ -58,6 +58,6 @@ type StoreCommentItem struct {
 	Rating      float64            `bson:"rating" json:"rating"`
 	CommentText string             `bson:"comment_text" json:"comment_text"`
 	CommentID   string             `bson:"comment_id" json:"comment_id"`
-	UserName    string             `bson:"user_name" json:"user_name"`
+	UserID      string             `bson:"user_id" json:"user_id"`
 	Timestamp   time.Time          `bson:"timestamp" json:"timestamp"`
 }

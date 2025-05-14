@@ -11,6 +11,7 @@ type UserInfoItem struct {
 	ID          primitive.ObjectID `json:"id" bson:"_id"`
 	UserID      string             `json:"user_id" bson:"user_id"`
 	UserName    string             `json:"user_name" bson:"user_name"`
+	DisplayName string             `json:"display_name" bson:"display_name"`
 	Email       string             `json:"email" bson:"email"`
 	PhoneNumber string             `json:"phone_number" bson:"phone_number"`
 	FirstName   string             `json:"first_name" bson:"first_name"`

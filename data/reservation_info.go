@@ -11,12 +11,12 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-func GetReservationsInfoData(userID string) ([]models.NewReservationInfoItem, error) {
+func GetReservationsInfoData(userID string) ([]models.ReservationInfoItem, error) {
 	collection := db.GetCollection("yoyaku_mate_db", "reservation_info")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var reservationsInfoData []models.NewReservationInfoItem
+	var reservationsInfoData []models.ReservationInfoItem
 	filter := bson.M{"user_id": userID}
 
 	// log.Printf("Querying store_info with filter: %v", filter)
@@ -29,7 +29,7 @@ func GetReservationsInfoData(userID string) ([]models.NewReservationInfoItem, er
 	defer cursor.Close(ctx)
 
 	for cursor.Next(ctx) {
-		var reservationInfoItem models.NewReservationInfoItem
+		var reservationInfoItem models.ReservationInfoItem
 		if err := cursor.Decode(&reservationInfoItem); err != nil {
 			log.Printf("Failed to decode reservation info item: %v", err)
 			continue

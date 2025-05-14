@@ -14,24 +14,11 @@ func main() {
 	mongoURI := "mongodb://localhost:27017"
 	db.InitMongoDB(mongoURI)
 
+	// HTTP Mux 初期化
 	mux := http.NewServeMux()
 
-	// customer side handler 接続
-	mux.HandleFunc("/home", handlers.CustomerHomeHandler)
-	mux.HandleFunc("/user-info", handlers.UserInfoHandler)
-	mux.HandleFunc("/frequent-places", handlers.FrequentPlacesHandler)
-	mux.HandleFunc("/timeline", handlers.TimeLineHandler)
-	mux.HandleFunc("/reservations", handlers.ReservationsHandler)
-	mux.HandleFunc("/notifications", handlers.NotificationsHandler)
-
-	mux.HandleFunc("/get-reservation-info", handlers.ReservationInfoHandler)
-
-	// provider side handler 接続
-	mux.HandleFunc("/provider/home", handlers.ProviderHomeHandler)
-	mux.HandleFunc("/provider/store-info", handlers.StoreInfoHandler)
-	mux.HandleFunc("/provider/store-menus", handlers.StoreMenuHandler)
-	mux.HandleFunc("/provider/store-comments", handlers.StoreCommentHandler)
-	// mux.HandleFunc("/provider/store-reservations", handlers.StoreReservationsHandler)
+	// ルーティング設定
+	handlers.RegisterRoutes(mux)
 
 	// CORS 設定
 	c := cors.New(cors.Options{
