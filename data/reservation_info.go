@@ -44,3 +44,23 @@ func GetReservationsInfoData(userID string) ([]models.ReservationInfoItem, error
 
 	return reservationsInfoData, nil
 }
+
+func GetReservationDetailsByID(reservationID string) (*models.ReservationInfoItem, error) {
+	collection := db.GetCollection("yoyaku_mate_db", "reservation_info")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 予約番号でフィルタリング
+	filter := bson.M{"reservation_id": reservationID}
+
+	var reservationInfoItem models.ReservationInfoItem
+
+	// 単一文書検索
+	err := collection.FindOne(ctx, filter).Decode(&reservationInfoItem)
+	if err != nil {
+		log.Printf("Failed to fetch reservation details for reservation_id %s: %v", reservationID, err)
+		return nil, err
+	}
+
+	return &reservationInfoItem, nil
+}

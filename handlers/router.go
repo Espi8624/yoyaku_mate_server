@@ -14,6 +14,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/notifications", NotificationsHandler)
 
 	mux.HandleFunc("/reservations-info", ReservationInfoHandler)
+	mux.HandleFunc("/reservation-details", ReservationDetailsByIDHandler)
 
 	// provider side handler 接続
 	mux.HandleFunc("/provider/home", ProviderHomeHandler)
