@@ -20,50 +20,50 @@ func GetUserCommentData(userID string) ([]models.CommentInfoItem, error) {
 	pipeline := mongo.Pipeline{
 		// 1. user_id でFiletering
 		{
-			{"$match", bson.D{{"user_id", userID}}},
+			{Key: "$match", Value: bson.D{{Key: "user_id", Value: userID}}},
 		},
 		// store_id를 문자열로 변환 (ObjectId인 경우)
 		{
-			{"$addFields", bson.D{
-				{"store_id", bson.D{{"$toString", "$store_id"}}},
+			{Key: "$addFields", Value: bson.D{
+				{Key: "store_id", Value: bson.D{{Key: "$toString", Value: "$store_id"}}},
 			}},
 		},
 		// 2. stores コレクションとジョイン
 		{
-			{"$lookup", bson.D{
-				{"from", "store_info"},       // Joinするコレクション名
-				{"localField", "store_id"},   // 現在コレクションのフィールド
-				{"foreignField", "store_id"}, // Joinするコレクションのフィールド
-				{"as", "store_info"},         // 結果を保存するフィールド名
+			{Key: "$lookup", Value: bson.D{
+				{Key: "from", Value: "store_info"},       // Joinするコレクション名
+				{Key: "localField", Value: "store_id"},   // 現在コレクションのフィールド
+				{Key: "foreignField", Value: "store_id"}, // Joinするコレクションのフィールド
+				{Key: "as", Value: "store_info"},         // 結果を保存するフィールド名
 			}},
 		},
 		// 3. store_info Fild展開
 		{
-			{"$unwind", bson.D{
-				{"path", "$store_info"},              // 展開するフィールド
-				{"preserveNullAndEmptyArrays", true}, // データがない場合も保持
+			{Key: "$unwind", Value: bson.D{
+				{Key: "path", Value: "$store_info"},              // 展開するフィールド
+				{Key: "preserveNullAndEmptyArrays", Value: true}, // データがない場合も保持
 			}},
 		},
 		// 4. users コレクションとジョイン
 		// user_id를 문자열로 변환 (ObjectId인 경우)
 		{
-			{"$addFields", bson.D{
-				{"user_id", bson.D{{"$toString", "$user_id"}}},
+			{Key: "$addFields", Value: bson.D{
+				{Key: "user_id", Value: bson.D{{Key: "$toString", Value: "$user_id"}}},
 			}},
 		},
 		{
-			{"$lookup", bson.D{
-				{"from", "user_info"},       // Joinするコレクション名
-				{"localField", "user_id"},   // 現在コレクションのフィールド
-				{"foreignField", "user_id"}, // Joinするコレクションのフィールド
-				{"as", "user_info"},         // 結果を保存するフィールド名
+			{Key: "$lookup", Value: bson.D{
+				{Key: "from", Value: "user_info"},       // Joinするコレクション名
+				{Key: "localField", Value: "user_id"},   // 現在コレクションのフィールド
+				{Key: "foreignField", Value: "user_id"}, // Joinするコレクションのフィールド
+				{Key: "as", Value: "user_info"},         // 結果を保存するフィールド名
 			}},
 		},
 		// 5. user_info Fild展開
 		{
-			{"$unwind", bson.D{
-				{"path", "$user_info"},               // 展開するフィールド
-				{"preserveNullAndEmptyArrays", true}, // データがない場合も保持
+			{Key: "$unwind", Value: bson.D{
+				{Key: "path", Value: "$user_info"},               // 展開するフィールド
+				{Key: "preserveNullAndEmptyArrays", Value: true}, // データがない場合も保持
 			}},
 		},
 	}
