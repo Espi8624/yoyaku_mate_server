@@ -4,7 +4,8 @@ import (
 	"log"
 	"net/http"
 	"yoyaku_mate_server/db"
-	"yoyaku_mate_server/handlers"
+	CustomerSidehandlers "yoyaku_mate_server/handlers/customer_side"
+	ProviderSidehandlers "yoyaku_mate_server/handlers/provider_side"
 
 	"github.com/rs/cors"
 )
@@ -18,7 +19,8 @@ func main() {
 	mux := http.NewServeMux()
 
 	// ルーティング設定
-	handlers.RegisterRoutes(mux)
+	CustomerSidehandlers.RegisterRoutes(mux)
+	ProviderSidehandlers.RegisterRoutes(mux)
 
 	// CORS 設定
 	c := cors.New(cors.Options{
