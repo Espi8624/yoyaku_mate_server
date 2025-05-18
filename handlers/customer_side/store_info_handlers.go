@@ -6,11 +6,6 @@ import (
 	"yoyaku_mate_server/utils"
 )
 
-// 基本ハンドラー
-func ProviderHomeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Hello, This is Yoyaku Mate Server."))
-}
-
 // 店情報返却
 func StoreInfoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -85,14 +80,3 @@ func StoreCommentHandler(w http.ResponseWriter, r *http.Request) {
 	// JSON 形式でレスポンスを返す
 	utils.RespondWithJSON(w, storeCommentData, http.StatusOK)
 }
-
-// 店予約情報返却
-// func StoreReservationsHandler(w http.ResponseWriter, r *http.Request) {
-// 	if r.Method != http.MethodGet {
-// 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
-// 		return
-// 	}
-// 	var reservationsData []models.StoreReservationItem
-// 	reservationsData = data.GetAllStoreReservationsData()
-// 	utils.RespondWithJSON(w, reservationsData, http.StatusOK)
-// }
