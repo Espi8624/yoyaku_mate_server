@@ -1,0 +1,14 @@
+{
+    "mongodb": {
+        "uri": "mongodb://localhost:27017",
+        "database": "yoyaku_mate_provider_db",
+        "timeout": 30
+    },
+    "server": {
+        "port": ":8080",
+        "allowOrigins": [
+            "http://localhost:3000",
+            "https://localhost:3000"
+        ]
+    }
+} 

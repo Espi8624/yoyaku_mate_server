@@ -5,5 +5,7 @@ import (
 )
 
 func RegisterRoutes(mux *http.ServeMux) {
-	// provider side handler 接続
+	// API endpoints
+	mux.HandleFunc("/api/waiting-list", WaitingListHandler)
+	mux.HandleFunc("/api/waiting-list/poll", HandleWaitingListPolling)
 }

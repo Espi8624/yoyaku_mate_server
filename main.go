@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/db"
 	CustomerSidehandlers "yoyaku_mate_server/handlers/customer_side"
 	ProviderSidehandlers "yoyaku_mate_server/handlers/provider_side"
@@ -11,20 +13,30 @@ import (
 )
 
 func main() {
-	// MongoDB初期化
-	mongoURI := "mongodb://localhost:27017"
-	db.InitMongoDB(mongoURI)
+	// Load configuration
+	env := os.Getenv("GO_ENV")
+	cfg := config.Load(env)
 
-	// HTTP Mux 初期化
+	// Initialize MongoDB
+	if err := db.InitMongoDB(cfg.MongoDB.URI); err != nil {
+		log.Printf("Failed to initialize MongoDB: %v", err)
+		return
+	}
+
+	// Start monitoring waiting list collection
+	collection := db.GetCollection(cfg.MongoDB.Database, "waiting_list")
+	go db.MonitorWaitingList(collection)
+
+	// Initialize HTTP mux
 	mux := http.NewServeMux()
 
-	// ルーティング設定
+	// Register routes
 	CustomerSidehandlers.RegisterRoutes(mux)
 	ProviderSidehandlers.RegisterRoutes(mux)
 
-	// CORS 設定
+	// Configure CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "https://localhost:3000"},
+		AllowedOrigins:   cfg.Server.AllowOrigins,
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
@@ -32,10 +44,9 @@ func main() {
 
 	handler := c.Handler(mux)
 
-	// サーバー起動
-	log.Println("Server starting on :8080...")
-	err := http.ListenAndServe(":8080", handler)
-	if err != nil {
+	// Start server
+	log.Printf("Server starting on %s...", cfg.Server.Port)
+	if err := http.ListenAndServe(cfg.Server.Port, handler); err != nil {
 		log.Fatal("Server failed to start: ", err)
 	}
 }
