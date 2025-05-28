@@ -1,12 +1,15 @@
 package data
 
 import (
+	"fmt"
 	"log"
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/context"
 )
 
@@ -17,15 +20,17 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 
 	var waitingListData []models.WaitingListItem
 
-	// 現在の日時を取得し、当日の開始と終了の時間を計算
-	now := time.Now().UTC()
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	// 일본 시간대 설정
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
+	now := time.Now().In(jst)
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	// filter 設定：storeID と当日の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id":          storeID,
 		"registration_time": bson.M{"$gte": startOfDay, "$lt": endOfDay},
+		"status":            "waiting",
 	}
 
 	// MongoDB Query 実行
@@ -52,4 +57,70 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	}
 
 	return waitingListData, nil
+}
+
+// CreateWaitingListItem creates a new waiting list item in the database
+func CreateWaitingListItem(item models.WaitingListItem) error {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Ensure required fields are set
+	if item.StoreID == "" {
+		return fmt.Errorf("store_id is required")
+	}
+
+	// Set default values if not provided
+	if item.Status == "" {
+		item.Status = "waiting"
+	}
+
+	// Explicitly set called_time and entry_time to null if not set
+	// This ensures these fields are included in the document
+	doc := bson.M{
+		"store_id":          item.StoreID,
+		"waiting_id":        item.WaitingID,
+		"queue_number":      item.QueueNumber,
+		"customer_name":     item.CustomerName,
+		"party_size":        item.PartySize,
+		"registration_time": item.RegistrationTime,
+		"contact":           item.Contact,
+		"status":            item.Status,
+		"called_time":       nil, // Explicitly set to null
+		"entry_time":        nil, // Explicitly set to null
+		"notes":             item.Notes,
+	}
+
+	// Insert the new item
+	_, err := collection.InsertOne(ctx, doc)
+	if err != nil {
+		log.Printf("Failed to insert waiting list item: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// GetNextQueueNumber returns the next available queue number for a store
+func GetNextQueueNumber(storeID string) (int, error) {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Find the highest queue number for the store
+	opts := options.FindOne().SetSort(bson.D{{Key: "queue_number", Value: -1}})
+	filter := bson.D{{Key: "store_id", Value: storeID}}
+
+	var lastItem models.WaitingListItem
+	err := collection.FindOne(ctx, filter, opts).Decode(&lastItem)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// If no documents exist, start with queue number 1
+			return 1, nil
+		}
+		return 0, err
+	}
+
+	// Return the next queue number
+	return lastItem.QueueNumber + 1, nil
 }

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"time"
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -44,56 +46,40 @@ func InitMongoDB(url string) error {
 
 // MonitorWaitingList monitors changes in the waiting list collection
 func MonitorWaitingList(collection *mongo.Collection) {
-	backoff := time.Second * 5
-	maxBackoff := time.Minute * 5
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
-	for {
-		if err := watchWaitingList(collection); err != nil {
-			log.Printf("Change monitoring error: %v, retrying in %v...", err, backoff)
-			time.Sleep(backoff)
-
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
-		}
-		backoff = time.Second * 5
-	}
-}
-
-func watchWaitingList(collection *mongo.Collection) error {
+	var lastData []models.WaitingListItem
 	ctx := context.Background()
-	pipeline := mongo.Pipeline{}
-	opts := options.ChangeStream().SetFullDocument(options.UpdateLookup)
 
-	stream, err := collection.Watch(ctx, pipeline, opts)
-	if err != nil {
-		return fmt.Errorf("failed to start change stream: %v", err)
-	}
-	defer stream.Close(ctx)
-
-	log.Println("Monitoring waiting list changes...")
-
-	for stream.Next(ctx) {
-		var changeEvent WaitingListUpdate
-		if err := stream.Decode(&changeEvent); err != nil {
-			log.Printf("Failed to decode change event: %v", err)
+	for range ticker.C {
+		// Fetch current data
+		cursor, err := collection.Find(ctx, bson.M{})
+		if err != nil {
+			log.Printf("Error fetching waiting list data: %v", err)
 			continue
 		}
 
-		// Extract store ID and notify relevant clients
-		if storeID := changeEvent.FullDocument.StoreID; storeID != "" {
-			events.NotifyStoreUpdate(storeID)
-			log.Printf("Change detected for store %s: %s", storeID, changeEvent.OperationType)
+		var currentData []models.WaitingListItem
+		if err := cursor.All(ctx, &currentData); err != nil {
+			log.Printf("Error decoding waiting list data: %v", err)
+			cursor.Close(ctx)
+			continue
+		}
+		cursor.Close(ctx)
+
+		// Compare with last data
+		if !reflect.DeepEqual(lastData, currentData) {
+			// Data has changed, notify clients
+			for _, item := range currentData {
+				if storeID := item.StoreID; storeID != "" {
+					events.NotifyStoreUpdate(storeID)
+					log.Printf("Change detected for store %s", storeID)
+				}
+			}
+			lastData = currentData
 		}
 	}
-
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("stream error: %v", err)
-	}
-
-	return nil
 }
 
 // GetCollection returns a MongoDB collection
