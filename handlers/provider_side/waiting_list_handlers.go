@@ -16,10 +16,34 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		handleGetWaitingList(w, r)
 	case http.MethodPost:
+		if r.URL.Query().Get("action") == "clear" {
+			handleClearWaitingList(w, r)
+			return
+		}
 		handleCreateWaitingList(w, r)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// HandleWaitingListPolling handles polling requests for waiting list updates
+func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Get waiting list data
+	waitingList, err := data.GetWaitingListData(storeID)
+	if err != nil {
+		log.Printf("Error fetching waiting list data: %v", err)
+		utils.RespondWithError(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, waitingList, http.StatusOK)
+	log.Printf("Polling request handled successfully for store_id: %s", storeID)
 }
 
 // handleGetWaitingList handles GET requests for waiting list
@@ -58,7 +82,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	// Set registration time to current JST time
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
-	newWaiting.RegistrationTime = now
+	newWaiting.RegistrationTime = now.Format(time.RFC3339)
 
 	// Generate WaitingID using timestamp
 	newWaiting.WaitingID = now.Format("20060102-150405")
@@ -84,22 +108,27 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, newWaiting, http.StatusCreated)
 }
 
-// HandleWaitingListPolling handles polling requests for waiting list updates
-func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
+// handleClearWaitingList handles requests to clear the waiting list
+func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get storeID from query parameters
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Get waiting list data
-	waitingList, err := data.GetWaitingListData(storeID)
+	// Clear the waiting list
+	err := data.ClearWaitingList(storeID)
 	if err != nil {
-		log.Printf("Error fetching waiting list data: %v", err)
-		utils.RespondWithError(w, "Internal server error", http.StatusInternalServerError)
+		log.Printf("Failed to clear waiting list: %v", err)
+		http.Error(w, "Failed to clear waiting list", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, waitingList, http.StatusOK)
-	log.Printf("Polling request handled successfully for store_id: %s", storeID)
+	utils.RespondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
 }

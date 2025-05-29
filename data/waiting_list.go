@@ -28,9 +28,12 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 
 	// filter 設定：storeID と当日の登録時間でフィルタリング
 	filter := bson.M{
-		"store_id":          storeID,
-		"registration_time": bson.M{"$gte": startOfDay, "$lt": endOfDay},
-		"status":            "waiting",
+		"store_id": storeID,
+		"registration_time": bson.M{
+			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+		},
+		"status": "waiting",
 	}
 
 	// MongoDB Query 実行
@@ -75,8 +78,14 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 		item.Status = "waiting"
 	}
 
+	// Set registration time if not provided
+	if item.RegistrationTime == "" {
+		jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+		now := time.Now().In(jst)
+		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
+	}
+
 	// Explicitly set called_time and entry_time to null if not set
-	// This ensures these fields are included in the document
 	doc := bson.M{
 		"store_id":          item.StoreID,
 		"waiting_id":        item.WaitingID,
@@ -86,8 +95,8 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 		"registration_time": item.RegistrationTime,
 		"contact":           item.Contact,
 		"status":            item.Status,
-		"called_time":       nil, // Explicitly set to null
-		"entry_time":        nil, // Explicitly set to null
+		"called_time":       nil,
+		"entry_time":        nil,
 		"notes":             item.Notes,
 	}
 
@@ -123,4 +132,44 @@ func GetNextQueueNumber(storeID string) (int, error) {
 
 	// Return the next queue number
 	return lastItem.QueueNumber + 1, nil
+}
+
+// ClearWaitingList updates all waiting items for today to cancelled status for a specific store
+func ClearWaitingList(storeID string) error {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 일본 시간대 설정
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	// Filter for today's waiting items
+	filter := bson.M{
+		"store_id": storeID,
+		"registration_time": bson.M{
+			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+		},
+		"status": "waiting",
+	}
+
+	// Update to set status to cancelled
+	update := bson.M{
+		"$set": bson.M{
+			"status": "cancelled",
+		},
+	}
+
+	// Update all matching documents
+	result, err := collection.UpdateMany(ctx, filter, update)
+	if err != nil {
+		log.Printf("Failed to clear waiting list: %v", err)
+		return err
+	}
+
+	log.Printf("Successfully cleared %d waiting list items", result.ModifiedCount)
+	return nil
 }
