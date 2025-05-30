@@ -11,6 +11,7 @@ type WaitingListItem struct {
 	QueueNumber      int                `json:"queue_number" bson:"queue_number"`
 	CustomerName     string             `json:"customer_name" bson:"customer_name"`
 	PartySize        int                `json:"party_size" bson:"party_size"`
+	Nationality      string             `json:"nationality" bson:"nationality"`
 	RegistrationTime string             `json:"registration_time" bson:"registration_time"`
 	Contact          string             `json:"contact" bson:"contact"`
 	Status           string             `json:"status" bson:"status"` // "waiting", "notified", "cancelled", "fulfilled"

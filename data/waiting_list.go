@@ -95,6 +95,7 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 		"registration_time": item.RegistrationTime,
 		"contact":           item.Contact,
 		"status":            item.Status,
+		"nationality":       item.Nationality,
 		"called_time":       nil,
 		"entry_time":        nil,
 		"notes":             item.Notes,
