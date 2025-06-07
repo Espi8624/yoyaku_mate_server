@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
 	"time"
@@ -9,29 +10,42 @@ import (
 	"yoyaku_mate_server/models"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // メニューデータ取得
+// GetMenuListData retrieves menu list data from the database
 func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
+	storeID = "store-001"
 	collection := db.GetCollection("yoyaku_mate_provider_db", "menu_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 店 ID でデータ取得
-	storeID = "store-001" // 任意データ
+	// storeID 검증
+	if storeID == "" {
+		return nil, fmt.Errorf("store_id is required")
+	}
+
 	var menuListItems []models.MenuListItem
 
-	filter := bson.M{"store_id": storeID}
+	// menu_status가 "disable"이 아닌 데이터만 조회
+	filter := bson.M{
+		"store_id":    storeID,
+		"menu_status": bson.M{"$ne": "disable"},
+	}
 	cursor, err := collection.Find(ctx, filter)
 	if err != nil {
+		log.Printf("Failed to find menu items for storeID %s: %v", storeID, err)
 		return nil, err
 	}
 	defer cursor.Close(ctx)
 
-	// 結果を MenuListItem 構造体に変換
+	// 결과를 MenuListItem 구조체로 변환
 	for cursor.Next(ctx) {
 		var item models.MenuListItem
 		if err := cursor.Decode(&item); err != nil {
+			log.Printf("Failed to decode menu item: %v", err)
 			return nil, err
 		}
 		menuListItems = append(menuListItems, item)
@@ -45,49 +59,106 @@ func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
 	return menuListItems, nil
 }
 
-// InsertMenuListData inserts menu list data into the database
-func InsertMenuListData(storeID string, menuData map[string][]map[string]interface{}) error {
+// InsertMenuListData handles bulk insertion or upsert of menu data
+func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuListItem, error) {
 	collection := db.GetCollection("yoyaku_mate_provider_db", "menu_list")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	for category, items := range menuData {
-		for _, item := range items {
-			// 안전한 타입 변환 함수들
-			createdAtStr := getStringValue(item, "created_at")
-			updatedAtStr := getStringValue(item, "updated_at")
-			title := getStringValue(item, "title")
-			description := getStringValue(item, "description")
-			imageURL := getStringValue(item, "image")
-			price := getIntValue(item, "price")
+	if storeID == "" {
+		return nil, fmt.Errorf("store_id is required")
+	}
 
-			// 필수 필드 검증
-			if title == "" {
-				log.Printf("Title is empty for item in category %s, skipping", category)
+	// bulkWrite를 위한 모델 리스트
+	var writeModels []mongo.WriteModel
+	var insertedItems []models.MenuListItem
+
+	// 배치 크기 설정 (예: 1000개 단위)
+	batchSize := 1000
+	for i, item := range menuData {
+		// _id 처리: 비어 있으면 ObjectID 생성
+		var id primitive.ObjectID
+		if idStr := getStringValue(item, "id"); idStr != "" {
+			var err error
+			id, err = primitive.ObjectIDFromHex(idStr)
+			if err != nil {
+				log.Printf("Invalid ObjectID format for id %s, generating new one", idStr)
+				id = primitive.NewObjectID()
+			}
+		} else {
+			id = primitive.NewObjectID() // 새 ObjectID 생성
+		}
+
+		// upsert를 위한 업데이트 문서 준비
+		update := bson.M{
+			"$set": bson.M{
+				"store_id":    storeID,
+				"menu_id":     getStringValue(item, "menuId"),
+				"category":    getStringValue(item, "category"),
+				"title":       getStringValue(item, "title"),
+				"description": getStringValue(item, "description"),
+				"price":       getIntValue(item, "price"),
+				"image":       getStringValue(item, "image"),
+				"updated_at":  parseTimeToString(getStringValue(item, "updatedAt")),
+				"menu_status": getStringValue(item, "menuStatus"),
+			},
+			"$setOnInsert": bson.M{
+				"created_at": parseTimeToString(getStringValue(item, "createdAt")),
+			},
+		}
+
+		// bulkWrite 모델 추가
+		writeModel := mongo.NewUpdateOneModel().
+			SetFilter(bson.M{"_id": id}).
+			SetUpdate(update).
+			SetUpsert(true)
+		writeModels = append(writeModels, writeModel)
+
+		// 배치 크기에 도달하면 bulkWrite 실행
+		if (i+1)%batchSize == 0 || i == len(menuData)-1 {
+			_, err := collection.BulkWrite(ctx, writeModels) // result, err
+			if err != nil {
+				log.Printf("Failed to bulk write menu items: %v", err)
+				// 일부 실패 시에도 진행 (선택 사항: 전체 롤백 가능)
 				continue
 			}
 
-			menuItem := models.MenuListItem{
-				StoreID:     storeID,
-				Category:    category,
-				Title:       title,
-				Description: description,
-				Price:       price,
-				ImageURL:    imageURL,
-				CreatedAt:   parseTimeToString(createdAtStr),
-				UpdatedAt:   parseTimeToString(updatedAtStr),
+			// 성공한 항목 처리 (Upsert된 ID 기반으로 조회)
+			for _, model := range writeModels {
+				if updateModel, ok := model.(*mongo.UpdateOneModel); ok {
+					id := updateModel.Filter.(bson.M)["_id"].(primitive.ObjectID)
+					var menuItem models.MenuListItem
+					err := collection.FindOne(ctx, bson.M{"_id": id}).Decode(&menuItem)
+					if err == nil {
+						menuItem.ID = id // 문자열로 변환하여 응답
+						insertedItems = append(insertedItems, menuItem)
+					}
+				}
 			}
-
-			_, err := collection.InsertOne(ctx, menuItem)
-			if err != nil {
-				log.Printf("Failed to insert menu item: %v", err)
-				return err
-			}
+			writeModels = []mongo.WriteModel{} // 배치 초기화
 		}
 	}
 
-	return nil
+	return insertedItems, nil
 }
+
+// // getFloatValue safely converts a value to float64
+// func getFloatValue(item map[string]interface{}, key string) float64 {
+// 	if val, ok := item[key]; ok {
+// 		switch v := val.(type) {
+// 		case float64:
+// 			return v
+// 		case int:
+// 			return float64(v)
+// 		case string:
+// 			if num, err := strconv.ParseFloat(v, 64); err == nil {
+// 				return num
+// 			}
+// 		}
+// 		log.Printf("Value for key '%s' cannot be converted to float64: %v", key, val)
+// 	}
+// 	return 0
+// }
 
 // parseTimeToString converts a string to time.Time then back to string (ISO format)
 func parseTimeToString(timeStr string) string {
