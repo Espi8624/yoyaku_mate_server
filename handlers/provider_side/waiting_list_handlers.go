@@ -10,10 +10,15 @@ import (
 	"yoyaku_mate_server/utils"
 )
 
-// WaitingListHandler handles the main waiting list operations
+// WaitingListHandler는 웨이팅 리스트의 주요 작업을 처리하는 핸들러입니다
+// Waiting list の 主要な操作を処理するハンドラ
 func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("waiting_id") != "" {
+			handleGetUserWaitingList(w, r)
+			return
+		}
 		handleGetWaitingList(w, r)
 	case http.MethodPost:
 		if r.URL.Query().Get("action") == "clear" {
@@ -26,7 +31,8 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleWaitingListPolling handles polling requests for waiting list updates
+// HandleWaitingListPolling은 웨이팅 리스트 업데이트를 위한 폴링 요청을 처리합니다
+// Waiting list アップデートのためのポーリングリクエストを処理
 func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -46,9 +52,11 @@ func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Polling request handled successfully for store_id: %s", storeID)
 }
 
-// handleGetWaitingList handles GET requests for waiting list
+// handleGetWaitingList는 웨이팅 리스트 조회를 위한 GET 요청을 처리합니다
+// Waiting list の取得を処理する GET リクエストを処理
 func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
-	// storeID をクエリパラメータから取得
+	// 쿼리 파라미터에서 storeID 가져오기
+	// クエリパラメータから storeID を取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		http.Error(w, "Missing storeId parameter", http.StatusBadRequest)
@@ -68,6 +76,7 @@ func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateWaitingList handles POST requests for creating new waiting list items
+// 新しいウェイティングリスト作成処理 (POSTリクエスト処理)
 func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	var newWaiting models.WaitingListItem
 	if err := json.NewDecoder(r.Body).Decode(&newWaiting); err != nil {
@@ -78,14 +87,20 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 
 	// Set default values
 	newWaiting.Status = "waiting"
-
 	// Set registration time to current JST time
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
 	newWaiting.RegistrationTime = now.Format(time.RFC3339)
 
-	// Generate WaitingID using timestamp
-	newWaiting.WaitingID = now.Format("20060102-150405")
+	// Validate or generate WaitingID
+	if newWaiting.WaitingID == "" {
+		log.Printf("Warning: WaitingID not provided by client, generating one")
+		newWaiting.WaitingID = now.Format("20060102-150405")
+	} else if !utils.IsValidWaitingID(newWaiting.WaitingID) {
+		log.Printf("Invalid WaitingID format: %s", newWaiting.WaitingID)
+		http.Error(w, "Invalid waiting_id format", http.StatusBadRequest)
+		return
+	}
 
 	// Get the next queue number
 	nextQueueNumber, err := data.GetNextQueueNumber(newWaiting.StoreID)
@@ -109,6 +124,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClearWaitingList handles requests to clear the waiting list
+// Waiting list をクリアするリクエストを処理
 func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -131,4 +147,34 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
+}
+
+// handleGetUserWaitingList는 특정 사용자의 웨이팅 리스트 항목을 조회하는 GET 요청을 처리합니다
+// 特定のユーザーのウェイティングリスト項目を取得する GET リクエストを処理
+func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	userID := r.URL.Query().Get("waiting_id")
+
+	if storeID == "" || userID == "" {
+		http.Error(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
+		return
+	}
+
+	// 데이터 조회
+	// データ取得
+	waitingListItem, err := data.GetUserWaitingListItem(storeID, userID)
+	if err != nil {
+		log.Printf("Failed to fetch user waiting list item: %v", err)
+		http.Error(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
+		return
+	}
+
+	if waitingListItem == nil {
+		utils.RespondWithJSON(w, map[string]interface{}{"message": "No waiting list item found"}, http.StatusNotFound)
+		return
+	}
+
+	// JSON 응답
+	// JSON 応答
+	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 }

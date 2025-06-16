@@ -21,12 +21,13 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	var waitingListData []models.WaitingListItem
 
 	// 일본 시간대 설정
+	// 日本時間帯設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
 	endOfDay := startOfDay.Add(24 * time.Hour)
-
-	// filter 設定：storeID と当日の登録時間でフィルタリング
+	// 필터 설정: storeID와 당일 등록 시간으로 필터링
+	// フィルター設定: storeIDと当日の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id": storeID,
 		"registration_time": bson.M{
@@ -35,8 +36,8 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 		},
 		"status": "waiting",
 	}
-
-	// MongoDB Query 実行
+	// MongoDB 쿼리 실행
+	// MongoDBクエリ実行
 	cursor, err := collection.Find(ctx, filter)
 	if err != nil {
 		log.Printf("Failed to fetch waiting list data: %v", err)
@@ -44,6 +45,7 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	}
 	defer cursor.Close(ctx)
 
+	// 결과를 디코딩하여 waitingListData 에 추가
 	// 結果をデコードして waitingListData に追加
 	for cursor.Next(ctx) {
 		var waitingListItem models.WaitingListItem
@@ -62,7 +64,8 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	return waitingListData, nil
 }
 
-// CreateWaitingListItem creates a new waiting list item in the database
+// CreateWaitingListItem은 데이터베이스에 새로운 웨이팅 리스트 항목을 생성합니다
+// 新しいウェイティングリスト項目作成
 func CreateWaitingListItem(item models.WaitingListItem) error {
 	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -112,6 +115,7 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 }
 
 // GetNextQueueNumber returns the next available queue number for a store
+// 特定店舗の次の利用可能なキュー番号を返却
 func GetNextQueueNumber(storeID string) (int, error) {
 	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -135,7 +139,8 @@ func GetNextQueueNumber(storeID string) (int, error) {
 	return lastItem.QueueNumber + 1, nil
 }
 
-// ClearWaitingList updates all waiting items for today to cancelled status for a specific store
+// 웨이팅 리스트를 비우고 상태를 'cancelled'로 업데이트
+// 特定店舗の今日のウェイティングリストをキャンセル状態に更新
 func ClearWaitingList(storeID string) error {
 	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -173,4 +178,41 @@ func ClearWaitingList(storeID string) error {
 
 	log.Printf("Successfully cleared %d waiting list items", result.ModifiedCount)
 	return nil
+}
+
+// GetUserWaitingListItem은 특정 매장의 특정 사용자에 대한 웨이팅 리스트 항목을 조회합니다
+// 特定店舗の特定ユーザーのウェイティングリスト項目を取得
+func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingListItem, error) {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 일본 시간대 설정
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
+	endOfDay := startOfDay.Add(24 * time.Hour)
+
+	// filter 설정: storeID, waitingID, 당일 등록 시간으로 필터링
+	// フィルター設定: storeID、waitingID、当日の登録時間でフィルタリング
+	filter := bson.M{
+		"store_id":   storeID,
+		"waiting_id": waitingID,
+		"registration_time": bson.M{
+			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+		},
+		"status": "waiting",
+	}
+
+	var waitingListItem models.WaitingListItem
+	err := collection.FindOne(ctx, filter).Decode(&waitingListItem)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil // 결과가 없는 경우
+		}
+		return nil, err
+	}
+
+	return &waitingListItem, nil
 }
