@@ -25,8 +25,7 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
 	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
-	endOfDay := startOfDay.Add(24 * time.Hour)
-	// 필터 설정: storeID와 당일 등록 시간으로 필터링
+	endOfDay := startOfDay.Add(24 * time.Hour) // 필터 설정: storeID와 당일 등록 시간으로 필터링
 	// フィルター設定: storeIDと当日の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id": storeID,
@@ -34,7 +33,6 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
 			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
 		},
-		"status": "waiting",
 	}
 	// MongoDB 쿼리 실행
 	// MongoDBクエリ実行
@@ -71,9 +69,18 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Ensure required fields are set
+	// Validate required fields
 	if item.StoreID == "" {
 		return fmt.Errorf("store_id is required")
+	}
+	if item.CustomerName == "" {
+		return fmt.Errorf("customer_name is required")
+	}
+	if item.PartySize <= 0 {
+		return fmt.Errorf("party_size must be greater than 0")
+	}
+	if item.WaitingID == "" {
+		return fmt.Errorf("waiting_id is required")
 	}
 
 	// Set default values if not provided
@@ -88,7 +95,22 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
 
-	// Explicitly set called_time and entry_time to null if not set
+	// Check for duplicate waiting_id
+	filter := bson.M{
+		"store_id":   item.StoreID,
+		"waiting_id": item.WaitingID,
+	}
+
+	var existingItem models.WaitingListItem
+	err := collection.FindOne(ctx, filter).Decode(&existingItem)
+	if err == nil {
+		return fmt.Errorf("waiting_id %s already exists for store %s", item.WaitingID, item.StoreID)
+	} else if err != mongo.ErrNoDocuments {
+		log.Printf("Error checking for duplicate waiting_id: %v", err)
+		return fmt.Errorf("failed to check for duplicate waiting_id: %v", err)
+	}
+
+	// Create BSON document
 	doc := bson.M{
 		"store_id":          item.StoreID,
 		"waiting_id":        item.WaitingID,
@@ -105,12 +127,13 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 	}
 
 	// Insert the new item
-	_, err := collection.InsertOne(ctx, doc)
+	result, err := collection.InsertOne(ctx, doc)
 	if err != nil {
-		log.Printf("Failed to insert waiting list item: %v", err)
-		return err
+		log.Printf("Failed to insert waiting list item: %v\nDocument: %+v", err, doc)
+		return fmt.Errorf("failed to insert waiting list item: %v", err)
 	}
 
+	log.Printf("Successfully inserted waiting list item with ID: %v", result.InsertedID)
 	return nil
 }
 
@@ -215,4 +238,94 @@ func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingListItem,
 	}
 
 	return &waitingListItem, nil
+}
+
+// UpdateWaitingStatus는 특정 웨이팅 항목의 상태를 업데이트합니다
+func UpdateWaitingStatus(storeID, waitingID, status string) (*models.WaitingListItem, error) {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 현재 시간 (JST)
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+
+	// 상태에 따른 추가 필드 업데이트
+	update := bson.M{
+		"$set": bson.M{
+			"status": status,
+		},
+	}
+
+	// status가 "notified"인 경우 called_time 추가
+	if status == "notified" {
+		update["$set"].(bson.M)["called_time"] = now.Format(time.RFC3339)
+	}
+
+	// 업데이트 수행
+	filter := bson.M{
+		"store_id":   storeID,
+		"waiting_id": waitingID,
+	}
+
+	// UpdateOne 후 업데이트된 문서 반환
+	after := options.After
+	opts := options.FindOneAndUpdate().SetReturnDocument(after)
+
+	var updatedItem models.WaitingListItem
+	err := collection.FindOneAndUpdate(ctx, filter, update, opts).Decode(&updatedItem)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("waiting item not found")
+		}
+		return nil, err
+	}
+
+	return &updatedItem, nil
+}
+
+// UpdateWaitingItemStatus는 웨이팅 항목의 상태를 업데이트하고, 상태에 따라 시간 필드를 설정합니다
+func UpdateWaitingItemStatus(storeID string, waitingID string, status string) error {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// 일본 시간대로 현재 시간 설정
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+	currentTime := now.Format("2006-01-02T15:04:05.000+09:00")
+
+	// 상태별 필드 설정
+	setFields := bson.M{
+		"status": status,
+	}
+
+	// 상태별 시간 필드 설정
+	switch status {
+	case "completed":
+		setFields["entry_time"] = currentTime
+		log.Printf("Setting entry_time to %s for waiting_id %s", currentTime, waitingID)
+	case "notified":
+		setFields["called_time"] = currentTime
+	}
+
+	update := bson.M{
+		"$set": setFields,
+	}
+
+	filter := bson.M{
+		"store_id":   storeID,
+		"waiting_id": waitingID,
+	}
+
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		log.Printf("Failed to update waiting status: %v", err)
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("no waiting item found with waiting_id: %s", waitingID)
+	}
+
+	return nil
 }

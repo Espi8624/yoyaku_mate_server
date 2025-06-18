@@ -26,6 +26,12 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handleCreateWaitingList(w, r)
+	case http.MethodPatch:
+		if r.URL.Query().Get("action") == "status" {
+			handleUpdateWaitingStatus(w, r)
+			return
+		}
+		fallthrough
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -36,11 +42,10 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Get waiting list data
 	waitingList, err := data.GetWaitingListData(storeID)
 	if err != nil {
 		log.Printf("Error fetching waiting list data: %v", err)
@@ -85,6 +90,23 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 필수 필드 검증
+	if newWaiting.StoreID == "" {
+		log.Printf("Missing required field: store_id")
+		http.Error(w, "Missing required field: store_id", http.StatusBadRequest)
+		return
+	}
+	if newWaiting.CustomerName == "" {
+		log.Printf("Missing required field: customer_name")
+		http.Error(w, "Missing required field: customer_name", http.StatusBadRequest)
+		return
+	}
+	if newWaiting.PartySize <= 0 {
+		log.Printf("Invalid party_size: %d", newWaiting.PartySize)
+		http.Error(w, "Invalid party_size: must be greater than 0", http.StatusBadRequest)
+		return
+	}
+
 	// Set default values
 	newWaiting.Status = "waiting"
 	// Set registration time to current JST time
@@ -115,7 +137,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	err = data.CreateWaitingListItem(newWaiting)
 	if err != nil {
 		log.Printf("Failed to create waiting list item: %v", err)
-		http.Error(w, "Failed to create waiting list item", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -177,4 +199,52 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 	// JSON 응답
 	// JSON 応答
 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
+}
+
+// handleUpdateWaitingStatus는 웨이팅 항목의 상태를 업데이트하는 PATCH 요청을 처리합니다
+func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
+	var updateRequest struct {
+		StoreID   string `json:"store_id"`
+		WaitingID string `json:"waiting_id"`
+		Status    string `json:"status"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+		log.Printf("Error decoding request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// 필수 필드 검증
+	if updateRequest.StoreID == "" || updateRequest.WaitingID == "" || updateRequest.Status == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// Status 유효성 검증
+	validStatuses := map[string]bool{
+		"waiting":   true,
+		"notified":  true,
+		"completed": true,
+		"cancelled": true,
+		"no_show":   true,
+	}
+	if !validStatuses[updateRequest.Status] {
+		http.Error(w, "Invalid status value", http.StatusBadRequest)
+		return
+	}
+
+	// 상태 업데이트
+	err := data.UpdateWaitingItemStatus(updateRequest.StoreID, updateRequest.WaitingID, updateRequest.Status)
+	if err != nil {
+		log.Printf("Failed to update waiting status: %v", err)
+		http.Error(w, "Failed to update waiting status", http.StatusInternalServerError)
+		return
+	}
+
+	// 성공 응답
+	utils.RespondWithJSON(w, map[string]string{
+		"message": "Status updated successfully",
+		"status":  updateRequest.Status,
+	}, http.StatusOK)
 }
