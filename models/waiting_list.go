@@ -19,3 +19,8 @@ type WaitingListItem struct {
 	EntryTime        *string            `json:"entry_time,omitempty" bson:"entry_time,omitempty"`
 	Notes            string             `json:"notes,omitempty" bson:"notes,omitempty"`
 }
+
+type AverageWaitingTimeResponse struct {
+	AverageSeconds int    `json:"average_seconds"`
+	AverageText    string `json:"average_text"`
+}

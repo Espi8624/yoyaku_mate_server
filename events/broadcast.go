@@ -1,7 +1,6 @@
 package events
 
 import (
-	"log"
 	"sync"
 )
 
@@ -46,5 +45,5 @@ func NotifyStoreUpdate(storeID string) {
 			go n.NotifyUpdate()
 		}
 	}
-	log.Printf("Notified update for store: %s", storeID)
+	// log.Printf("Notified update for store: %s", storeID)
 }

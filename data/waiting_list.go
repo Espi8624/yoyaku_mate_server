@@ -329,3 +329,55 @@ func UpdateWaitingItemStatus(storeID string, waitingID string, status string) er
 
 	return nil
 }
+
+// 평균 대기시간(초) 반환
+// 平均待機時間（秒）を返す
+// 担当者：紙谷
+func GetAverageWaitingTime(storeID string) (int, error) {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// フィルター設定
+	filter := bson.M{
+		"store_id":   storeID,
+		"entry_time": bson.M{"$ne": nil},
+	}
+
+	// entry_timeがnilでないドキュメントを取得
+	cursor, err := collection.Find(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	defer cursor.Close(ctx)
+
+	// 平均待機時間を計算
+	totalSeconds := int64(0)
+	count := int64(0)
+
+	// 各ドキュメントをループして待機時間を計算
+	for cursor.Next(ctx) {
+		var item models.WaitingListItem
+		if err := cursor.Decode(&item); err != nil {
+			continue
+		}
+		// 登録時間と入店時間をパース
+		reg, err1 := time.Parse(time.RFC3339, item.RegistrationTime)
+		var ent time.Time
+		var err2 error
+		if item.EntryTime != nil {
+			ent, err2 = time.Parse(time.RFC3339, *item.EntryTime)
+		} else {
+			err2 = fmt.Errorf("entry_time is nil")
+		}
+		if err1 == nil && err2 == nil {
+			totalSeconds += int64(ent.Sub(reg).Seconds())
+			count++
+		}
+	}
+	if count == 0 {
+		return 0, nil
+	}
+	// 平均待機時間を計算
+	return int(totalSeconds / count), nil
+}

@@ -74,7 +74,7 @@ func MonitorWaitingList(collection *mongo.Collection) {
 			for _, item := range currentData {
 				if storeID := item.StoreID; storeID != "" {
 					events.NotifyStoreUpdate(storeID)
-					log.Printf("Change detected for store %s", storeID)
+					// log.Printf("Change detected for store %s", storeID)
 				}
 			}
 			lastData = currentData

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -15,6 +16,10 @@ import (
 func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if r.URL.Query().Get("action") == "average_waiting_time" {
+			handleGetAverageWaitingTime(w, r)
+			return
+		}
 		if r.URL.Query().Get("waiting_id") != "" {
 			handleGetUserWaitingList(w, r)
 			return
@@ -54,7 +59,7 @@ func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, waitingList, http.StatusOK)
-	log.Printf("Polling request handled successfully for store_id: %s", storeID)
+	// log.Printf("Polling request handled successfully for store_id: %s", storeID)
 }
 
 // handleGetWaitingList는 웨이팅 리스트 조회를 위한 GET 요청을 처리합니다
@@ -247,4 +252,35 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		"message": "Status updated successfully",
 		"status":  updateRequest.Status,
 	}, http.StatusOK)
+}
+
+// 평균 대기시간 반환 핸들러
+// 平均待機時間を返すハンドラ
+func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+	avgSec, err := data.GetAverageWaitingTime(storeID)
+	if err != nil {
+		http.Error(w, "Failed to calculate average waiting time", http.StatusInternalServerError)
+		return
+	}
+	avgText := "--分"
+	if avgSec > 0 {
+		min := avgSec / 60
+		sec := avgSec % 60
+		if min > 0 {
+			avgText = fmt.Sprintf("%d分%d秒", min, sec)
+		} else {
+			avgText = fmt.Sprintf("%d秒", sec)
+		}
+	}
+	resp := models.AverageWaitingTimeResponse{
+		AverageSeconds: avgSec,
+		AverageText:    avgText,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
