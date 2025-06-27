@@ -11,4 +11,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/menu-list", MenuListHandler)
 	mux.HandleFunc("/api/menu-list/bulk-save", handleBulkSaveMenuList)
 	mux.HandleFunc("/api/store_settings", StoreSettingsHandler)
+	mux.HandleFunc("/api/provider_user", ProviderUserHandler)
+	mux.HandleFunc("/api/provider_store", ProviderStoreHandler)
 }
