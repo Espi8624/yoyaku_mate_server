@@ -28,3 +28,19 @@ func GetProviderUserData(userID primitive.ObjectID) (models.User, error) {
 
 	return user, nil
 }
+
+// Provider User 데이터 수정
+func UpdateProviderUserData(userID primitive.ObjectID, update map[string]interface{}) error {
+	collection := db.GetCollection("yoyaku_mate_provider_db", "user_info")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	filter := bson.M{"_id": userID}
+	updateDoc := bson.M{"$set": update}
+	_, err := collection.UpdateOne(ctx, filter, updateDoc)
+	if err != nil {
+		log.Printf("Failed to update provider user info: %v", err)
+		return err
+	}
+	return nil
+}
