@@ -24,14 +24,16 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 	// 日本時間帯設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
-	endOfDay := startOfDay.Add(24 * time.Hour) // 필터 설정: storeID와 당일 등록 시간으로 필터링
-	// フィルター設定: storeIDと当日の登録時間でフィルタリング
+	// window: 전날 23시 ~ 다음날 1시
+	windowStart := time.Date(now.Year(), now.Month(), now.Day()-1, 23, 0, 0, 0, jst)
+	windowEnd := time.Date(now.Year(), now.Month(), now.Day()+1, 1, 0, 0, 0, jst)
+	// 필터 설정: storeID와 window 범위 등록 시간으로 필터링
+	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id": storeID,
 		"registration_time": bson.M{
-			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
-			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
+			"$gte": windowStart.Format("2006-01-02T15:04:05.000+09:00"),
+			"$lt":  windowEnd.Format("2006-01-02T15:04:05.000+09:00"),
 		},
 	}
 	// MongoDB 쿼리 실행
