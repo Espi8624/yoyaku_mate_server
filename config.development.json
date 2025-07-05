@@ -1,7 +1,7 @@
 {
     "mongodb": {
-        "uri": "mongodb://localhost:27017",
-        "database": "yoyaku_mate_provider_db",
+        "uri": "mongodb+srv://espi8624:2dYkbD5vOVghhmyy@cluster0.3bifxsy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
+        "database": "yoyaku_mate_provider",
         "timeout": 30
     },
     "server": {
