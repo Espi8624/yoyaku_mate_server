@@ -12,7 +12,7 @@ import (
 
 // Provider Store 데이터 조회
 func GetProviderStoreData(storeID string) (models.Store, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "store_info")
+	collection := db.GetCollection("yoyaku_mate_provider", "store_info")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -30,7 +30,7 @@ func GetProviderStoreData(storeID string) (models.Store, error) {
 
 // Provider Store 데이터 수정
 func UpdateProviderStoreData(storeID string, update map[string]interface{}) error {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "store_info")
+	collection := db.GetCollection("yoyaku_mate_provider", "store_info")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

@@ -14,7 +14,7 @@ import (
 )
 
 func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -67,7 +67,7 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 // CreateWaitingListItem은 데이터베이스에 새로운 웨이팅 리스트 항목을 생성합니다
 // 新しいウェイティングリスト項目作成
 func CreateWaitingListItem(item models.WaitingListItem) error {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -142,7 +142,7 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 // GetNextQueueNumber returns the next available queue number for a store
 // 特定店舗の次の利用可能なキュー番号を返却
 func GetNextQueueNumber(storeID string) (int, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -167,7 +167,7 @@ func GetNextQueueNumber(storeID string) (int, error) {
 // 웨이팅 리스트를 비우고 상태를 'cancelled'로 업데이트
 // 特定店舗の今日のウェイティングリストをキャンセル状態に更新
 func ClearWaitingList(storeID string) error {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -208,7 +208,7 @@ func ClearWaitingList(storeID string) error {
 // GetUserWaitingListItem은 특정 매장의 특정 사용자에 대한 웨이팅 리스트 항목을 조회합니다
 // 特定店舗の特定ユーザーのウェイティングリスト項目を取得
 func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingListItem, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -244,7 +244,7 @@ func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingListItem,
 
 // UpdateWaitingStatus는 특정 웨이팅 항목의 상태를 업데이트합니다
 func UpdateWaitingStatus(storeID, waitingID, status string) (*models.WaitingListItem, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -288,7 +288,7 @@ func UpdateWaitingStatus(storeID, waitingID, status string) (*models.WaitingList
 
 // UpdateWaitingItemStatus는 웨이팅 항목의 상태를 업데이트하고, 상태에 따라 시간 필드를 설정합니다
 func UpdateWaitingItemStatus(storeID string, waitingID string, status string) error {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// 일본 시간대로 현재 시간 설정
@@ -336,7 +336,7 @@ func UpdateWaitingItemStatus(storeID string, waitingID string, status string) er
 // 平均待機時間（秒）を返す
 // 担当者：紙谷
 func GetAverageWaitingTime(storeID string) (int, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "waiting_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

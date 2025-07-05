@@ -18,7 +18,7 @@ import (
 // GetMenuListData retrieves menu list data from the database
 func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
 	storeID = "store-001"
-	collection := db.GetCollection("yoyaku_mate_provider_db", "menu_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "menu_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -61,7 +61,7 @@ func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
 
 // InsertMenuListData handles bulk insertion or upsert of menu data
 func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuListItem, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "menu_list")
+	collection := db.GetCollection("yoyaku_mate_provider", "menu_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

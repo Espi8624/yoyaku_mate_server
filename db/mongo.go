@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 var MongoClient *mongo.Client
@@ -35,7 +36,8 @@ func InitMongoDB(url string) error {
 		return fmt.Errorf("failed to connect to MongoDB: %v", err)
 	}
 
-	if err := client.Ping(ctx, nil); err != nil {
+	// Atlas 환경에서는 readpref.Primary()로 Ping 권장
+	if err := client.Ping(ctx, readpref.Primary()); err != nil {
 		return fmt.Errorf("failed to ping MongoDB: %v", err)
 	}
 

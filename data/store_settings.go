@@ -12,7 +12,7 @@ import (
 
 // 店舗設定データ取得
 func GetStoreSettingsData(storeID string) (models.StoreSettings, error) {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "store_settings")
+	collection := db.GetCollection("yoyaku_mate_provider", "store_settings")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -30,7 +30,7 @@ func GetStoreSettingsData(storeID string) (models.StoreSettings, error) {
 
 // store_settings upsert (저장/수정)
 func UpsertStoreSettings(storeID string, reqBody map[string]interface{}) error {
-	collection := db.GetCollection("yoyaku_mate_provider_db", "store_settings")
+	collection := db.GetCollection("yoyaku_mate_provider", "store_settings")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
