@@ -1,6 +1,6 @@
 {
     "mongodb": {
-        "uri": "mongodb+srv://espi8624:2dYkbD5vOVghhmyy@cluster0.3bifxsy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
+        "uri": "mongodb+srv://taishi11291208:hCiFdruN1GJfJmGn@cluster0.3bifxsy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
         "database": "yoyaku_mate_provider",
         "timeout": 30
     },
@@ -11,4 +11,4 @@
             "https://localhost:3000"
         ]
     }
-} 
+}
