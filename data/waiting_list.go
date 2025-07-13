@@ -377,8 +377,8 @@ func GetAverageWaitingTime(storeID string) (int, error) {
 			count++
 		}
 	}
-	if count == 0 {
-		return 0, nil
+	if count < 40 {
+		return -1, nil // 40件未満なら-1
 	}
 	// 平均待機時間を計算
 	return int(totalSeconds / count), nil
