@@ -58,3 +58,18 @@ func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// GET /api/provider_user/firebase_uid?uid=xxxx
+func ProviderUserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
+	uid := r.URL.Query().Get("uid")
+	if uid == "" {
+		utils.RespondWithError(w, "Missing uid parameter", http.StatusBadRequest)
+		return
+	}
+	user, err := data.GetProviderUserDataByFirebaseUID(uid)
+	if err != nil {
+		utils.RespondWithError(w, "User not found", http.StatusNotFound)
+		return
+	}
+	utils.RespondWithJSON(w, user, http.StatusOK)
+}

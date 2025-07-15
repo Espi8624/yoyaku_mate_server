@@ -44,3 +44,20 @@ func UpdateProviderUserData(userID primitive.ObjectID, update map[string]interfa
 	}
 	return nil
 }
+
+func GetProviderUserDataByFirebaseUID(firebaseUID string) (models.User, error) {
+	collection := db.GetCollection("yoyaku_mate_provider", "user_info")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var user models.User
+	filter := bson.M{"firebase_uid": firebaseUID}
+
+	err := collection.FindOne(ctx, filter).Decode(&user)
+	if err != nil {
+		log.Printf("Failed to fetch provider user info by firebase_uid: %v", err)
+		return models.User{}, err
+	}
+
+	return user, nil
+}

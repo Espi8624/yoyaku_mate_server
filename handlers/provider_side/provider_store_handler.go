@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // GET /api/provider_store?store_id=xxx
@@ -12,16 +14,38 @@ func ProviderStoreHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		storeID := r.URL.Query().Get("store_id")
-		if storeID == "" {
-			utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
-			return
-		}
-		store, err := data.GetProviderStoreData(storeID)
+		// GET /api/provider_store?user_id=xxx
+		userID := r.URL.Query().Get("user_id")
+
+		// 문자열을 ObjectId로 변환
+		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
-			utils.RespondWithError(w, "Provider store not found", http.StatusNotFound)
+			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
-		utils.RespondWithJSON(w, store, http.StatusOK)
+
+		if storeID != "" {
+			// store_id로 조회
+			store, err := data.GetProviderStoreData(storeID)
+			if err != nil {
+				utils.RespondWithError(w, "Provider store not found", http.StatusNotFound)
+				return
+			}
+			utils.RespondWithJSON(w, store, http.StatusOK)
+			return
+		} else if userID != "" {
+			// user_id로 조회
+			store, err := data.GetProviderStoreDataByUserID(objectID)
+			if err != nil {
+				utils.RespondWithError(w, "Provider store not found", http.StatusNotFound)
+				return
+			}
+			utils.RespondWithJSON(w, store, http.StatusOK)
+			return
+		} else {
+			utils.RespondWithError(w, "Missing store_id or user_id parameter", http.StatusBadRequest)
+			return
+		}
 	case http.MethodPut:
 		storeID := r.URL.Query().Get("store_id")
 		if storeID == "" {

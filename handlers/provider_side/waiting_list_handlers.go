@@ -77,7 +77,7 @@ func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 	waitingListData, err := data.GetWaitingListData(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch waiting list: %v", err)
-		http.Error(w, "Failed to fetch waiting list", http.StatusInternalServerError)
+		utils.RespondWithError(w, "Failed to fetch waiting list", http.StatusInternalServerError)
 		return
 	}
 
@@ -154,14 +154,14 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 // Waiting list をクリアするリクエストを処理
 func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Get storeID from query parameters
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -169,7 +169,7 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	err := data.ClearWaitingList(storeID)
 	if err != nil {
 		log.Printf("Failed to clear waiting list: %v", err)
-		http.Error(w, "Failed to clear waiting list", http.StatusInternalServerError)
+		utils.RespondWithError(w, "Failed to clear waiting list", http.StatusInternalServerError)
 		return
 	}
 
@@ -183,7 +183,7 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("waiting_id")
 
 	if storeID == "" || userID == "" {
-		http.Error(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
+		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
 		return
 	}
 
@@ -192,7 +192,7 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 	waitingListItem, err := data.GetUserWaitingListItem(storeID, userID)
 	if err != nil {
 		log.Printf("Failed to fetch user waiting list item: %v", err)
-		http.Error(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
+		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
 		return
 	}
 
@@ -216,13 +216,13 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
 		log.Printf("Error decoding request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// 필수 필드 검증
 	if updateRequest.StoreID == "" || updateRequest.WaitingID == "" || updateRequest.Status == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		utils.RespondWithError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
@@ -235,7 +235,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		"no_show":   true,
 	}
 	if !validStatuses[updateRequest.Status] {
-		http.Error(w, "Invalid status value", http.StatusBadRequest)
+		utils.RespondWithError(w, "Invalid status value", http.StatusBadRequest)
 		return
 	}
 
@@ -259,12 +259,12 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 	avgSec, err := data.GetAverageWaitingTime(storeID)
 	if err != nil {
-		http.Error(w, "Failed to calculate average waiting time", http.StatusInternalServerError)
+		utils.RespondWithError(w, "Failed to calculate average waiting time", http.StatusInternalServerError)
 		return
 	}
 	avgText := "--分"
@@ -281,6 +281,5 @@ func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 		AverageSeconds: avgSec,
 		AverageText:    avgText,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	utils.RespondWithJSON(w, resp, http.StatusOK)
 }

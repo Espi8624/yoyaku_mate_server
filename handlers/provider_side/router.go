@@ -13,4 +13,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/store_settings", StoreSettingsHandler)
 	mux.HandleFunc("/api/provider_user", ProviderUserHandler)
 	mux.HandleFunc("/api/provider_store", ProviderStoreHandler)
+
+	mux.HandleFunc("/api/provider_user/firebase_uid", ProviderUserByFirebaseUIDHandler)
+
+	// Auth endpoints
+	mux.HandleFunc("/api/auth/signup", SignUpHandler)
+	mux.HandleFunc("/api/auth/check-email", EmailCheckHandler)
+	mux.HandleFunc("/api/auth/check-phone", PhoneCheckHandler)
 }
