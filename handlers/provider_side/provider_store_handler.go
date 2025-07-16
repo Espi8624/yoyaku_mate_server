@@ -17,13 +17,6 @@ func ProviderStoreHandler(w http.ResponseWriter, r *http.Request) {
 		// GET /api/provider_store?user_id=xxx
 		userID := r.URL.Query().Get("user_id")
 
-		// 문자열을 ObjectId로 변환
-		objectID, err := primitive.ObjectIDFromHex(userID)
-		if err != nil {
-			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
-			return
-		}
-
 		if storeID != "" {
 			// store_id로 조회
 			store, err := data.GetProviderStoreData(storeID)
@@ -35,6 +28,11 @@ func ProviderStoreHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		} else if userID != "" {
 			// user_id로 조회
+			objectID, err := primitive.ObjectIDFromHex(userID)
+			if err != nil {
+				utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
+				return
+			}
 			store, err := data.GetProviderStoreDataByUserID(objectID)
 			if err != nil {
 				utils.RespondWithError(w, "Provider store not found", http.StatusNotFound)
