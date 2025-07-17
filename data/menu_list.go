@@ -17,7 +17,7 @@ import (
 // メニューデータ取得
 // GetMenuListData retrieves menu list data from the database
 func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
-	storeID = "store-001"
+	// storeID = "store-001"
 	collection := db.GetCollection("yoyaku_mate_provider", "menu_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

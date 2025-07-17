@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -14,9 +15,10 @@ import (
 )
 
 const (
-	DatabaseName     = "yoyaku_mate_provider"
-	UsersCollection  = "user_info"
-	StoresCollection = "store_info"
+	DatabaseName            = "yoyaku_mate_provider"
+	UsersCollection         = "user_info"
+	StoresCollection        = "store_info"
+	StoreSettingsCollection = "store_settings"
 )
 
 // SignUpRequest는 회원가입 요청 데이터 구조체입니다.
@@ -25,7 +27,7 @@ type SignUpRequest struct {
 	Name           string  `json:"name"`         // 사용자 이름
 	Email          string  `json:"email"`        // 이메일
 	PhoneNumber    string  `json:"phone_number"` // 전화번호
-	Role           string  `json:"role"`         // "owner" or "staff"
+	Role           string  `json:"role"`         // "manager" or "staff"
 	StoreName      *string `json:"store_name,omitempty"`
 	StoreAddress   *string `json:"store_address,omitempty"`
 	StoreTelNumber *string `json:"store_tel_number,omitempty"`
@@ -74,8 +76,8 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate role
-	if req.Role != "owner" && req.Role != "staff" {
-		utils.RespondWithError(w, "Invalid role: must be 'owner' or 'staff'", http.StatusBadRequest)
+	if req.Role != "manager" && req.Role != "staff" {
+		utils.RespondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
 		return
 	}
 
@@ -123,8 +125,8 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		Role:        req.Role,
 	}
 
-	if req.Role == "owner" && req.StoreName != nil {
-		// Create store for owner
+	if req.Role == "manager" && req.StoreName != nil {
+		// Create store for manager
 		storeCollection := db.GetCollection(DatabaseName, StoresCollection)
 		bizNumber := ""
 		if req.BizNumber != nil {
@@ -144,6 +146,40 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		_, err = storeCollection.InsertOne(r.Context(), storeDoc)
 		if err != nil {
 			utils.RespondWithError(w, "Failed to create store", http.StatusInternalServerError)
+			return
+		}
+
+		// Create default store settings for the new store
+		storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
+		defaultSettings := models.StoreSettings{
+			ID:        primitive.NewObjectID(),
+			StoreID:   storeDoc.StoreID,
+			ManagerID: newUser.ID.Hex(),
+			Settings: models.Settings{
+				OperatingHours: map[string]models.StoreDayHours{
+					"monday":    {Start: "09:00", End: "18:00"},
+					"tuesday":   {Start: "09:00", End: "18:00"},
+					"wednesday": {Start: "09:00", End: "18:00"},
+					"thursday":  {Start: "09:00", End: "18:00"},
+					"friday":    {Start: "09:00", End: "18:00"},
+					"saturday":  {Start: "09:00", End: "18:00"},
+					"sunday":    {Start: "09:00", End: "18:00"},
+				},
+				ClosedDays: models.ClosedDays{
+					SpecificDates:  []string{},
+					RegularWeekly:  []string{},
+					RegularMonthly: []string{},
+					HolidayClosure: true,
+				},
+				WaitingPolicy: models.WaitingPolicy{
+					MaxWaitingCount: 100,
+				},
+			},
+			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		_, err = storeSettingsCollection.InsertOne(r.Context(), defaultSettings)
+		if err != nil {
+			utils.RespondWithError(w, "Failed to create default store settings", http.StatusInternalServerError)
 			return
 		}
 	}
