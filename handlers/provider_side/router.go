@@ -18,6 +18,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// Auth endpoints
 	mux.HandleFunc("/api/auth/signup", SignUpHandler)
+	mux.HandleFunc("/api/auth/check-store", ProviderStoreExistsHandler)
 	mux.HandleFunc("/api/auth/check-email", EmailCheckHandler)
 	mux.HandleFunc("/api/auth/check-phone", PhoneCheckHandler)
 }

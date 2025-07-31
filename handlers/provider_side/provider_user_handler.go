@@ -20,7 +20,7 @@ func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 문자열을 ObjectId로 변환
+		// 文字列を ObjectId に変換
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
 			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
