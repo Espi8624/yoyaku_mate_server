@@ -29,5 +29,6 @@ type ClosedDays struct {
 }
 
 type WaitingPolicy struct {
-	MaxWaitingCount int `bson:"max_waiting_count" json:"max_waiting_count"`
+	MaxWaitingCount       int `bson:"max_waiting_count" json:"max_waiting_count"`
+	EstimatedWaitingCount int `bson:"estimated_waiting_count" json:"estimated_waiting_count"`
 }
