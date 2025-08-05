@@ -95,7 +95,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 필수 필드 검증
+	// 必須フィールド検証
 	if newWaiting.StoreID == "" {
 		log.Printf("Missing required field: store_id")
 		http.Error(w, "Missing required field: store_id", http.StatusBadRequest)
@@ -138,16 +138,16 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 	newWaiting.QueueNumber = nextQueueNumber
 
-	// Create the waiting list item
-	err = data.CreateWaitingListItem(newWaiting)
+	// data 階層 から生成された object を直接受ける
+	createdItem, err := data.CreateWaitingListItem(newWaiting)
 	if err != nil {
 		log.Printf("Failed to create waiting list item: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Return the created item
-	utils.RespondWithJSON(w, newWaiting, http.StatusCreated)
+	// handler が持っていた object ではない、DB から直接持ってきた object を返却
+	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
 }
 
 // handleClearWaitingList handles requests to clear the waiting list
@@ -207,6 +207,7 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateWaitingStatus는 웨이팅 항목의 상태를 업데이트하는 PATCH 요청을 처리합니다
+// 待機目録のステータスをアップデートする PATCH 要請を処理
 func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	var updateRequest struct {
 		StoreID   string `json:"store_id"`
@@ -221,12 +222,14 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 필수 필드 검증
+	// 必須フィールド検証
 	if updateRequest.StoreID == "" || updateRequest.WaitingID == "" || updateRequest.Status == "" {
 		utils.RespondWithError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
 	// Status 유효성 검증
+	// Status 有効性検証
 	validStatuses := map[string]bool{
 		"waiting":   true,
 		"notified":  true,
@@ -240,6 +243,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 상태 업데이트
+	// Status アップデート
 	err := data.UpdateWaitingItemStatus(updateRequest.StoreID, updateRequest.WaitingID, updateRequest.Status)
 	if err != nil {
 		log.Printf("Failed to update waiting status: %v", err)
@@ -248,6 +252,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 성공 응답
+	// 成功応答
 	utils.RespondWithJSON(w, map[string]string{
 		"message": "Status updated successfully",
 		"status":  updateRequest.Status,
