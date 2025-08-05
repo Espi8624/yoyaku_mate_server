@@ -66,23 +66,23 @@ func GetWaitingListData(storeID string) ([]models.WaitingListItem, error) {
 
 // CreateWaitingListItem은 데이터베이스에 새로운 웨이팅 리스트 항목을 생성합니다
 // 新しいウェイティングリスト項目作成
-func CreateWaitingListItem(item models.WaitingListItem) error {
+func CreateWaitingListItem(item models.WaitingListItem) (*models.WaitingListItem, error) {
 	collection := db.GetCollection("yoyaku_mate_provider", "waiting_list")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Validate required fields
 	if item.StoreID == "" {
-		return fmt.Errorf("store_id is required")
+		return nil, fmt.Errorf("store_id is required")
 	}
 	if item.CustomerName == "" {
-		return fmt.Errorf("customer_name is required")
+		return nil, fmt.Errorf("customer_name is required")
 	}
 	if item.PartySize <= 0 {
-		return fmt.Errorf("party_size must be greater than 0")
+		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
 	if item.WaitingID == "" {
-		return fmt.Errorf("waiting_id is required")
+		return nil, fmt.Errorf("waiting_id is required")
 	}
 
 	// Set default values if not provided
@@ -97,20 +97,21 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
 
-	// Check for duplicate waiting_id
-	filter := bson.M{
-		"store_id":   item.StoreID,
-		"waiting_id": item.WaitingID,
-	}
+	// // Check for duplicate waiting_id
+	// 中腹処理必要時、DBに直接追加必要
+	// filter := bson.M{
+	// 	"store_id":   item.StoreID,
+	// 	"waiting_id": item.WaitingID,
+	// }
 
-	var existingItem models.WaitingListItem
-	err := collection.FindOne(ctx, filter).Decode(&existingItem)
-	if err == nil {
-		return fmt.Errorf("waiting_id %s already exists for store %s", item.WaitingID, item.StoreID)
-	} else if err != mongo.ErrNoDocuments {
-		log.Printf("Error checking for duplicate waiting_id: %v", err)
-		return fmt.Errorf("failed to check for duplicate waiting_id: %v", err)
-	}
+	// var existingItem models.WaitingListItem
+	// err := collection.FindOne(ctx, filter).Decode(&existingItem)
+	// if err == nil {
+	// 	return nil, fmt.Errorf("waiting_id %s already exists for store %s", item.WaitingID, item.StoreID)
+	// } else if err != mongo.ErrNoDocuments {
+	// 	log.Printf("Error checking for duplicate waiting_id: %v", err)
+	// 	return nil, fmt.Errorf("failed to check for duplicate waiting_id: %v", err)
+	// }
 
 	// Create BSON document
 	doc := bson.M{
@@ -132,11 +133,20 @@ func CreateWaitingListItem(item models.WaitingListItem) error {
 	result, err := collection.InsertOne(ctx, doc)
 	if err != nil {
 		log.Printf("Failed to insert waiting list item: %v\nDocument: %+v", err, doc)
-		return fmt.Errorf("failed to insert waiting list item: %v", err)
+		return nil, fmt.Errorf("failed to insert waiting list item: %v", err)
 	}
 
 	log.Printf("Successfully inserted waiting list item with ID: %v", result.InsertedID)
-	return nil
+	// 挿入された document を照会し、返却
+	var createdItem models.WaitingListItem
+	filter := bson.M{"_id": result.InsertedID}
+	err = collection.FindOne(ctx, filter).Decode(&createdItem)
+	if err != nil {
+		log.Printf("Failed to fetch newly created waiting list item: %v", err)
+		return nil, fmt.Errorf("failed to fetch newly created item: %v", err)
+	}
+
+	return &createdItem, nil
 }
 
 // GetNextQueueNumber returns the next available queue number for a store

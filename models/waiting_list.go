@@ -5,7 +5,7 @@ import (
 )
 
 type WaitingListItem struct {
-	ID               primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
+	ID               primitive.ObjectID `json:"id,omitempty" bson:"_id, omitempty"`
 	StoreID          string             `json:"store_id" bson:"store_id"`
 	WaitingID        string             `json:"waiting_id" bson:"waiting_id"`
 	QueueNumber      int                `json:"queue_number" bson:"queue_number"`
@@ -13,11 +13,11 @@ type WaitingListItem struct {
 	PartySize        int                `json:"party_size" bson:"party_size"`
 	Nationality      string             `json:"nationality" bson:"nationality"`
 	RegistrationTime string             `json:"registration_time" bson:"registration_time"`
-	Contact          string             `json:"contact" bson:"contact"`
+	Contact          *string            `json:"contact" bson:"contact,omitempty"`
 	Status           string             `json:"status" bson:"status"` // "waiting", "notified", "cancelled", "completed"
 	CalledTime       *string            `json:"called_time,omitempty" bson:"called_time,omitempty"`
 	EntryTime        *string            `json:"entry_time,omitempty" bson:"entry_time,omitempty"`
-	Notes            string             `json:"notes,omitempty" bson:"notes,omitempty"`
+	Notes            *string            `json:"notes,omitempty" bson:"notes,omitempty"`
 }
 
 type AverageWaitingTimeResponse struct {
