@@ -11,32 +11,32 @@ import (
 )
 
 // 店舗設定データ取得
-func GetStoreSettingsData(storeID string) (models.StoreSettings, error) {
-	collection := db.GetCollection("yoyaku_mate_provider", "store_settings")
+func GetStoreSettingsData(storeID string) (models.StoreSetting, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreSettings)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var storeSettings models.StoreSettings
+	var storeSettings models.StoreSetting
 	filter := bson.M{"store_id": storeID}
 
 	err := collection.FindOne(ctx, filter).Decode(&storeSettings)
 	if err != nil {
 		log.Printf("Failed to fetch store settings: %v", err)
-		return models.StoreSettings{}, err
+		return models.StoreSetting{}, err
 	}
 
 	return storeSettings, nil
 }
 
-// store_settings upsert (저장/수정)
+// store_settings upsert (保存/修正)
 func UpsertStoreSettings(storeID string, reqBody map[string]interface{}) error {
-	collection := db.GetCollection("yoyaku_mate_provider", "store_settings")
+	collection := db.GetCollection(DatabaseName, CollectionStoreSettings)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	filter := bson.M{"store_id": storeID}
 	update := bson.M{"$set": reqBody}
-	// Upsert 옵션을 명시적으로 true로 설정하지 않고, UpdateOne만 사용 (기본 라이브러리 스타일)
+	// upsert オプションを明示的に true に設定せず、UpdateOne のみ使用 (基本ライブラリスタイル)
 	_, err := collection.UpdateOne(ctx, filter, update)
 	return err
 }

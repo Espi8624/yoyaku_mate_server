@@ -4,7 +4,8 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type WaitingListItem struct {
+// waiting_list モデル
+type WaitingList struct {
 	ID               primitive.ObjectID `json:"id,omitempty" bson:"_id, omitempty"`
 	StoreID          string             `json:"store_id" bson:"store_id"`
 	WaitingID        string             `json:"waiting_id" bson:"waiting_id"`

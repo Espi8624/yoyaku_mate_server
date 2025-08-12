@@ -11,7 +11,7 @@ import (
 )
 
 // GET /api/provider_user?user_id=xxx
-func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
+func UserHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		userID := r.URL.Query().Get("user_id")
@@ -27,9 +27,9 @@ func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		user, err := data.GetProviderUserData(objectID)
+		user, err := data.GetUserData(objectID)
 		if err != nil {
-			utils.RespondWithError(w, "Provider user not found", http.StatusNotFound)
+			utils.RespondWithError(w, "User not found", http.StatusNotFound)
 			return
 		}
 		utils.RespondWithJSON(w, user, http.StatusOK)
@@ -49,8 +49,8 @@ func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		if err := data.UpdateProviderUserData(objectID, update); err != nil {
-			utils.RespondWithError(w, "Failed to update provider user info", http.StatusInternalServerError)
+		if err := data.UpdateUserData(objectID, update); err != nil {
+			utils.RespondWithError(w, "Failed to update user info", http.StatusInternalServerError)
 			return
 		}
 		utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
@@ -60,13 +60,13 @@ func ProviderUserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/provider_user/firebase_uid?uid=xxxx
-func ProviderUserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
+func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
 	uid := r.URL.Query().Get("uid")
 	if uid == "" {
 		utils.RespondWithError(w, "Missing uid parameter", http.StatusBadRequest)
 		return
 	}
-	user, err := data.GetProviderUserDataByFirebaseUID(uid)
+	user, err := data.GetUserDataByFirebaseUID(uid)
 	if err != nil {
 		utils.RespondWithError(w, "User not found", http.StatusNotFound)
 		return

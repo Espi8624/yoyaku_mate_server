@@ -2,7 +2,8 @@ package models
 
 import "go.mongodb.org/mongo-driver/bson/primitive"
 
-type StoreSettings struct {
+// store_settings モデル
+type StoreSetting struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
 	StoreID   string             `bson:"store_id" json:"store_id"`
 	ManagerID string             `bson:"manager_id" json:"manager_id"`

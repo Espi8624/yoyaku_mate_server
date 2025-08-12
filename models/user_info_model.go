@@ -2,6 +2,7 @@ package models
 
 import "go.mongodb.org/mongo-driver/bson/primitive"
 
+// user_info モデル
 type User struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
 	FirebaseUID string             `bson:"firebase_uid" json:"firebase_uid"`

@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-// UpdateNotifier is used to notify when data changes occur
+// データの更新が発生したことを通知
 type UpdateNotifier interface {
 	NotifyUpdate()
 }
@@ -14,14 +14,14 @@ var (
 	notifiersMu sync.RWMutex
 )
 
-// RegisterNotifier registers a notifier for a specific store
+// 特定のストアに対してノーティファイア（通知先）を登録
 func RegisterNotifier(storeID string, notifier UpdateNotifier) {
 	notifiersMu.Lock()
 	defer notifiersMu.Unlock()
 	notifiers[storeID] = append(notifiers[storeID], notifier)
 }
 
-// UnregisterNotifier removes a notifier for a specific store
+// 特定のストアに対してノーティファイアを登録解除
 func UnregisterNotifier(storeID string, notifier UpdateNotifier) {
 	notifiersMu.Lock()
 	defer notifiersMu.Unlock()
@@ -35,7 +35,7 @@ func UnregisterNotifier(storeID string, notifier UpdateNotifier) {
 	}
 }
 
-// NotifyStoreUpdate notifies all registered notifiers for a specific store
+// 特定のストアに対して更新通知を行う
 func NotifyStoreUpdate(storeID string) {
 	notifiersMu.RLock()
 	defer notifiersMu.RUnlock()

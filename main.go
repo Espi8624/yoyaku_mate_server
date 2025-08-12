@@ -6,8 +6,7 @@ import (
 	"os"
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/db"
-	CustomerSidehandlers "yoyaku_mate_server/handlers/customer_side"
-	ProviderSidehandlers "yoyaku_mate_server/handlers/provider_side"
+	handlers "yoyaku_mate_server/handlers"
 
 	"github.com/rs/cors"
 )
@@ -31,8 +30,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Register routes
-	CustomerSidehandlers.RegisterRoutes(mux)
-	ProviderSidehandlers.RegisterRoutes(mux)
+	handlers.RegisterRoutes(mux)
 
 	// Configure CORS
 	c := cors.New(cors.Options{
