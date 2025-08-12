@@ -21,33 +21,6 @@ const (
 	StoreSettingsCollection = "store_settings"
 )
 
-// 会員加入リクエストデータ構造体
-type SignUpRequest struct {
-	FirebaseUID    string  `json:"firebase_uid"`
-	Name           string  `json:"name"`
-	Email          string  `json:"email"`
-	PhoneNumber    string  `json:"phone_number"`
-	Role           string  `json:"role"`
-	StoreID        *string `json:"store_id,omitempty"`
-	StoreName      *string `json:"store_name,omitempty"`
-	StoreAddress   *string `json:"store_address,omitempty"`
-	StoreTelNumber *string `json:"store_tel_number,omitempty"`
-	StoreEmail     *string `json:"store_email,omitempty"`
-	BizNumber      *string `json:"biz_number,omitempty"`
-	Description    *string `json:"description,omitempty"`
-}
-
-// メールアドレス重複確認リクエスト構造体
-type EmailCheckRequest struct {
-	Email string `json:"email"`
-}
-
-// PhoneCheckRequest는 전화번호 중복 확인 요청 구조체입니다.
-// 電話番号重複確認リクエスト構造体
-type PhoneCheckRequest struct {
-	PhoneNumber string `json:"phone_number"`
-}
-
 // SignUpHandler handles the user registration process
 // @Summary Register a new user
 // @Description Register a new user with the provided information
@@ -65,7 +38,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req SignUpRequest
+	var req models.SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -169,7 +142,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 
 		// 店舗設定データ生成
 		storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
-		defaultSettings := models.StoreSettings{
+		defaultSettings := models.StoreSetting{
 			ID:        primitive.NewObjectID(),
 			StoreID:   newStore.StoreID,
 			ManagerID: newUserID.Hex(),
@@ -238,7 +211,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, newUser, http.StatusCreated)
 }
 
-func ProviderStoreExistsHandler(w http.ResponseWriter, r *http.Request) {
+func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -263,7 +236,7 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req EmailCheckRequest
+	var req models.EmailCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
@@ -291,7 +264,7 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req PhoneCheckRequest
+	var req models.PhoneCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return

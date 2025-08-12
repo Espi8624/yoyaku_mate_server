@@ -18,11 +18,11 @@ import (
 
 var MongoClient *mongo.Client
 
-// WaitingListUpdate represents a waiting list update
+// ウェイティングリストの更新を監視するための構造体
 type WaitingListUpdate struct {
-	OperationType string                 `json:"operationType"`
-	FullDocument  models.WaitingListItem `json:"fullDocument"`
-	DocumentKey   interface{}            `json:"documentKey"`
+	OperationType string             `json:"operationType"`
+	FullDocument  models.WaitingList `json:"fullDocument"`
+	DocumentKey   interface{}        `json:"documentKey"`
 }
 
 // Initialize MongoDB connection
@@ -36,7 +36,7 @@ func InitMongoDB(url string) error {
 		return fmt.Errorf("failed to connect to MongoDB: %v", err)
 	}
 
-	// Atlas 환경에서는 readpref.Primary()로 Ping 권장
+	// Atlas 環境では readpref.Primary() を使用して Ping を推奨
 	if err := client.Ping(ctx, readpref.Primary()); err != nil {
 		return fmt.Errorf("failed to ping MongoDB: %v", err)
 	}
@@ -46,12 +46,12 @@ func InitMongoDB(url string) error {
 	return nil
 }
 
-// MonitorWaitingList monitors changes in the waiting list collection
+// 　ウェイティングコレクションの変更を監視する
 func MonitorWaitingList(collection *mongo.Collection) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	var lastData []models.WaitingListItem
+	var lastData []models.WaitingList
 	ctx := context.Background()
 
 	for range ticker.C {
@@ -62,7 +62,7 @@ func MonitorWaitingList(collection *mongo.Collection) {
 			continue
 		}
 
-		var currentData []models.WaitingListItem
+		var currentData []models.WaitingList
 		if err := cursor.All(ctx, &currentData); err != nil {
 			log.Printf("Error decoding waiting list data: %v", err)
 			cursor.Close(ctx)
@@ -84,7 +84,7 @@ func MonitorWaitingList(collection *mongo.Collection) {
 	}
 }
 
-// GetCollection returns a MongoDB collection
+// MongoDB collection 取得
 func GetCollection(database, collection string) *mongo.Collection {
 	return MongoClient.Database(database).Collection(collection)
 }

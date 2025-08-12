@@ -13,25 +13,25 @@ import (
 // 店舗情報に対する GET および PUT リクエスト を処理
 // GET /api/provider_store?store_id=xxx 또는 ?user_id=xxx
 // PUT /api/provider_store?store_id=xxx
-func ProviderStoreHandler(w http.ResponseWriter, r *http.Request) {
+func StoreHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		handleGetProviderStore(w, r)
+		handleGetStore(w, r)
 	case http.MethodPut:
-		handleUpdateProviderStore(w, r)
+		handleUpdateStore(w, r)
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 // 店舗情報の取得(GET)を処理
-func handleGetProviderStore(w http.ResponseWriter, r *http.Request) {
+func handleGetStore(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	userID := r.URL.Query().Get("user_id")
 
 	if storeID != "" {
 		// store_id で照会
-		store, err := data.GetProviderStoreData(storeID)
+		store, err := data.GetStoreData(storeID)
 		if err != nil {
 			// data 関数が mongo.ErrNoDocuments を返却したら 404, その他は 500
 			if err == mongo.ErrNoDocuments {
@@ -54,7 +54,7 @@ func handleGetProviderStore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		store, err := data.GetProviderStoreDataByUserID(objectID)
+		store, err := data.GetStoreDataByUserID(objectID)
 		if err != nil {
 			// data 関数が mongo.ErrNoDocuments を返却したら 404, その他は 500
 			if err == mongo.ErrNoDocuments {
@@ -75,7 +75,7 @@ func handleGetProviderStore(w http.ResponseWriter, r *http.Request) {
 
 // 店舗情報修正(PUT) ロジックを処理
 // PUT /api/provider_store?store_id=xxx
-func handleUpdateProviderStore(w http.ResponseWriter, r *http.Request) {
+func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
@@ -88,8 +88,8 @@ func handleUpdateProviderStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := data.UpdateProviderStoreData(storeID, update); err != nil {
-		utils.RespondWithError(w, "Failed to update provider store info", http.StatusInternalServerError)
+	if err := data.UpdateStoreData(storeID, update); err != nil {
+		utils.RespondWithError(w, "Failed to update store info", http.StatusInternalServerError)
 		return
 	}
 

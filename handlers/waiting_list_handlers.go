@@ -11,8 +11,7 @@ import (
 	"yoyaku_mate_server/utils"
 )
 
-// WaitingListHandler는 웨이팅 리스트의 주요 작업을 처리하는 핸들러입니다
-// Waiting list の 主要な操作を処理するハンドラ
+// WaitingList の主要な操作を処理するハンドラ
 func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -42,8 +41,7 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleWaitingListPolling은 웨이팅 리스트 업데이트를 위한 폴링 요청을 처리합니다
-// Waiting list アップデートのためのポーリングリクエストを処理
+// WaitingList アップデートのためのポーリングリクエストを処理
 func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -62,10 +60,8 @@ func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("Polling request handled successfully for store_id: %s", storeID)
 }
 
-// handleGetWaitingList는 웨이팅 리스트 조회를 위한 GET 요청을 처리합니다
-// Waiting list の取得を処理する GET リクエストを処理
+// WaitingList の取得を処理する GET リクエストを処理
 func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
-	// 쿼리 파라미터에서 storeID 가져오기
 	// クエリパラメータから storeID を取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -85,10 +81,9 @@ func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
 }
 
-// handleCreateWaitingList handles POST requests for creating new waiting list items
 // 新しいウェイティングリスト作成処理 (POSTリクエスト処理)
 func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
-	var newWaiting models.WaitingListItem
+	var newWaiting models.WaitingList
 	if err := json.NewDecoder(r.Body).Decode(&newWaiting); err != nil {
 		log.Printf("Error decoding request body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -150,8 +145,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
 }
 
-// handleClearWaitingList handles requests to clear the waiting list
-// Waiting list をクリアするリクエストを処理
+// WaitingList をクリアするリクエストを処理
 func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -176,7 +170,6 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
 }
 
-// handleGetUserWaitingList는 특정 사용자의 웨이팅 리스트 항목을 조회하는 GET 요청을 처리합니다
 // 特定のユーザーのウェイティングリスト項目を取得する GET リクエストを処理
 func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
@@ -187,7 +180,6 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 데이터 조회
 	// データ取得
 	waitingListItem, err := data.GetUserWaitingListItem(storeID, userID)
 	if err != nil {
@@ -201,12 +193,10 @@ func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// JSON 응답
 	// JSON 応答
 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 }
 
-// handleUpdateWaitingStatus는 웨이팅 항목의 상태를 업데이트하는 PATCH 요청을 처리합니다
 // 待機目録のステータスをアップデートする PATCH 要請を処理
 func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	var updateRequest struct {
@@ -221,14 +211,12 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 필수 필드 검증
 	// 必須フィールド検証
 	if updateRequest.StoreID == "" || updateRequest.WaitingID == "" || updateRequest.Status == "" {
 		utils.RespondWithError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// Status 유효성 검증
 	// Status 有効性検証
 	validStatuses := map[string]bool{
 		"waiting":   true,
@@ -242,7 +230,6 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 상태 업데이트
 	// Status アップデート
 	err := data.UpdateWaitingItemStatus(updateRequest.StoreID, updateRequest.WaitingID, updateRequest.Status)
 	if err != nil {
@@ -251,7 +238,6 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 성공 응답
 	// 成功応答
 	utils.RespondWithJSON(w, map[string]string{
 		"message": "Status updated successfully",
@@ -259,7 +245,6 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	}, http.StatusOK)
 }
 
-// 평균 대기시간 반환 핸들러
 // 平均待機時間を返すハンドラ
 func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")

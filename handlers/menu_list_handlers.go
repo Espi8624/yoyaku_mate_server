@@ -8,7 +8,7 @@ import (
 	"yoyaku_mate_server/utils"
 )
 
-// MenuListHandler handles requests for menu lists
+// メニューリストのリクエストを処理
 func MenuListHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -20,16 +20,16 @@ func MenuListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleGetMenuList handles GET requests for menu lists
+// メニューリストの取得を処理
 func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
-	// storeID를 쿼리 파라미터에서 가져오기
+	// storeID をクエリパラメータから取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
-	// 데이터 가져오기
+	// データ取得
 	menuListItems, err := data.GetMenuListData(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch menu list: %v", err)
@@ -37,7 +37,7 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 평평한 리스트로 변환
+	// 各メニューアイテムをマップに変換
 	var response []map[string]interface{}
 	for _, item := range menuListItems {
 		menuItem := map[string]interface{}{
@@ -56,11 +56,11 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 		response = append(response, menuItem)
 	}
 
-	// JSON 응답
+	// JSON 応答
 	utils.RespondWithJSON(w, response, http.StatusOK)
 }
 
-// handleBulkSaveMenuList handles POST requests to bulk save menu lists
+// メニューリストの一括保存を処理
 func handleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {

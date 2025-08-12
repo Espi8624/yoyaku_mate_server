@@ -27,7 +27,7 @@ func Load(env string) Config {
 		env = "development"
 	}
 
-	// 여러 가능한 설정 파일 위치 시도
+	// 設定ファイル Path リスト
 	configPaths := []string{
 		filepath.Join(".", "config."+env+".json"),
 		filepath.Join(".", "config", "config."+env+".json"),
@@ -38,7 +38,7 @@ func Load(env string) Config {
 	var err error
 	var configPath string
 
-	// 가능한 모든 경로에서 설정 파일 찾기
+	// パスをループし、最初に存在する設定ファイルを検索
 	for _, path := range configPaths {
 		if f, err = os.Open(path); err == nil {
 			configPath = path

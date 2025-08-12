@@ -15,21 +15,20 @@ import (
 )
 
 // メニューデータ取得
-// GetMenuListData retrieves menu list data from the database
-func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
+func GetMenuListData(storeID string) ([]models.MenuList, error) {
 	// storeID = "store-001"
-	collection := db.GetCollection("yoyaku_mate_provider", "menu_list")
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// storeID 검증
+	// storeID 検証
 	if storeID == "" {
 		return nil, fmt.Errorf("store_id is required")
 	}
 
-	var menuListItems []models.MenuListItem
+	var menuListItems []models.MenuList
 
-	// menu_status가 "disable"이 아닌 데이터만 조회
+	// menu_status が "disable" ではないデータのみ照会
 	filter := bson.M{
 		"store_id":    storeID,
 		"menu_status": bson.M{"$ne": "disable"},
@@ -41,9 +40,9 @@ func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
 	}
 	defer cursor.Close(ctx)
 
-	// 결과를 MenuListItem 구조체로 변환
+	// 結果を MenuList 構造体に変換
 	for cursor.Next(ctx) {
-		var item models.MenuListItem
+		var item models.MenuList
 		if err := cursor.Decode(&item); err != nil {
 			log.Printf("Failed to decode menu item: %v", err)
 			return nil, err
@@ -59,9 +58,9 @@ func GetMenuListData(storeID string) ([]models.MenuListItem, error) {
 	return menuListItems, nil
 }
 
-// InsertMenuListData handles bulk insertion or upsert of menu data
-func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuListItem, error) {
-	collection := db.GetCollection("yoyaku_mate_provider", "menu_list")
+// InsertMenuListData は、メニューデータの一括挿入またはアップサートを処理
+func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuList, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -69,14 +68,14 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 		return nil, fmt.Errorf("store_id is required")
 	}
 
-	// bulkWrite를 위한 모델 리스트
+	// bulkWrite モデルを格納するスライス
 	var writeModels []mongo.WriteModel
-	var insertedItems []models.MenuListItem
+	var insertedItems []models.MenuList
 
-	// 배치 크기 설정 (예: 1000개 단위)
+	// バッチサイズ設定（例：1000個単位）
 	batchSize := 1000
 	for i, item := range menuData {
-		// _id 처리: 비어 있으면 ObjectID 생성
+		// _id が存在しない場合は新しい ObjectID を生成
 		var id primitive.ObjectID
 		if idStr := getStringValue(item, "id"); idStr != "" {
 			var err error
@@ -86,10 +85,10 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 				id = primitive.NewObjectID()
 			}
 		} else {
-			id = primitive.NewObjectID() // 새 ObjectID 생성
+			id = primitive.NewObjectID() // 新しい ObjectID 生成
 		}
 
-		// upsert를 위한 업데이트 문서 준비
+		// upsert するためのアップデート文書を準備
 		update := bson.M{
 			"$set": bson.M{
 				"store_id":    storeID,
@@ -107,35 +106,35 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 			},
 		}
 
-		// bulkWrite 모델 추가
+		// bulkWrite モデル追加
 		writeModel := mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"_id": id}).
 			SetUpdate(update).
 			SetUpsert(true)
 		writeModels = append(writeModels, writeModel)
 
-		// 배치 크기에 도달하면 bulkWrite 실행
+		// バッチサイズに達したら bulkWrite を実行
 		if (i+1)%batchSize == 0 || i == len(menuData)-1 {
 			_, err := collection.BulkWrite(ctx, writeModels) // result, err
 			if err != nil {
 				log.Printf("Failed to bulk write menu items: %v", err)
-				// 일부 실패 시에도 진행 (선택 사항: 전체 롤백 가능)
+				// 一部失敗しても処理を続行
 				continue
 			}
 
-			// 성공한 항목 처리 (Upsert된 ID 기반으로 조회)
+			// 成功項目処理 (upsert された ID を基に照会)
 			for _, model := range writeModels {
 				if updateModel, ok := model.(*mongo.UpdateOneModel); ok {
 					id := updateModel.Filter.(bson.M)["_id"].(primitive.ObjectID)
-					var menuItem models.MenuListItem
+					var menuItem models.MenuList
 					err := collection.FindOne(ctx, bson.M{"_id": id}).Decode(&menuItem)
 					if err == nil {
-						menuItem.ID = id // 문자열로 변환하여 응답
+						menuItem.ID = id
 						insertedItems = append(insertedItems, menuItem)
 					}
 				}
 			}
-			writeModels = []mongo.WriteModel{} // 배치 초기화
+			writeModels = []mongo.WriteModel{}
 		}
 	}
 
@@ -160,7 +159,7 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 // 	return 0
 // }
 
-// parseTimeToString converts a string to time.Time then back to string (ISO format)
+// 時間文字列をパースし、標準形式に変換
 func parseTimeToString(timeStr string) string {
 	if timeStr == "" {
 		return time.Now().Format(time.RFC3339)
@@ -179,7 +178,7 @@ func parseTimeToString(timeStr string) string {
 
 	for _, format := range formats {
 		if parsedTime, err := time.Parse(format, timeStr); err == nil {
-			return parsedTime.Format(time.RFC3339) // 표준 형식으로 반환
+			return parsedTime.Format(time.RFC3339) // 標準形式に変換
 		}
 	}
 
@@ -187,7 +186,7 @@ func parseTimeToString(timeStr string) string {
 	return time.Now().Format(time.RFC3339)
 }
 
-// 헬퍼 함수들
+// 文字列値を取得し、存在しない場合は空文字列を返却
 func getStringValue(item map[string]interface{}, key string) string {
 	if val, ok := item[key]; ok {
 		if str, ok := val.(string); ok {
@@ -198,6 +197,7 @@ func getStringValue(item map[string]interface{}, key string) string {
 	return ""
 }
 
+// 整数値を取得し、存在しない場合は0を返却
 func getIntValue(item map[string]interface{}, key string) int {
 	if val, ok := item[key]; ok {
 		switch v := val.(type) {
@@ -206,7 +206,7 @@ func getIntValue(item map[string]interface{}, key string) int {
 		case int:
 			return v
 		case string:
-			// 문자열로 된 숫자 파싱 시도
+			// 文字列から整数に変換
 			if num, err := strconv.Atoi(v); err == nil {
 				return num
 			}
