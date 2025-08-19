@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-func RegisterRoutes(mux *http.ServeMux) {
+func RegisterRoutes(mux *http.ServeMux, uploadHandler *UploadHandler) {
 	// API endpoints
 	mux.HandleFunc("/api/waiting-list", WaitingListHandler)
 	mux.HandleFunc("/api/waiting-list/poll", HandleWaitingListPolling)
@@ -21,4 +21,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/check-store", StoreExistsHandler)
 	mux.HandleFunc("/api/auth/check-email", EmailCheckHandler)
 	mux.HandleFunc("/api/auth/check-phone", PhoneCheckHandler)
+
+	mux.HandleFunc("/api/stores/upload-license", uploadHandler.UploadLicense)
 }

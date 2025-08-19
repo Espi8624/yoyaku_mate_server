@@ -10,8 +10,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// 店舗情報に対する GET および PUT リクエスト を処理
-// GET /api/provider_store?store_id=xxx 또는 ?user_id=xxx
+// 店舗情報に対する GET および PUT リクエストを処理
+// GET /api/provider_store?store_id=xxx または ?user_id=xxx
 // PUT /api/provider_store?store_id=xxx
 func StoreHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

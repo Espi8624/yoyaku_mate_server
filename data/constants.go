@@ -7,4 +7,5 @@ const (
 	CollectionWaitingList   = "waiting_list"
 	CollectionMenuList      = "menu_list"
 	CollectionStoreSettings = "store_settings"
+	CollectionStoreLicense  = "store_license"
 )
