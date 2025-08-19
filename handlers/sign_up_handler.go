@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"time"
@@ -21,17 +22,8 @@ const (
 	StoreSettingsCollection = "store_settings"
 )
 
-// SignUpHandler handles the user registration process
-// @Summary Register a new user
-// @Description Register a new user with the provided information
-// @Tags auth
-// @Accept json
-// @Produce json
-// @Param user body SignUpRequest true "User registration information"
-// @Success 201 {object} models.User
-// @Failure 400 {object} utils.ErrorResponse
-// @Failure 409 {object} utils.ErrorResponse
-// @Router /api/auth/signup [post]
+// 会員加入処理
+// /api/auth/signup [post]
 func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -44,26 +36,26 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
+	// 必須フィールド検証
 	if req.FirebaseUID == "" || req.Email == "" || req.Name == "" || req.Role == "" {
 		utils.RespondWithError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// Validate role
+	// 権限検証
 	if req.Role != "manager" && req.Role != "staff" {
 		utils.RespondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
 		return
 	}
 
-	// Validate email format
+	// メールアドレス形式検証
 	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	if !emailRegex.MatchString(req.Email) {
 		utils.RespondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 
-	// Validate personal phone number format
+	// 個人電話番号形式検証
 	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
 	if !phoneRegex.MatchString(req.PhoneNumber) {
 		utils.RespondWithError(w, "Invalid personal phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
@@ -73,7 +65,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
 	storeCollection := db.GetCollection(DatabaseName, StoresCollection)
 
-	// Check if user already exists (by FirebaseUID, email, or personal phone)
+	// ユーザー中腹確認 (FirebaseUID, メールアドレス, 個人電話番号)
 	var existingUser models.User
 	err := userCollection.FindOne(r.Context(), bson.M{
 		"$or": []bson.M{
@@ -137,6 +129,27 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Failed to create store", http.StatusInternalServerError)
 			return
 		}
+
+		// ECS-41
+		// store_license コレクションに初期データ挿入
+		licenseCollection := db.GetCollection(DatabaseName, "store_license")
+
+		initialLicenseInfo := models.StoreLicense{
+			ID:                 primitive.NewObjectID(),
+			StoreID:            newStore.StoreID,
+			VerificationStatus: models.StatusNotSubmitted,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+
+		_, err = licenseCollection.InsertOne(r.Context(), initialLicenseInfo)
+		if err != nil {
+			// 失敗時、直前に作成した店舗情報削除
+			storeCollection.DeleteOne(r.Context(), bson.M{"_id": newStore.ID})
+			utils.RespondWithError(w, "Failed to create initial license info", http.StatusInternalServerError)
+			return
+		}
+		// ECS-41
 
 		storeIdForUser = newStore.StoreID
 
@@ -207,6 +220,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("--- Preparing to respond for signup ---")
+	log.Printf("User object being sent: %+v", newUser)
+	log.Printf("StoreID value specifically: '%s'", newUser.StoreID)
 
 	utils.RespondWithJSON(w, newUser, http.StatusCreated)
 }

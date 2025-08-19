@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"yoyaku_mate_server/config"
+	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/db"
 	handlers "yoyaku_mate_server/handlers"
 
@@ -26,11 +27,24 @@ func main() {
 	collection := db.GetCollection(cfg.MongoDB.Database, "waiting_list")
 	go db.MonitorWaitingList(collection)
 
+	// MinIO 클라이언트 초기화 (이전과 동일)
+	minioClient, err := data.NewMinioClient(
+		"http://localhost:9000",
+		"minioadmin",
+		"minioadmin",
+		"yoyaku-mate-biz", // MinIO에서 만든 버킷 이름
+	)
+	if err != nil {
+		log.Fatalf("Could not initialize Minio client: %v", err)
+	}
+
+	uploadHandler := handlers.NewUploadHandler(minioClient)
+
 	// Initialize HTTP mux
 	mux := http.NewServeMux()
 
 	// Register routes
-	handlers.RegisterRoutes(mux)
+	handlers.RegisterRoutes(mux, uploadHandler)
 
 	// Configure CORS
 	c := cors.New(cors.Options{

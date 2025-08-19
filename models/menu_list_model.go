@@ -2,7 +2,7 @@ package models
 
 import "go.mongodb.org/mongo-driver/bson/primitive"
 
-// menu_list 構造体
+// menu_list モデル
 type MenuList struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	StoreID     string             `bson:"store_id" json:"store_id"`

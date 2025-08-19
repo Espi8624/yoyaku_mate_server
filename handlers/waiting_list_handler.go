@@ -107,14 +107,14 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set default values
+	// WaitingList のステータスを"waiting"に初期化
 	newWaiting.Status = "waiting"
-	// Set registration time to current JST time
+	// JST (日本標準時) のタイムゾーンを設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
 	newWaiting.RegistrationTime = now.Format(time.RFC3339)
 
-	// Validate or generate WaitingID
+	// クライアントからの WaitingID が提供されていない場合は、現在の時刻を基に生成
 	if newWaiting.WaitingID == "" {
 		log.Printf("Warning: WaitingID not provided by client, generating one")
 		newWaiting.WaitingID = now.Format("20060102-150405")
@@ -124,7 +124,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the next queue number
+	// 次のキュー番号を取得
 	nextQueueNumber, err := data.GetNextQueueNumber(newWaiting.StoreID)
 	if err != nil {
 		log.Printf("Failed to get next queue number: %v", err)
@@ -152,14 +152,14 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get storeID from query parameters
+	// クエリパラメータから storeID を取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Clear the waiting list
+	// waiting list をクリアする
 	err := data.ClearWaitingList(storeID)
 	if err != nil {
 		log.Printf("Failed to clear waiting list: %v", err)
