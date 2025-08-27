@@ -2,8 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"time"
 	"yoyaku_mate_server/db"
@@ -84,6 +85,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var storeIdForUser string
+	var lineLoginUrl string
 	newUserID := primitive.NewObjectID()
 
 	switch req.Role {
@@ -130,6 +132,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// LINE認証Token生成
+		lineToken, err := utils.GenerateSecureToken(32)
+		if err != nil {
+			utils.RespondWithError(w, "Failed to generate security token", http.StatusInternalServerError)
+			return
+		}
+
 		// ECS-41
 		// store_license コレクションに初期データ挿入
 		licenseCollection := db.GetCollection(DatabaseName, "store_license")
@@ -137,9 +146,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		initialLicenseInfo := models.StoreLicense{
 			ID:                 primitive.NewObjectID(),
 			StoreID:            newStore.StoreID,
-			VerificationStatus: models.StatusNotSubmitted,
+			VerificationStatus: models.StatusPending,
 			CreatedAt:          time.Now(),
 			UpdatedAt:          time.Now(),
+			LineAuthToken:      lineToken,
 		}
 
 		_, err = licenseCollection.InsertOne(r.Context(), initialLicenseInfo)
@@ -179,6 +189,21 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Failed to create default store settings", http.StatusInternalServerError)
 			return
 		}
+
+		// LINEログインURL生成
+		lineChannelID := os.Getenv("LINE_LOGIN_CHANNEL_ID")
+		lineCallbackURL := os.Getenv("LINE_CALLBACK_URL")
+
+		baseURL := "https://access.line.me/oauth2/v2.1/authorize"
+		params := url.Values{}
+		params.Add("response_type", "code")
+		params.Add("client_id", lineChannelID)
+		params.Add("redirect_uri", lineCallbackURL)
+		params.Add("state", lineToken) // state価で生成したtokenを使用
+		params.Add("scope", "openid profile")
+		params.Add("bot_prompt", "aggressive")
+
+		lineLoginUrl = baseURL + "?" + params.Encode() // URL完成
 
 	case "staff":
 		if req.StoreID == nil || *req.StoreID == "" {
@@ -221,11 +246,20 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("--- Preparing to respond for signup ---")
-	log.Printf("User object being sent: %+v", newUser)
-	log.Printf("StoreID value specifically: '%s'", newUser.StoreID)
+	// 最終応答生成
+	data := make(map[string]string)
+	data["store_id"] = storeIdForUser
 
-	utils.RespondWithJSON(w, newUser, http.StatusCreated)
+	// 権限がmanagerである場合line_login_urlを追加
+	if req.Role == "manager" {
+		data["line_login_url"] = lineLoginUrl
+	}
+
+	// log.Printf("--- Preparing to respond for signup ---")
+	// log.Printf("User object being sent: %+v", newUser)
+	// log.Printf("StoreID value specifically: '%s'", newUser.StoreID)
+
+	utils.RespondWithJSON(w, data, http.StatusCreated)
 }
 
 func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {

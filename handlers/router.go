@@ -23,4 +23,6 @@ func RegisterRoutes(mux *http.ServeMux, uploadHandler *UploadHandler) {
 	mux.HandleFunc("/api/auth/check-phone", PhoneCheckHandler)
 
 	mux.HandleFunc("/api/stores/upload-license", uploadHandler.UploadLicense)
+	mux.HandleFunc("/api/auth/line/callback", LineCallbackHandler)
+	mux.HandleFunc("/api/line/webhook", LineWebhookHandler)
 }
