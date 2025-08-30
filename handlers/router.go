@@ -13,6 +13,7 @@ func RegisterRoutes(mux *http.ServeMux, uploadHandler *UploadHandler) {
 	mux.HandleFunc("/api/store_settings", StoreSettingsHandler)
 	mux.HandleFunc("/api/provider_user", UserHandler)
 	mux.HandleFunc("/api/provider_store", StoreHandler)
+	mux.HandleFunc("/api/provider_store/license", GetStoreLicenseHandler)
 
 	mux.HandleFunc("/api/provider_user/firebase_uid", UserByFirebaseUIDHandler)
 
