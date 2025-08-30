@@ -8,7 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-// GetStoreLicenseByStoreID는 store_id를 사용하여 가게 인증 정보를 조회합니다.
+// store_idで店舗認証情報照会
 func GetStoreLicenseByStoreID(storeID string) (*models.StoreLicense, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreLicense)
 	filter := bson.M{"store_id": storeID}
