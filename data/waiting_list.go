@@ -70,9 +70,6 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	if item.StoreID == "" {
 		return nil, fmt.Errorf("store_id is required")
 	}
-	if item.CustomerName == "" {
-		return nil, fmt.Errorf("customer_name is required")
-	}
 	if item.PartySize <= 0 {
 		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
@@ -85,35 +82,33 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		item.Status = "waiting"
 	}
 
-	// Set registration time if not provided
+	// 次のQueueを獲得
+	nextQueueNumber, err := GetNextQueueNumber(item.StoreID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get next queue number: %v", err)
+	}
+	item.QueueNumber = nextQueueNumber
+
+	// ハンドラから移してきた基本値設定
+	if item.Status == "" {
+		item.Status = "waiting"
+	}
 	if item.RegistrationTime == "" {
 		jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 		now := time.Now().In(jst)
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
-
-	// // Check for duplicate waiting_id
-	// 中腹処理必要時、DBに直接追加必要
-	// filter := bson.M{
-	// 	"store_id":   item.StoreID,
-	// 	"waiting_id": item.WaitingID,
-	// }
-
-	// var existingItem models.WaitingListItem
-	// err := collection.FindOne(ctx, filter).Decode(&existingItem)
-	// if err == nil {
-	// 	return nil, fmt.Errorf("waiting_id %s already exists for store %s", item.WaitingID, item.StoreID)
-	// } else if err != mongo.ErrNoDocuments {
-	// 	log.Printf("Error checking for duplicate waiting_id: %v", err)
-	// 	return nil, fmt.Errorf("failed to check for duplicate waiting_id: %v", err)
-	// }
+	if item.WaitingID == "" {
+		jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+		now := time.Now().In(jst)
+		item.WaitingID = now.Format("20060102-150405")
+	}
 
 	// Create BSON document
 	doc := bson.M{
 		"store_id":          item.StoreID,
 		"waiting_id":        item.WaitingID,
 		"queue_number":      item.QueueNumber,
-		"customer_name":     item.CustomerName,
 		"party_size":        item.PartySize,
 		"registration_time": item.RegistrationTime,
 		"contact":           item.Contact,
@@ -131,7 +126,6 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		return nil, fmt.Errorf("failed to insert waiting list item: %v", err)
 	}
 
-	log.Printf("Successfully inserted waiting list item with ID: %v", result.InsertedID)
 	// 挿入された document を照会し、返却
 	var createdItem models.WaitingList
 	filter := bson.M{"_id": result.InsertedID}
@@ -235,7 +229,7 @@ func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingList, err
 	err := collection.FindOne(ctx, filter).Decode(&waitingListItem)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, nil // 결과가 없는 경우
+			return nil, nil // 結果がない場合
 		}
 		return nil, err
 	}
