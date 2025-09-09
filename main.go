@@ -71,7 +71,7 @@ func main() {
 	// Configure CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins:   cfg.Server.AllowOrigins,
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
 	})

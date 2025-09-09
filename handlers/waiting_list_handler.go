@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"time"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -96,52 +95,20 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required field: store_id", http.StatusBadRequest)
 		return
 	}
-	if newWaiting.CustomerName == "" {
-		log.Printf("Missing required field: customer_name")
-		http.Error(w, "Missing required field: customer_name", http.StatusBadRequest)
-		return
-	}
 	if newWaiting.PartySize <= 0 {
 		log.Printf("Invalid party_size: %d", newWaiting.PartySize)
 		http.Error(w, "Invalid party_size: must be greater than 0", http.StatusBadRequest)
 		return
 	}
 
-	// WaitingList のステータスを"waiting"に初期化
-	newWaiting.Status = "waiting"
-	// JST (日本標準時) のタイムゾーンを設定
-	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
-	now := time.Now().In(jst)
-	newWaiting.RegistrationTime = now.Format(time.RFC3339)
-
-	// クライアントからの WaitingID が提供されていない場合は、現在の時刻を基に生成
-	if newWaiting.WaitingID == "" {
-		log.Printf("Warning: WaitingID not provided by client, generating one")
-		newWaiting.WaitingID = now.Format("20060102-150405")
-	} else if !utils.IsValidWaitingID(newWaiting.WaitingID) {
-		log.Printf("Invalid WaitingID format: %s", newWaiting.WaitingID)
-		http.Error(w, "Invalid waiting_id format", http.StatusBadRequest)
-		return
-	}
-
-	// 次のキュー番号を取得
-	nextQueueNumber, err := data.GetNextQueueNumber(newWaiting.StoreID)
-	if err != nil {
-		log.Printf("Failed to get next queue number: %v", err)
-		http.Error(w, "Failed to create waiting list item", http.StatusInternalServerError)
-		return
-	}
-	newWaiting.QueueNumber = nextQueueNumber
-
-	// data 階層 から生成された object を直接受ける
 	createdItem, err := data.CreateWaitingListItem(newWaiting)
 	if err != nil {
 		log.Printf("Failed to create waiting list item: %v", err)
+		// data階層で送られたエラーメッセージをそのまま使用
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// handler が持っていた object ではない、DB から直接持ってきた object を返却
 	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
 }
 
