@@ -6,7 +6,9 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"time"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -336,4 +338,156 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.RespondWithJSON(w, map[string]bool{"available": count == 0}, http.StatusOK)
+}
+
+// ログインされているユーザーの店舗登録プロセス
+func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
+	// 使用者認証
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+	idToken := strings.TrimPrefix(authHeader, "Bearer ")
+	if idToken == authHeader {
+		utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+		return
+	}
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	// 新しい店舗情報をリクエストボディから取得
+	var req models.SignUpRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	userCollection := db.GetCollection(DatabaseName, UsersCollection)
+	storeCollection := db.GetCollection(DatabaseName, StoresCollection)
+
+	// firebaseUIDで既存ユーザーを検索し、user.ID（MongoDBの_id）を取得
+	var existingUser models.User
+	err = userCollection.FindOne(r.Context(), bson.M{"firebase_uid": firebaseUID}).Decode(&existingUser)
+	if err != nil {
+		utils.RespondWithError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// 'manager'でない場合、新しい店舗登録を防ぐ
+	if existingUser.Role != "manager" {
+		utils.RespondWithError(w, "Only managers can add new stores", http.StatusForbidden)
+		return
+	}
+
+	// 店舗情報有効性検証
+	if req.StoreName == nil || *req.StoreName == "" {
+		utils.RespondWithError(w, "Store name is required", http.StatusBadRequest)
+		return
+	}
+	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
+	if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
+		utils.RespondWithError(w, "Invalid store phone number format", http.StatusBadRequest)
+		return
+	}
+	count, err := storeCollection.CountDocuments(r.Context(), bson.M{"phone": *req.StoreTelNumber})
+	if err != nil {
+		utils.RespondWithError(w, "Database error during store phone check", http.StatusInternalServerError)
+		return
+	}
+	if count > 0 {
+		utils.RespondWithError(w, "A store with this phone number already exists", http.StatusConflict)
+		return
+	}
+
+	// 新しい店舗データ生成
+	newStore := models.Store{
+		ID:        primitive.NewObjectID(),
+		StoreName: *req.StoreName,
+		Address:   *req.StoreAddress,
+		Phone:     *req.StoreTelNumber,
+		BizNumber: "",
+		StoreID:   primitive.NewObjectID().Hex(),
+		UserID:    existingUser.ID,
+	}
+	_, err = storeCollection.InsertOne(r.Context(), newStore)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to create store", http.StatusInternalServerError)
+		return
+	}
+
+	// store_license及びstore_settings生成
+	lineToken, err := utils.GenerateSecureToken(32)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to generate security token", http.StatusInternalServerError)
+		return
+	}
+
+	licenseCollection := db.GetCollection(DatabaseName, "store_license")
+	initialLicenseInfo := models.StoreLicense{
+		ID:                 primitive.NewObjectID(),
+		StoreID:            newStore.StoreID,
+		VerificationStatus: models.StatusPending,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+		LineAuthToken:      lineToken,
+	}
+	_, err = licenseCollection.InsertOne(r.Context(), initialLicenseInfo)
+	if err != nil {
+		storeCollection.DeleteOne(r.Context(), bson.M{"_id": newStore.ID})
+		utils.RespondWithError(w, "Failed to create initial license info", http.StatusInternalServerError)
+		return
+	}
+
+	storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
+	defaultSettings := models.StoreSetting{
+		ID:        primitive.NewObjectID(),
+		StoreID:   newStore.StoreID,
+		ManagerID: existingUser.ID.Hex(),
+		Settings: models.Settings{
+			OperatingHours: map[string]models.StoreDayHours{
+				"monday": {Start: "09:00", End: "18:00"}, "tuesday": {Start: "09:00", End: "18:00"},
+				"wednesday": {Start: "09:00", End: "18:00"}, "thursday": {Start: "09:00", End: "18:00"},
+				"friday": {Start: "09:00", End: "18:00"}, "saturday": {Start: "09:00", End: "18:00"},
+				"sunday": {Start: "09:00", End: "18:00"},
+			},
+			ClosedDays: models.ClosedDays{
+				SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
+			},
+			WaitingPolicy: models.WaitingPolicy{MaxWaitingCount: 100},
+		},
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	_, err = storeSettingsCollection.InsertOne(r.Context(), defaultSettings)
+	if err != nil {
+		storeCollection.DeleteOne(r.Context(), bson.M{"_id": newStore.ID})
+		utils.RespondWithError(w, "Failed to create default store settings", http.StatusInternalServerError)
+		return
+	}
+
+	var lineLoginUrl string
+
+	// LINEログインURL生成
+	lineChannelID := os.Getenv("LINE_LOGIN_CHANNEL_ID")
+	lineCallbackURL := os.Getenv("LINE_CALLBACK_URL")
+
+	baseURL := "https://access.line.me/oauth2/v2.1/authorize"
+	params := url.Values{}
+	params.Add("response_type", "code")
+	params.Add("client_id", lineChannelID)
+	params.Add("redirect_uri", lineCallbackURL)
+	params.Add("state", lineToken) // state価で生成したtokenを使用
+	params.Add("scope", "openid profile")
+	params.Add("bot_prompt", "aggressive")
+
+	lineLoginUrl = baseURL + "?" + params.Encode() // URL完成
+
+	data := make(map[string]interface{})
+	data["store_id"] = newStore.StoreID
+	data["line_login_url"] = lineLoginUrl
+
+	utils.RespondWithJSON(w, data, http.StatusCreated)
 }
