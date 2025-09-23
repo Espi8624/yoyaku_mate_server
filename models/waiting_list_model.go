@@ -14,7 +14,7 @@ type WaitingList struct {
 	Nationality      string             `json:"nationality" bson:"nationality"`
 	RegistrationTime string             `json:"registration_time" bson:"registration_time"`
 	Contact          *string            `json:"contact" bson:"contact,omitempty"`
-	Status           string             `json:"status" bson:"status"` // "waiting", "notified", "cancelled", "completed"
+	Status           string             `json:"status" bson:"status"` // "waiting", "notified", "called", "cancelled", "completed"
 	CalledTime       *string            `json:"called_time,omitempty" bson:"called_time,omitempty"`
 	EntryTime        *string            `json:"entry_time,omitempty" bson:"entry_time,omitempty"`
 	Notes            *string            `json:"notes,omitempty" bson:"notes,omitempty"`
