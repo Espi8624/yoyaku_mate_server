@@ -18,10 +18,10 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 			handleGetAverageWaitingTime(w, r)
 			return
 		}
-		if r.URL.Query().Get("waiting_id") != "" {
-			handleGetUserWaitingList(w, r)
-			return
-		}
+		// if r.URL.Query().Get("waiting_id") != "" {
+		// 	handleGetUserWaitingList(w, r)
+		// 	return
+		// }
 		handleGetWaitingList(w, r)
 	case http.MethodPost:
 		if r.URL.Query().Get("action") == "clear" {
@@ -140,15 +140,14 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 // 特定のユーザーのウェイティングリスト項目を取得する GET リクエストを処理
 func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
-	userID := r.URL.Query().Get("waiting_id")
 
-	if storeID == "" || userID == "" {
+	if storeID == "" {
 		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
 		return
 	}
 
 	// データ取得
-	waitingListItem, err := data.GetUserWaitingListItem(storeID, userID)
+	waitingListItem, err := data.GetUserWaitingListItem(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch user waiting list item: %v", err)
 		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
@@ -239,4 +238,34 @@ func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 		AverageText:    avgText,
 	}
 	utils.RespondWithJSON(w, resp, http.StatusOK)
+}
+
+// 待機ユーザー用データ確認メソッド
+func WaitingListUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	storeID := r.URL.Query().Get("store_id")
+	waitingID := r.URL.Query().Get("waiting_id")
+
+	if storeID == "" || waitingID == "" {
+		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
+		return
+	}
+
+	waitingListItem, err := data.GetActiveWaitingList(storeID, waitingID)
+	if err != nil {
+		log.Printf("Failed to fetch user waiting list item: %v", err)
+		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
+		return
+	}
+
+	if waitingListItem == nil {
+		utils.RespondWithJSON(w, map[string]interface{}{"message": "No waiting list item found for the given IDs"}, http.StatusNotFound)
+		return
+	}
+
+	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 }

@@ -203,26 +203,13 @@ func ClearWaitingList(storeID string) error {
 }
 
 // 特定店舗の特定ユーザーのウェイティングリスト項目を取得
-func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingList, error) {
+func GetUserWaitingListItem(storeID string) (*models.WaitingList, error) {
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
 	defer cancel()
-
-	// 日本時間帯設定
-	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
-	now := time.Now().In(jst)
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
-	endOfDay := startOfDay.Add(24 * time.Hour)
-
-	// フィルター設定: storeID、waitingID、当日の登録時間でフィルタリング
 	filter := bson.M{
-		"store_id":   storeID,
-		"waiting_id": waitingID,
-		"registration_time": bson.M{
-			"$gte": startOfDay.Format("2006-01-02T15:04:05.000+09:00"),
-			"$lt":  endOfDay.Format("2006-01-02T15:04:05.000+09:00"),
-		},
-		"status": "waiting",
+		"store_id": storeID,
 	}
 
 	var waitingListItem models.WaitingList
@@ -235,6 +222,61 @@ func GetUserWaitingListItem(storeID, waitingID string) (*models.WaitingList, err
 	}
 
 	return &waitingListItem, nil
+}
+
+func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingList, error) {
+	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var waitingListData []models.WaitingList
+
+	// 日本時間帯設定
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
+	now := time.Now().In(jst)
+	// window: 先日 23時 ~ 明日 1時
+	windowStart := time.Date(now.Year(), now.Month(), now.Day()-1, 23, 0, 0, 0, jst)
+	windowEnd := time.Date(now.Year(), now.Month(), now.Day()+1, 1, 0, 0, 0, jst)
+	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
+	filter := bson.M{
+		"store_id":   storeID,
+		"waiting_id": waitingID,
+		"status": bson.M{
+			"$in": []string{"waiting", "notified"},
+		},
+		"registration_time": bson.M{
+			"$gte": windowStart.Format("2006-01-02T15:04:05.000+09:00"),
+			"$lt":  windowEnd.Format("2006-01-02T15:04:05.000+09:00"),
+		},
+	}
+
+	// 결과를 registration_time 순서로 정렬하여 항상 같은 순서를 보장합니다.
+	opts := options.Find().SetSort(bson.M{"registration_time": 1})
+
+	// MongoDBクエリ実行
+	cursor, err := collection.Find(ctx, filter, opts)
+	if err != nil {
+		log.Printf("Failed to fetch waiting list data: %v", err)
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	// 結果をデコードして waitingListData に追加
+	for cursor.Next(ctx) {
+		var waitingListItem models.WaitingList
+		if err := cursor.Decode(&waitingListItem); err != nil {
+			log.Printf("Failed to decode waiting list item: %v", err)
+			continue
+		}
+		waitingListData = append(waitingListData, waitingListItem)
+	}
+
+	if err := cursor.Err(); err != nil {
+		log.Printf("Cursor error: %v", err)
+		return nil, err
+	}
+
+	return waitingListData, nil
 }
 
 // 特定のウェイティング項目のステータスを更新

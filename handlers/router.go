@@ -7,6 +7,7 @@ import (
 func RegisterRoutes(mux *http.ServeMux, uploadHandler *UploadHandler) {
 	// API endpoints
 	mux.HandleFunc("/api/waiting-list", WaitingListHandler)
+	mux.HandleFunc("/api/waiting-list-user", WaitingListUserHandler)
 	mux.HandleFunc("/api/waiting-list/poll", HandleWaitingListPolling)
 	mux.HandleFunc("/api/menu-list", MenuListHandler)
 	mux.HandleFunc("/api/menu-list/bulk-save", handleBulkSaveMenuList)
