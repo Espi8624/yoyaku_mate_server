@@ -100,6 +100,20 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid party_size: must be greater than 0", http.StatusBadRequest)
 		return
 	}
+	// ライセンス取得
+	license, err := data.GetStoreLicenseByStoreID(newWaiting.StoreID)
+	if err != nil {
+		// ライセンス情報が見つからない場合 (店舗が存在しないか、データが不整合な場合)
+		log.Printf("Failed to get license info for store %s: %v", newWaiting.StoreID, err)
+		http.Error(w, "この店舗の認証情報が見つかりません。", http.StatusForbidden)
+		return
+	}
+	// ライセンス情報がAPPROVEDであることを確認
+	if license.VerificationStatus != models.StatusApproved { // "APPROVED"
+		log.Printf("Store %s is not approved. Status: %s", newWaiting.StoreID, license.VerificationStatus)
+		http.Error(w, "現在、この店舗は待機受付を行っておりません。", http.StatusForbidden)
+		return
+	}
 
 	createdItem, err := data.CreateWaitingListItem(newWaiting)
 	if err != nil {
@@ -138,30 +152,30 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 }
 
 // 特定のユーザーのウェイティングリスト項目を取得する GET リクエストを処理
-func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
-	storeID := r.URL.Query().Get("store_id")
+// func handleGetUserWaitingList(w http.ResponseWriter, r *http.Request) {
+// 	storeID := r.URL.Query().Get("store_id")
 
-	if storeID == "" {
-		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
-		return
-	}
+// 	if storeID == "" {
+// 		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
+// 		return
+// 	}
 
-	// データ取得
-	waitingListItem, err := data.GetUserWaitingListItem(storeID)
-	if err != nil {
-		log.Printf("Failed to fetch user waiting list item: %v", err)
-		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
-		return
-	}
+// 	// データ取得
+// 	waitingListItem, err := data.GetUserWaitingListItem(storeID)
+// 	if err != nil {
+// 		log.Printf("Failed to fetch user waiting list item: %v", err)
+// 		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
+// 		return
+// 	}
 
-	if waitingListItem == nil {
-		utils.RespondWithJSON(w, map[string]interface{}{"message": "No waiting list item found"}, http.StatusNotFound)
-		return
-	}
+// 	if waitingListItem == nil {
+// 		utils.RespondWithJSON(w, map[string]interface{}{"message": "No waiting list item found"}, http.StatusNotFound)
+// 		return
+// 	}
 
-	// JSON 応答
-	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
-}
+// 	// JSON 応答
+// 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
+// }
 
 // 待機目録のステータスをアップデートする PATCH 要請を処理
 func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
