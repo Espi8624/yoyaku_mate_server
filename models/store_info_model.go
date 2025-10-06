@@ -8,7 +8,6 @@ type Store struct {
 	StoreName string             `bson:"store_name" json:"store_name"`
 	Address   string             `bson:"address" json:"address"`
 	Phone     string             `bson:"phone" json:"phone"`
-	BizNumber string             `bson:"biz_number" json:"biz_number"` // 事業者登録番号
 	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
 	StoreID   string             `bson:"store_id" json:"store_id"`
 }

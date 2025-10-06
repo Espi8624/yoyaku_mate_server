@@ -10,7 +10,7 @@ import (
 const (
 	StatusNotSubmitted  = "NOT_SUBMITTED"  // 未提出
 	StatusPending       = "PENDING"        // 審査中
-	StatusPendingReview = "PENDING_REVIEW" // lineで応答後、審査中
+	StatusPendingReview = "PENDING_REVIEW" // Upload後、審査中
 	StatusApproved      = "APPROVED"       // 承認済み
 	StatusRejected      = "REJECTED"       // 反則
 )
@@ -24,7 +24,7 @@ type StoreLicense struct {
 	AdminComment       string             `bson:"admin_comment,omitempty"     json:"admin_comment,omitempty"`
 	CreatedAt          time.Time          `bson:"created_at"          json:"created_at"`
 	UpdatedAt          time.Time          `bson:"updated_at"          json:"updated_at"`
-	LineLoginUrl       string             `bson:"line_login_url,omitempty"     json:"line_login_url,omitempty"`
-	LineAuthToken      string             `bson:"line_auth_token,omitempty" json:"line_auth_token,omitempty"`
-	LineUserID         string             `bson:"line_user_id,omitempty" json:"line_user_id,omitempty"`
+	// LineLoginUrl       string             `bson:"line_login_url,omitempty"     json:"line_login_url,omitempty"`
+	// LineAuthToken      string             `bson:"line_auth_token,omitempty" json:"line_auth_token,omitempty"`
+	// LineUserID         string             `bson:"line_user_id,omitempty" json:"line_user_id,omitempty"`
 }
