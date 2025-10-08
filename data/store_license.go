@@ -128,7 +128,7 @@ func UpdateLicenseInfoAfterUpload(storeID string, imageURL string) error {
 	update := bson.M{
 		"$set": bson.M{
 			"license_image_url":   imageURL,
-			"verification_status": models.StatusPending, // ステータスを "PENDING" (審査中)に変更
+			"verification_status": models.StatusPendingReview, // ステータスを "PENDING" (審査中)に変更
 			"updated_at":          time.Now(),
 		},
 	}

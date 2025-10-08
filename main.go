@@ -9,6 +9,7 @@ import (
 	"yoyaku_mate_server/db"
 	handlers "yoyaku_mate_server/handlers"
 
+	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 )
 
@@ -62,20 +63,23 @@ func main() {
 	uploadHandler := handlers.NewUploadHandler(minioClient)
 
 	// Initialize HTTP mux
-	mux := http.NewServeMux()
+	// mux := http.NewServeMux()
+	r := mux.NewRouter()
+
+	r.Use(mux.CORSMethodMiddleware(r))
 
 	// Register routes
-	handlers.RegisterRoutes(mux, uploadHandler)
+	handlers.RegisterRoutes(r, uploadHandler)
 
 	// Configure CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins:   cfg.Server.AllowOrigins,
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
 	})
 
-	handler := c.Handler(mux)
+	handler := c.Handler(r)
 
 	// Start server
 	log.Printf("Server starting on %s...", cfg.Server.Port)
