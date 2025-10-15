@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"mime/multipart"
-	"path/filepath"
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
@@ -15,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
@@ -58,27 +55,27 @@ func NewMinioClient(endpoint, accessKey, secretKey, bucket string) (*MinioClient
 }
 
 // ファイルを MinIO バケットにアップロード
-func (c *MinioClient) UploadFile(file multipart.File, header *multipart.FileHeader) (string, error) {
-	// ファイル名衝突を回避するため、ユニークなファイル名を生成
-	uniqueFileName := uuid.New().String() + filepath.Ext(header.Filename)
+// func (c *MinioClient) UploadFile(file multipart.File, header *multipart.FileHeader) (string, error) {
+// 	// ファイル名衝突を回避するため、ユニークなファイル名を生成
+// 	uniqueFileName := uuid.New().String() + filepath.Ext(header.Filename)
 
-	_, err := c.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket:      aws.String(c.Bucket),
-		Key:         aws.String(uniqueFileName),
-		Body:        file,
-		ContentType: aws.String(header.Header.Get("Content-Type")),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to upload file to minio: %w", err)
-	}
+// 	_, err := c.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+// 		Bucket:      aws.String(c.Bucket),
+// 		Key:         aws.String(uniqueFileName),
+// 		Body:        file,
+// 		ContentType: aws.String(header.Header.Get("Content-Type")),
+// 	})
+// 	if err != nil {
+// 		return "", fmt.Errorf("failed to upload file to minio: %w", err)
+// 	}
 
-	// ファイルの URL を生成
-	// 実際には Endpoint を設定ファイルから読み込む必要がある
-	fileURL := fmt.Sprintf("%s/%s/%s", c.Endpoint, c.Bucket, uniqueFileName)
-	log.Printf("Successfully uploaded file: %s", fileURL)
+// 	// ファイルの URL を生成
+// 	// 実際には Endpoint を設定ファイルから読み込む必要がある
+// 	fileURL := fmt.Sprintf("%s/%s/%s", c.Endpoint, c.Bucket, uniqueFileName)
+// 	log.Printf("Successfully uploaded file: %s", fileURL)
 
-	return fileURL, nil
-}
+// 	return fileURL, nil
+// }
 
 // MongoDB　の 'stores' コレクションのライセンス情報を更新
 func UpdateStoreLicenseInfo(storeID string, imageURL string) error {

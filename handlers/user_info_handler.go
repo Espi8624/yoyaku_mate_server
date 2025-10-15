@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"log"
 	"net/http"
+	"strings"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
 
@@ -57,6 +61,56 @@ func UserHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) {
+	// 認証情報取得と検証
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Unauthorized: Authorization header not found", http.StatusUnauthorized)
+		return
+	}
+
+	idToken := strings.TrimPrefix(authHeader, "Bearer ")
+	if idToken == authHeader {
+		utils.RespondWithError(w, "Unauthorized: Invalid token format", http.StatusUnauthorized)
+		return
+	}
+
+	firebaseUID, err := auth.VerifyIDToken(context.Background(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Unauthorized: Invalid ID token", http.StatusUnauthorized)
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("userImage")
+	if err != nil {
+		utils.RespondWithError(w, "Could not get uploaded file named 'userImage'", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// MinIOにアップロード
+	fileURL, err := h.Minio.UploadFile("yoyaku-mate-profile", file, header)
+	if err != nil {
+		log.Printf("Error uploading user to Minio: %v", err)
+		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		return
+	}
+
+	// DBアップデート
+	updatedUser, err := data.UpdateUserImageURL(firebaseUID, fileURL)
+	if err != nil {
+		log.Printf("Error updating user image URL in DB: %v", err)
+		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, updatedUser, http.StatusOK)
 }
 
 // GET /api/provider_user/firebase_uid?uid=xxxx

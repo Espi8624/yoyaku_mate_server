@@ -215,3 +215,40 @@ func getIntValue(item map[string]interface{}, key string) int {
 	}
 	return 0
 }
+
+func UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(menuID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid menu ID format: %w", err)
+	}
+
+	filter := bson.M{"_id": objID}
+
+	update := bson.M{
+		"$set": bson.M{
+			"image_url":  imageURL,
+			"updated_at": time.Now().Format(time.RFC3339),
+		},
+	}
+
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute update on menu_list: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return nil, fmt.Errorf("no menu found with ID: %s", menuID)
+	}
+
+	var updatedMenu models.MenuList
+	err = collection.FindOne(ctx, filter).Decode(&updatedMenu)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated menu document: %w", err)
+	}
+
+	return &updatedMenu, nil
+}

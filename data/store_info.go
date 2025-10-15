@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 	"yoyaku_mate_server/db"
@@ -45,6 +46,37 @@ func UpdateStoreData(storeID string, update map[string]interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func UpdateStoreImageURL(storeID string, storeImageURL string) (*models.Store, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	filter := bson.M{"store_id": storeID}
+
+	update := bson.M{
+		"$set": bson.M{
+			"store_image_url": storeImageURL,
+			"updated_at":      time.Now(),
+		},
+	}
+
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update store image: %w", err)
+	}
+	if result.MatchedCount == 0 {
+		return nil, fmt.Errorf("no store found with ID: %s", storeID)
+	}
+
+	var updatedStore models.Store
+	err = collection.FindOne(ctx, filter).Decode(&updatedStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated store document: %w", err)
+	}
+
+	return &updatedStore, nil
 }
 
 // user_id でユーザー情報を取得し、店舗情報を取得
