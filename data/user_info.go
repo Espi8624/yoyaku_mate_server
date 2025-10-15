@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"log"
 	"time"
 	"yoyaku_mate_server/db"
@@ -44,6 +45,40 @@ func UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) er
 		return err
 	}
 	return nil
+}
+
+func UpdateUserImageURL(firebaseUID string, userImageURL string) (*models.User, error) {
+	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	filter := bson.M{"firebase_uid": firebaseUID}
+
+	update := bson.M{
+		"$set": bson.M{
+			"user_image_url": userImageURL,
+			"updated_at":     time.Now(),
+		},
+	}
+
+	// update実行
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute update on provider_users: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return nil, fmt.Errorf("no user found with firebase UID: %s", firebaseUID)
+	}
+
+	// 更新された全ユーザー情報を再取得して返す
+	var updatedUser models.User
+	err = collection.FindOne(ctx, filter).Decode(&updatedUser)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated user document: %w", err)
+	}
+
+	return &updatedUser, nil
 }
 
 func GetUserDataByFirebaseUID(firebaseUID string) (models.User, error) {

@@ -46,7 +46,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// MinIO クライアントを使用してファイルをアップロード
-	fileURL, err := h.Minio.UploadFile(file, header)
+	fileURL, err := h.Minio.UploadFile("yoyaku-mate-biz", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
 		http.Error(w, "Could not upload file", http.StatusInternalServerError)

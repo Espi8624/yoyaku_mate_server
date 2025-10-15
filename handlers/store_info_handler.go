@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
 
+	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -94,4 +96,40 @@ func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
+}
+
+func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {
+	// storeId取得
+	vars := mux.Vars(r)
+	storeId := vars["storeId"]
+
+	// 'logoImage'ファイルをマルチパートフォームから取得
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB limit
+		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("storeImage")
+	if err != nil {
+		utils.RespondWithError(w, "Could not get uploaded file named 'storeImage'", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// MinIOにアップロード
+	fileURL, err := h.Minio.UploadFile("yoyaku-mate-profile", file, header)
+	if err != nil {
+		log.Printf("Error uploading logo to Minio: %v", err)
+		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		return
+	}
+
+	// DBの店舗情報をアップデート
+	updatedStore, err := data.UpdateStoreImageURL(storeId, fileURL)
+	if err != nil {
+		log.Printf("Error updating store image URL in DB: %v", err)
+		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, updatedStore, http.StatusOK)
 }

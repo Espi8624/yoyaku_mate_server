@@ -6,32 +6,41 @@ import (
 
 func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	// API endpoints
-	r.HandleFunc("/api/waiting-list", WaitingListHandler)
-	r.HandleFunc("/api/waiting-list-user", WaitingListUserHandler)
-	r.HandleFunc("/api/waiting-list/poll", HandleWaitingListPolling)
-	r.HandleFunc("/api/menu-list", MenuListHandler)
-	r.HandleFunc("/api/menu-list/bulk-save", handleBulkSaveMenuList)
-	r.HandleFunc("/api/store_settings", StoreSettingsHandler)
-	r.HandleFunc("/api/provider_user", UserHandler)
-	r.HandleFunc("/api/provider_store", StoreHandler)
-	r.HandleFunc("/api/provider_store/license", GetStoreLicenseHandler)
+	api := r.PathPrefix("/api").Subrouter()
 
-	r.HandleFunc("/api/provider_user/firebase_uid", UserByFirebaseUIDHandler)
+	api.HandleFunc("/waiting-list", WaitingListHandler)
+	api.HandleFunc("/waiting-list-user", WaitingListUserHandler)
+	api.HandleFunc("/waiting-list/poll", HandleWaitingListPolling)
+
+	api.HandleFunc("/menu-list", MenuListHandler).Methods("GET", "POST", "OPTIONS")
+	api.HandleFunc("/menu-list/bulk-save", handleBulkSaveMenuList)
+	api.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
+
+	api.HandleFunc("/store_settings", StoreSettingsHandler)
+	api.HandleFunc("/provider_user", UserHandler)
+	api.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
+	api.HandleFunc("/provider_store", StoreHandler)
+	api.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
+	api.HandleFunc("/provider_store/license", GetStoreLicenseHandler)
+
+	api.HandleFunc("/provider_user/firebase_uid", UserByFirebaseUIDHandler)
 
 	// Auth endpoints
-	r.HandleFunc("/api/provider_stores/store-list", GetMyStoresHandler)
+	api.HandleFunc("/provider_stores/store-list", GetMyStoresHandler)
 
-	r.HandleFunc("/api/auth/signup", SignUpHandler)
-	r.HandleFunc("/api/stores/add", AddNewStoreHandler)
-	r.HandleFunc("/api/auth/check-store", StoreExistsHandler)
-	r.HandleFunc("/api/auth/check-email", EmailCheckHandler)
-	r.HandleFunc("/api/auth/check-phone", PhoneCheckHandler)
+	api.HandleFunc("/auth/signup", SignUpHandler)
+	api.HandleFunc("/stores/add", AddNewStoreHandler)
+	api.HandleFunc("/auth/check-store", StoreExistsHandler)
+	api.HandleFunc("/auth/check-email", EmailCheckHandler)
+	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
 
-	r.HandleFunc("/api/stores/upload-license", uploadHandler.UploadLicense)
-	r.HandleFunc("/api/auth/line/callback", LineCallbackHandler)
-	r.HandleFunc("/api/line/webhook", LineWebhookHandler)
+	api.HandleFunc("/stores/upload-license", uploadHandler.UploadLicense)
+	api.HandleFunc("/auth/line/callback", LineCallbackHandler)
+	api.HandleFunc("/line/webhook", LineWebhookHandler)
 
-	// Admin
-	r.HandleFunc("/api/admin/stores", GetStoresHandler)
-	r.HandleFunc("/api/admin/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
+	// Admin endpoints
+	adminApi := api.PathPrefix("/admin").Subrouter()
+
+	adminApi.HandleFunc("/stores", GetStoresHandler)
+	adminApi.HandleFunc("/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
 }
