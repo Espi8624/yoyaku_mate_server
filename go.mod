@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/line/line-bot-sdk-go/v8 v8.15.0
 	github.com/rs/cors v1.11.1
-	go.mongodb.org/mongo-driver v1.17.3
+	go.mongodb.org/mongo-driver v1.17.4
 	golang.org/x/net v0.42.0
 )
 

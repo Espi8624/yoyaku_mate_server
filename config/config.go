@@ -22,41 +22,31 @@ type Config struct {
 
 var cfg Config
 
-func Load(env string) Config {
+func Load() Config {
+	env := os.Getenv("GO_ENV")
 	if env == "" {
+		log.Println("Warning: GO_ENV is not set. Defaulting to 'development'.")
 		env = "development"
 	}
+	log.Printf("Loading configuration for environment: %s", env)
 
-	// 設定ファイル Path リスト
-	configPaths := []string{
-		filepath.Join(".", "config."+env+".json"),
-		filepath.Join(".", "config", "config."+env+".json"),
-		filepath.Join("..", "config."+env+".json"),
-	}
+	fileName := env + ".json"
+	configPath := filepath.Join("/", "config", fileName)
 
-	var f *os.File
-	var err error
-	var configPath string
-
-	// パスをループし、最初に存在する設定ファイルを検索
-	for _, path := range configPaths {
-		if f, err = os.Open(path); err == nil {
-			configPath = path
-			break
-		}
-	}
-
+	f, err := os.Open(configPath)
 	if err != nil {
-		log.Printf("Warning: No config file found in paths %v, using defaults", configPaths)
+		log.Printf("Warning: Could not open config file at '%s', using default config. Error: %v", configPath, err)
 		return getDefaultConfig()
 	}
 	defer f.Close()
 
 	log.Printf("Using config file: %s", configPath)
+
+	var cfg Config
 	decoder := json.NewDecoder(f)
 	err = decoder.Decode(&cfg)
 	if err != nil {
-		log.Printf("Warning: Could not decode config file, using defaults: %v", err)
+		log.Printf("Warning: Could not decode config file, using defaults. Error: %v", err)
 		return getDefaultConfig()
 	}
 
@@ -71,7 +61,7 @@ func getDefaultConfig() Config {
 			Timeout  int    `json:"timeout"`
 		}{
 			URI:      "mongodb://localhost:27017",
-			Database: "yoyaku_mate_provider_db",
+			Database: "saboten_provider",
 			Timeout:  30,
 		},
 		Server: struct {
