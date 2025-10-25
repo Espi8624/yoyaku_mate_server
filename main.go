@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/db"
@@ -15,39 +14,16 @@ import (
 
 func main() {
 	// Load configuration
-	env := os.Getenv("GO_ENV")
-	cfg := config.Load(env)
-
-	// LINE関連
-	// err := godotenv.Load()
-	// if err != nil {
-	// 	log.Println("No .env file found, using default environment variables")
-	// }
-
-	// .envで読み込んだ値を変数に保存
-	// channelSecret := os.Getenv("LINE_MESSAGING_CHANNEL_SECRET")
-	// channelToken := os.Getenv("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN")
-
-	// 両方価が存在するか確認
-	// if channelSecret == "" || channelToken == "" {
-	// 	log.Fatal("エラー: LINE関連環境変数が設定されていません。")
-	// }
-
-	// handlersパッケージの初期化関数を直接呼出
-	// if err := handlers.InitLineBot(channelSecret, channelToken); err != nil {
-	// 	log.Fatalf("LINE Bot クライアント生成失敗: %v", err)
-	// }
-	// LINE関連
+	cfg := config.Load()
 
 	// Initialize MongoDB
 	if err := db.InitMongoDB(cfg.MongoDB.URI); err != nil {
-		log.Printf("Failed to initialize MongoDB: %v", err)
-		return
+		log.Printf("MongoDB初期化失敗: %v", err)
+	} else {
+		// Start monitoring waiting list collection
+		collection := db.GetCollection(cfg.MongoDB.Database, "waiting_list")
+		go db.MonitorWaitingList(collection)
 	}
-
-	// Start monitoring waiting list collection
-	collection := db.GetCollection(cfg.MongoDB.Database, "waiting_list")
-	go db.MonitorWaitingList(collection)
 
 	// MinIO クライアント初期化
 	minioClient, err := data.NewMinioClient(
@@ -59,13 +35,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not initialize Minio client: %v", err)
 	}
-
 	uploadHandler := handlers.NewUploadHandler(minioClient)
 
 	// Initialize HTTP mux
 	// mux := http.NewServeMux()
 	r := mux.NewRouter()
-
 	r.Use(mux.CORSMethodMiddleware(r))
 
 	// Register routes

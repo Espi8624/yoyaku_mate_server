@@ -1,7 +1,7 @@
 package data
 
 const (
-	DatabaseName            = "yoyaku_mate_provider"
+	DatabaseName            = "saboten_provider"
 	CollectionUserInfo      = "user_info"
 	CollectionStoreInfo     = "store_info"
 	CollectionWaitingList   = "waiting_list"

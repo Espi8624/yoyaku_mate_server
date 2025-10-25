@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DatabaseName            = "yoyaku_mate_provider"
+	DatabaseName            = "saboten_provider"
 	UsersCollection         = "user_info"
 	StoresCollection        = "store_info"
 	StoreSettingsCollection = "store_settings"

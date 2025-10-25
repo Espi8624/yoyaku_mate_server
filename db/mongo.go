@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"reflect"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 var MongoClient *mongo.Client
@@ -26,28 +24,56 @@ type WaitingListUpdate struct {
 }
 
 // Initialize MongoDB connection
-func InitMongoDB(url string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), config.GetMongoTimeout())
+func InitMongoDB(uri string) error {
+	log.Printf("Try mongoDB connect: %s", uri)
+
+	clientOptions := options.Client().
+		ApplyURI(uri).
+		SetConnectTimeout(config.GetMongoTimeout()). // 30秒(production.jsonから設定)
+		SetServerSelectionTimeout(30 * time.Second).
+		SetSocketTimeout(45 * time.Second).
+		SetMaxPoolSize(10).
+		SetRetryWrites(true).
+		SetRetryReads(true).
+		SetMaxConnecting(5).
+		SetServerAPIOptions(options.ServerAPI(options.ServerAPIVersion1))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	clientOptions := options.Client().ApplyURI(url)
-	client, err := mongo.Connect(ctx, clientOptions)
-	if err != nil {
-		return fmt.Errorf("failed to connect to MongoDB: %v", err)
+	var err error
+	for i := 0; i < 5; i++ {
+		MongoClient, err = mongo.Connect(ctx, clientOptions)
+		if err != nil {
+			log.Printf("MongoDB connect failed (%d/5): %v", i+1, err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		// connect test (Ping)
+		err = MongoClient.Ping(ctx, nil)
+		if err != nil {
+			log.Printf("MongoDB Ping failed (%d/5): %v", i+1, err)
+			MongoClient.Disconnect(ctx)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		log.Println("MongoDB connect success")
+		return nil
 	}
 
-	// Atlas 環境では readpref.Primary() を使用して Ping を推奨
-	if err := client.Ping(ctx, readpref.Primary()); err != nil {
-		return fmt.Errorf("failed to ping MongoDB: %v", err)
-	}
-
-	log.Println("Connected to MongoDB")
-	MongoClient = client
-	return nil
+	log.Println("MongoDB connect failed after 5 attempts")
+	return err
 }
 
 // 　ウェイティングコレクションの変更を監視する
 func MonitorWaitingList(collection *mongo.Collection) {
+	if collection == nil {
+		log.Println("collection is nil, need MongoDB connection check")
+		return
+	}
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -84,7 +110,11 @@ func MonitorWaitingList(collection *mongo.Collection) {
 	}
 }
 
-// MongoDB collection 取得
+// // MongoDB collection 取得
 func GetCollection(database, collection string) *mongo.Collection {
+	if MongoClient == nil {
+		log.Println("MongoDB 클라이언트가 초기화되지 않음")
+		return nil
+	}
 	return MongoClient.Database(database).Collection(collection)
 }
