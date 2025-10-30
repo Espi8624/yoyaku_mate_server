@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"yoyaku_mate_server/config"
@@ -26,16 +27,32 @@ func main() {
 	}
 
 	// MinIO クライアント初期化
-	minioClient, err := data.NewMinioClient(
-		"http://localhost:9000",
-		"minioadmin",
-		"minioadmin",
-		"yoyaku-mate-biz", // MinIO バケット名
+	// minioClient, err := data.NewMinioClient(
+	// 	"http://localhost:9000",
+	// 	"minioadmin",
+	// 	"minioadmin",
+	// 	"yoyaku-mate-biz", // MinIO バケット名
+	// )
+	// if err != nil {
+	// 	log.Fatalf("Could not initialize Minio client: %v", err)
+	// }
+	// uploadHandler := handlers.NewUploadHandler(minioClient)
+
+	if cfg.R2.AccountID == "" {
+		log.Fatal("Fatal: R2_ACCOUNT_ID is not set.")
+	}
+	r2Endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2.AccountID)
+
+	storageClient, err := data.NewMinioClient(
+		r2Endpoint,
+		cfg.R2.AccessKey,
+		cfg.R2.SecretKey,
+		"",
 	)
 	if err != nil {
-		log.Fatalf("Could not initialize Minio client: %v", err)
+		log.Fatalf("Could not initialize R2 client: %v", err)
 	}
-	uploadHandler := handlers.NewUploadHandler(minioClient)
+	uploadHandler := handlers.NewUploadHandler(storageClient)
 
 	// Initialize HTTP mux
 	// mux := http.NewServeMux()

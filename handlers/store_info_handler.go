@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
 
@@ -115,8 +116,10 @@ func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close()
 
+	assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
+
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile("yoyaku-mate-profile", file, header)
+	fileURL, err := h.Minio.UploadFile("saboten-assets", assetsPublicDomain, file, header)
 	if err != nil {
 		log.Printf("Error uploading logo to Minio: %v", err)
 		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
