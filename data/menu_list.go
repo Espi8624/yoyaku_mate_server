@@ -64,18 +64,17 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	log.Printf("[DEBUG] InsertMenuListData received menuData: %+v", menuData)
+
 	if storeID == "" {
 		return nil, fmt.Errorf("store_id is required")
 	}
 
-	// bulkWrite モデルを格納するスライス
 	var writeModels []mongo.WriteModel
 	var insertedItems []models.MenuList
 
-	// バッチサイズ設定（例：1000個単位）
 	batchSize := 1000
 	for i, item := range menuData {
-		// _id が存在しない場合は新しい ObjectID を生成
 		var id primitive.ObjectID
 		if idStr := getStringValue(item, "id"); idStr != "" {
 			var err error
@@ -85,44 +84,48 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 				id = primitive.NewObjectID()
 			}
 		} else {
-			id = primitive.NewObjectID() // 新しい ObjectID 生成
+			id = primitive.NewObjectID()
 		}
 
-		// upsert するためのアップデート文書を準備
+		log.Printf("[DEBUG] Processing menu item: %+v", item)
+		log.Printf("[DEBUG] menu_image_url value from item: %v", item["menu_image_url"])
+
 		update := bson.M{
 			"$set": bson.M{
 				"store_id":    storeID,
-				"menu_id":     getStringValue(item, "menuId"),
+				"menu_id":     getStringValue(item, "menu_id"),
 				"category":    getStringValue(item, "category"),
 				"title":       getStringValue(item, "title"),
 				"description": getStringValue(item, "description"),
 				"price":       getIntValue(item, "price"),
-				"image":       getStringValue(item, "image"),
-				"updated_at":  parseTimeToString(getStringValue(item, "updatedAt")),
-				"menu_status": getStringValue(item, "menuStatus"),
+				"updated_at":  parseTimeToString(getStringValue(item, "updated_at")),
+				"menu_status": getStringValue(item, "menu_status"),
 			},
 			"$setOnInsert": bson.M{
-				"created_at": parseTimeToString(getStringValue(item, "createdAt")),
+				"created_at": parseTimeToString(getStringValue(item, "created_at")),
 			},
 		}
 
-		// bulkWrite モデル追加
+		if imageURL := getStringValue(item, "menu_image_url"); imageURL != "" {
+			update["$set"].(bson.M)["menu_image_url"] = imageURL
+			log.Printf("[DEBUG] Setting menu_image_url to: %s", imageURL)
+		} else {
+			log.Printf("[DEBUG] Skipping menu_image_url update (empty or not provided)")
+		}
+
 		writeModel := mongo.NewUpdateOneModel().
 			SetFilter(bson.M{"_id": id}).
 			SetUpdate(update).
 			SetUpsert(true)
 		writeModels = append(writeModels, writeModel)
 
-		// バッチサイズに達したら bulkWrite を実行
 		if (i+1)%batchSize == 0 || i == len(menuData)-1 {
-			_, err := collection.BulkWrite(ctx, writeModels) // result, err
+			_, err := collection.BulkWrite(ctx, writeModels)
 			if err != nil {
 				log.Printf("Failed to bulk write menu items: %v", err)
-				// 一部失敗しても処理を続行
 				continue
 			}
 
-			// 成功項目処理 (upsert された ID を基に照会)
 			for _, model := range writeModels {
 				if updateModel, ok := model.(*mongo.UpdateOneModel); ok {
 					id := updateModel.Filter.(bson.M)["_id"].(primitive.ObjectID)
@@ -139,6 +142,80 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 	}
 
 	return insertedItems, nil
+}
+
+func UpdateSingleMenu(menuData map[string]interface{}) (*models.MenuList, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	idStr := getStringValue(menuData, "id")
+	if idStr == "" {
+		return nil, fmt.Errorf("menu id is required")
+	}
+
+	objID, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid menu id format: %w", err)
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"updated_at": time.Now().Format(time.RFC3339),
+		},
+	}
+
+	if category := getStringValue(menuData, "category"); category != "" {
+		update["$set"].(bson.M)["category"] = category
+	}
+	if title := getStringValue(menuData, "title"); title != "" {
+		update["$set"].(bson.M)["title"] = title
+	}
+	if description := getStringValue(menuData, "description"); description != "" {
+		update["$set"].(bson.M)["description"] = description
+	}
+	if price := getIntValue(menuData, "price"); price > 0 {
+		update["$set"].(bson.M)["price"] = price
+	}
+	if menuStatus := getStringValue(menuData, "menu_status"); menuStatus != "" {
+		update["$set"].(bson.M)["menu_status"] = menuStatus
+	}
+	if imageURL, exists := menuData["menu_image_url"]; exists {
+		if imageURLStr, ok := imageURL.(string); ok {
+			if imageURLStr == "" {
+				// 空文字列の場合、フィールドを削除
+				if update["$unset"] == nil {
+					update["$unset"] = bson.M{}
+				}
+				update["$unset"].(bson.M)["menu_image_url"] = ""
+				log.Printf("[DEBUG] Removing menu_image_url for menu: %s", idStr)
+			} else {
+				// URLが提供された場合、更新
+				update["$set"].(bson.M)["menu_image_url"] = imageURLStr
+				log.Printf("[DEBUG] Setting menu_image_url to: %s", imageURLStr)
+			}
+		}
+	}
+
+	// アップデート実行
+	filter := bson.M{"_id": objID}
+	result, err := collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update menu: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return nil, fmt.Errorf("menu not found with id: %s", idStr)
+	}
+
+	// アップデート後のドキュメントを取得
+	var updatedMenu models.MenuList
+	err = collection.FindOne(ctx, filter).Decode(&updatedMenu)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch updated menu: %w", err)
+	}
+
+	return &updatedMenu, nil
 }
 
 // // getFloatValue safely converts a value to float64
@@ -188,11 +265,23 @@ func parseTimeToString(timeStr string) string {
 
 // 文字列値を取得し、存在しない場合は空文字列を返却
 func getStringValue(item map[string]interface{}, key string) string {
+	log.Printf("[DEBUG] getStringValue called for key '%s'", key)
 	if val, ok := item[key]; ok {
+		log.Printf("[DEBUG] Found value for key '%s': %v (type: %T)", key, val, val)
+
+		// nil 체크 추가
+		if val == nil {
+			log.Printf("[DEBUG] Value for key '%s' is nil", key)
+			return ""
+		}
+
 		if str, ok := val.(string); ok {
 			return str
 		}
-		log.Printf("Value for key '%s' is not a string: %v", key, val)
+
+		log.Printf("[DEBUG] Value for key '%s' is not a string: %v", key, val)
+	} else {
+		log.Printf("[DEBUG] Key '%s' not found in item", key)
 	}
 	return ""
 }
@@ -230,8 +319,8 @@ func UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error
 
 	update := bson.M{
 		"$set": bson.M{
-			"image_url":  imageURL,
-			"updated_at": time.Now().Format(time.RFC3339),
+			"menu_image_url": imageURL,
+			"updated_at":     time.Now().Format(time.RFC3339),
 		},
 	}
 

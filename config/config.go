@@ -18,6 +18,14 @@ type Config struct {
 		Port         string   `json:"port"`
 		AllowOrigins []string `json:"allowOrigins"`
 	} `json:"server"`
+	R2 R2Config `json:"r2"`
+}
+
+type R2Config struct {
+	AccountID    string `json:"accountId"`
+	AccessKey    string `json:"accessKey"`
+	SecretKey    string `json:"secretKey"`
+	PublicDomain string `json:"publicDomain"`
 }
 
 var cfg Config
@@ -50,6 +58,13 @@ func Load() Config {
 		return getDefaultConfig()
 	}
 
+	cfg.R2 = R2Config{
+		AccountID:    os.Getenv("R2_ACCOUNT_ID"),
+		AccessKey:    os.Getenv("R2_ACCESS_KEY"),
+		SecretKey:    os.Getenv("R2_SECRET_KEY"),
+		PublicDomain: os.Getenv("R2_PUBLIC_DOMAIN"),
+	}
+
 	return cfg
 }
 
@@ -70,6 +85,12 @@ func getDefaultConfig() Config {
 		}{
 			Port:         ":8080",
 			AllowOrigins: []string{"http://localhost:3000", "https://localhost:3000"},
+		},
+		R2: R2Config{
+			AccountID:    os.Getenv("R2_ACCOUNT_ID"),
+			AccessKey:    os.Getenv("R2_ACCESS_KEY"),
+			SecretKey:    os.Getenv("R2_SECRET_KEY"),
+			PublicDomain: os.Getenv("R2_PUBLIC_DOMAIN"),
 		},
 	}
 }

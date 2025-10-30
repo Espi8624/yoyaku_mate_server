@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
 
@@ -17,6 +18,8 @@ func MenuListHandler(w http.ResponseWriter, r *http.Request) {
 		handleGetMenuList(w, r)
 	case http.MethodPost:
 		handleBulkSaveMenuList(w, r)
+	case http.MethodPatch:
+		handleUpdateSingleMenu(w, r)
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -44,15 +47,15 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	for _, item := range menuListItems {
 		menuItem := map[string]interface{}{
 			"id":             item.ID.Hex(),
-			"storeId":        item.StoreID,
-			"menuId":         item.MenuID,
+			"store_id":       item.StoreID,
+			"menu_id":        item.MenuID,
 			"category":       item.Category,
 			"title":          item.Title,
 			"description":    item.Description,
 			"price":          item.Price,
 			"menu_image_url": item.MenuImageURL,
-			"createdAt":      item.CreatedAt,
-			"updatedAt":      item.UpdatedAt,
+			"created_at":     item.CreatedAt,
+			"updated_at":     item.UpdatedAt,
 			"menu_status":    item.MenuStatus,
 		}
 		response = append(response, menuItem)
@@ -60,6 +63,40 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 
 	// JSON 応答
 	utils.RespondWithJSON(w, response, http.StatusOK)
+}
+
+// 単一メニューの更新を処理
+func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
+	var menuData map[string]interface{}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&menuData); err != nil {
+		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	updatedMenu, err := data.UpdateSingleMenu(menuData)
+	if err != nil {
+		log.Printf("Failed to update menu: %v", err)
+		utils.RespondWithError(w, "Failed to update menu", http.StatusInternalServerError)
+		return
+	}
+
+	menuItem := map[string]interface{}{
+		"id":             updatedMenu.ID.Hex(),
+		"store_id":       updatedMenu.StoreID,
+		"menu_id":        updatedMenu.MenuID,
+		"category":       updatedMenu.Category,
+		"title":          updatedMenu.Title,
+		"description":    updatedMenu.Description,
+		"price":          updatedMenu.Price,
+		"menu_image_url": updatedMenu.MenuImageURL,
+		"created_at":     updatedMenu.CreatedAt,
+		"updated_at":     updatedMenu.UpdatedAt,
+		"menu_status":    updatedMenu.MenuStatus,
+	}
+
+	utils.RespondWithJSON(w, menuItem, http.StatusOK)
 }
 
 // メニューリストの一括保存を処理
@@ -88,16 +125,16 @@ func handleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	var response []map[string]interface{}
 	for _, item := range insertedItems {
 		menuItem := map[string]interface{}{
-			"id":             item.ID,
-			"storeId":        item.StoreID,
-			"menuId":         item.MenuID,
+			"id":             item.ID.Hex(),
+			"store_id":       item.StoreID,
+			"menu_id":        item.MenuID,
 			"category":       item.Category,
 			"title":          item.Title,
 			"description":    item.Description,
 			"price":          item.Price,
 			"menu_image_url": item.MenuImageURL,
-			"createdAt":      item.CreatedAt,
-			"updatedAt":      item.UpdatedAt,
+			"created_at":     item.CreatedAt,
+			"updated_at":     item.UpdatedAt,
 			"menu_status":    item.MenuStatus,
 		}
 		response = append(response, menuItem)
@@ -124,8 +161,10 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
+	assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
+
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile("yoyaku-mate-menu", file, header)
+	fileURL, err := h.Minio.UploadFile("saboten-assets", assetsPublicDomain, file, header)
 	if err != nil {
 		log.Printf("Error uploading file to Minio: %v", err)
 		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)

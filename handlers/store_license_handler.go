@@ -45,8 +45,10 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// MinIO クライアントを使用してファイルをアップロード
-	fileURL, err := h.Minio.UploadFile("yoyaku-mate-biz", file, header)
+	// assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
+
+	// MinIOにアップロード
+	fileURL, err := h.Minio.UploadFile("saboten-assets", "", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
 		http.Error(w, "Could not upload file", http.StatusInternalServerError)
