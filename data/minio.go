@@ -6,6 +6,7 @@ import (
 	"log"
 	"mime/multipart"
 	"path/filepath"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -38,4 +39,22 @@ func (c *MinioClient) UploadFile(bucketName, publicDomain string, file multipart
 		log.Printf("Successfully uploaded file to private bucket. Key: %s", uniqueFileName)
 		return uniqueFileName, nil
 	}
+}
+
+// 非公開バケット内のオブジェクトに対する一時的なアクセスURLを生成
+func (c *MinioClient) GetPresignedURL(bucketName, objectKey string) (string, error) {
+	presignClient := s3.NewPresignClient(c.S3Client)
+
+	presignedUrl, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	}, func(opts *s3.PresignOptions) {
+		// URLの有効期限を設定
+		opts.Expires = 15 * time.Minute
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to generate presigned URL for key %s: %w", objectKey, err)
+	}
+
+	return presignedUrl.URL, nil
 }

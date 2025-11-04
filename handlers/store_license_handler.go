@@ -48,7 +48,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	// assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile("saboten-assets", "", file, header)
+	fileKey, err := h.Minio.UploadFile("saboten-biz", "", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
 		http.Error(w, "Could not upload file", http.StatusInternalServerError)
@@ -56,7 +56,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// DB にファイルの URL とステータスを更新
-	if err := data.UpdateLicenseInfoAfterUpload(storeID, fileURL); err != nil {
+	if err := data.UpdateLicenseInfoAfterUpload(storeID, fileKey); err != nil {
 		log.Printf("Error updating database: %v", err)
 		http.Error(w, "Could not update store information", http.StatusInternalServerError)
 		return
@@ -67,6 +67,6 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "File uploaded successfully. Awaiting verification.",
-		"fileURL": fileURL,
+		"fileURL": fileKey,
 	})
 }
