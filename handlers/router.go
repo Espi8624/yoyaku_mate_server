@@ -43,4 +43,5 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 
 	adminApi.HandleFunc("/stores", GetStoresHandler)
 	adminApi.HandleFunc("/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
+	adminApi.HandleFunc("/license-image-url", uploadHandler.GetLicenseImageURLHandler).Methods("GET", "OPTIONS")
 }

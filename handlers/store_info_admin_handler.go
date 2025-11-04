@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
@@ -10,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// for request body parsing
+// body parsing
 type updateStatusPayload struct {
 	Status  string `json:"status"`
 	Comment string `json:"comment"`
@@ -49,4 +50,23 @@ func UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, map[string]string{"message": "Store status updated successfully"}, http.StatusOK)
+}
+
+// 仮URLを返却
+func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http.Request) {
+	imageKey := r.URL.Query().Get("key")
+	if imageKey == "" {
+		utils.RespondWithError(w, "Image key is required", http.StatusBadRequest)
+		return
+	}
+
+	signedURL, err := h.Minio.GetPresignedURL("saboten-biz", imageKey)
+	if err != nil {
+		log.Printf("Error generating presigned URL: %v", err)
+		utils.RespondWithError(w, "Could not generate image URL", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]string{"url": signedURL}
+	utils.RespondWithJSON(w, response, http.StatusOK)
 }
