@@ -232,13 +232,14 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		newUser := models.User{
-			ID:          newUserID,
-			FirebaseUID: req.FirebaseUID,
-			Username:    req.Name,
-			Email:       req.Email,
-			Phone:       req.PhoneNumber,
-			Role:        req.Role,
-			StoreID:     storeIdForUser,
+			ID:               newUserID,
+			FirebaseUID:      req.FirebaseUID,
+			UserName:         req.Name,
+			UserNameFurigana: req.NameFurigana,
+			Email:            req.Email,
+			Phone:            req.PhoneNumber,
+			Role:             req.Role,
+			StoreID:          storeIdForUser,
 		}
 
 		// ユーザー生成

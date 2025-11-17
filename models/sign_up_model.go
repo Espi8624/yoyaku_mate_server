@@ -4,6 +4,7 @@ package models
 type SignUpRequest struct {
 	FirebaseUID    string  `json:"firebase_uid"`
 	Name           string  `json:"name"`
+	NameFurigana   string  `json:"name_furigana"`
 	Email          string  `json:"email"`
 	PhoneNumber    string  `json:"phone_number"`
 	Role           string  `json:"role"`
