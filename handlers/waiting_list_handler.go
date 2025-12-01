@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -100,6 +101,39 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid party_size: must be greater than 0", http.StatusBadRequest)
 		return
 	}
+
+	// Authorizationヘッダーがある場合（スタッフ/マネージャー）、権限チェック
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		idToken := authHeader[len("Bearer "):]
+		firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+		if err != nil {
+			utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+			return
+		}
+
+		// ユーザー情報取得
+		user, err := data.GetUserByFirebaseUID(firebaseUID)
+		if err != nil || user == nil {
+			log.Printf("Failed to get user by Firebase UID: %v", err)
+			utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
+		hasPermission, err := data.CheckUserStorePermission(user.ID, newWaiting.StoreID, user.Role)
+		if err != nil {
+			log.Printf("Failed to check user permission: %v", err)
+			utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+			return
+		}
+		if !hasPermission {
+			log.Printf("User %s does not have permission for store %s", user.ID.Hex(), newWaiting.StoreID)
+			utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。スタッフとして承認されていることを確認してください。", http.StatusForbidden)
+			return
+		}
+	}
+
 	// ライセンス取得
 	license, err := data.GetStoreLicenseByStoreID(newWaiting.StoreID)
 	if err != nil {
@@ -133,6 +167,20 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Firebase認証チェック
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+
+	idToken := authHeader[len("Bearer "):]
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
 	// クエリパラメータから storeID を取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -140,8 +188,29 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ユーザー情報取得
+	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	if err != nil || user == nil {
+		log.Printf("Failed to get user by Firebase UID: %v", err)
+		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
+	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role)
+	if err != nil {
+		log.Printf("Failed to check user permission: %v", err)
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasPermission {
+		log.Printf("User %s does not have permission for store %s", user.ID.Hex(), storeID)
+		utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
+		return
+	}
+
 	// waiting list をクリアする
-	err := data.ClearWaitingList(storeID)
+	err = data.ClearWaitingList(storeID)
 	if err != nil {
 		log.Printf("Failed to clear waiting list: %v", err)
 		utils.RespondWithError(w, "Failed to clear waiting list", http.StatusInternalServerError)
@@ -179,6 +248,20 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 
 // 待機目録のステータスをアップデートする PATCH 要請を処理
 func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
+	// Firebase認証チェック
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+
+	idToken := authHeader[len("Bearer "):]
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
 	var updateRequest struct {
 		StoreID   string `json:"store_id"`
 		WaitingID string `json:"waiting_id"`
@@ -197,6 +280,27 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ユーザー情報取得
+	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	if err != nil || user == nil {
+		log.Printf("Failed to get user by Firebase UID: %v", err)
+		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
+	hasPermission, err := data.CheckUserStorePermission(user.ID, updateRequest.StoreID, user.Role)
+	if err != nil {
+		log.Printf("Failed to check user permission: %v", err)
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasPermission {
+		log.Printf("User %s does not have permission for store %s", user.ID.Hex(), updateRequest.StoreID)
+		utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
+		return
+	}
+
 	// Status 有効性検証
 	validStatuses := map[string]bool{
 		"waiting":   true,
@@ -211,7 +315,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Status アップデート
-	err := data.UpdateWaitingItemStatus(updateRequest.StoreID, updateRequest.WaitingID, updateRequest.Status)
+	err = data.UpdateWaitingItemStatus(updateRequest.StoreID, updateRequest.WaitingID, updateRequest.Status)
 	if err != nil {
 		log.Printf("Failed to update waiting status: %v", err)
 		http.Error(w, "Failed to update waiting status", http.StatusInternalServerError)

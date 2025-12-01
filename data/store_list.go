@@ -9,8 +9,14 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+// StoreWithStatus は店舗情報とスタッフステータスを含む構造体
+type StoreWithStatus struct {
+	models.Store
+	StaffStatus string `json:"staff_status,omitempty" bson:"-"`
+}
+
 // firebase_uidを使用し、該当ユーザーが接近可能なすべての店舗リストを返却
-func GetStoresByFirebaseUID(firebaseUid string) ([]models.Store, error) {
+func GetStoresByFirebaseUID(firebaseUid string) ([]StoreWithStatus, error) {
 	// log.Printf("--- [GetStoresByFirebaseUID] 함수 시작. firebaseUid: %s 로 사용자 조회를 시작합니다.", firebaseUid)
 	userCollection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	storeCollection := db.GetCollection(DatabaseName, CollectionStoreInfo)
@@ -22,14 +28,14 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]models.Store, error) {
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// log.Printf("--- [GetStoresByFirebaseUID] 경고: firebaseUid '%s'를 가진 사용자를 DB에서 찾지 못했습니다. 빈 목록을 반환합니다.", firebaseUid)
-			return []models.Store{}, nil
+			return []StoreWithStatus{}, nil
 		}
 		// log.Printf("--- [GetStoresByFirebaseUID] 에러: 사용자 조회 중 DB 에러 발생: %v", err)
 		return nil, err
 	}
 
 	// log.Printf("--- [GetStoresByFirebaseUID] 성공: 사용자 '%s' (ID: %s, Role: %s)를 찾았습니다. 이제 가게를 조회합니다.", user.Username, user.ID.Hex(), user.Role)
-	var stores []models.Store
+	var storesWithStatus []StoreWithStatus
 
 	switch user.Role {
 	case "manager":
@@ -40,24 +46,56 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]models.Store, error) {
 		}
 		defer cursor.Close(ctx)
 
+		var stores []models.Store
 		if err = cursor.All(ctx, &stores); err != nil {
 			// log.Printf("--- [GetStoresByFirebaseUID] 에러: 커서 처리 중 에러: %v", err)
 			return nil, err
 		}
 
-	// 職員の場合、該当職員が所属する店舗のみを返却
+		// マネージャーの場合はstaffStatusなし
+		for _, store := range stores {
+			storesWithStatus = append(storesWithStatus, StoreWithStatus{Store: store})
+		}
+
+	// 職員の場合、store_staff_infoテーブルから承認された店舗を取得
 	case "staff":
-		var store models.Store
-		err := storeCollection.FindOne(ctx, bson.M{"store_id": user.StoreID}).Decode(&store)
+		staffCollection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+
+		// ユーザーIDでPENDINGまたはAPPROVED状態の店舗スタッフ情報を検索
+		cursor, err := staffCollection.Find(ctx, bson.M{
+			"user_id": user.ID,
+			"status": bson.M{
+				"$in": []string{models.StaffStatusPending, models.StaffStatusApproved, models.StaffStatusRejected},
+			},
+		})
 		if err != nil {
-			if err == mongo.ErrNoDocuments {
-				return []models.Store{}, nil
-			}
 			return nil, err
 		}
-		stores = append(stores, store)
-	}
-	// log.Printf("--- [GetStoresByFirebaseUID] 최종 결과: %d개의 가게를 찾았습니다. 함수를 종료합니다.", len(stores))
+		defer cursor.Close(ctx)
 
-	return stores, nil
+		var staffInfos []models.StoreStaffInfo
+		if err = cursor.All(ctx, &staffInfos); err != nil {
+			return nil, err
+		}
+
+		// 各StoreStaffInfoからstore_idを取得し、対応する店舗情報を取得
+		for _, staffInfo := range staffInfos {
+			var store models.Store
+			err := storeCollection.FindOne(ctx, bson.M{"store_id": staffInfo.StoreID}).Decode(&store)
+			if err != nil {
+				if err == mongo.ErrNoDocuments {
+					continue // 店舗が見つからない場合はスキップ
+				}
+				return nil, err
+			}
+			// StaffStatusを含めて返却
+			storesWithStatus = append(storesWithStatus, StoreWithStatus{
+				Store:       store,
+				StaffStatus: staffInfo.Status,
+			})
+		}
+	}
+	// log.Printf("--- [GetStoresByFirebaseUID] 최종 결과: %d개의 가게를 찾았습니다. 함수를 종료합니다.", len(storesWithStatus))
+
+	return storesWithStatus, nil
 }
