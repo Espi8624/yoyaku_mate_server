@@ -1,11 +1,12 @@
 package data
 
 const (
-	DatabaseName            = "saboten_provider"
-	CollectionUserInfo      = "user_info"
-	CollectionStoreInfo     = "store_info"
-	CollectionWaitingList   = "waiting_list"
-	CollectionMenuList      = "menu_list"
-	CollectionStoreSettings = "store_settings"
-	CollectionStoreLicense  = "store_license"
+	DatabaseName             = "saboten_provider"
+	CollectionUserInfo       = "user_info"
+	CollectionStoreInfo      = "store_info"
+	CollectionWaitingList    = "waiting_list"
+	CollectionMenuList       = "menu_list"
+	CollectionStoreSettings  = "store_settings"
+	CollectionStoreLicense   = "store_license"
+	CollectionStoreStaffInfo = "store_staff_info"
 )

@@ -30,6 +30,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 
 	api.HandleFunc("/auth/signup", SignUpHandler)
 	api.HandleFunc("/stores/add", AddNewStoreHandler)
+	api.HandleFunc("/stores/join", JoinStoreHandler)
 	api.HandleFunc("/auth/check-store", StoreExistsHandler)
 	api.HandleFunc("/auth/check-email", EmailCheckHandler)
 	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
@@ -44,4 +45,8 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	adminApi.HandleFunc("/stores", GetStoresHandler)
 	adminApi.HandleFunc("/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
 	adminApi.HandleFunc("/license-image-url", uploadHandler.GetLicenseImageURLHandler).Methods("GET", "OPTIONS")
+
+	// Staff Management endpoints
+	api.HandleFunc("/stores/{storeId}/staff", GetStoreStaffHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/{staffId}", UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
 }

@@ -248,6 +248,24 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 
+		// Staffの場合、store_staff_infoにも追加
+		if req.Role == "staff" {
+			storeStaffCollection := db.GetCollection(DatabaseName, "store_staff_info")
+			newStaffInfo := models.StoreStaffInfo{
+				ID:        primitive.NewObjectID(),
+				UserID:    newUserID,
+				Role:      "staff",
+				StoreID:   storeIdForUser,
+				Status:    models.StaffStatusPending, // 初期状態は承認待ち
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			_, err = storeStaffCollection.InsertOne(sessCtx, newStaffInfo)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create store staff info: %w", err)
+			}
+		}
+
 		response_data := map[string]interface{}{}
 		response_data["user"] = newUser
 
