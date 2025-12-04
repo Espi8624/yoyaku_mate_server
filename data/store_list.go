@@ -12,7 +12,8 @@ import (
 // StoreWithStatus は店舗情報とスタッフステータスを含む構造体
 type StoreWithStatus struct {
 	models.Store
-	StaffStatus string `json:"staff_status,omitempty" bson:"-"`
+	StaffStatus        string `json:"staff_status,omitempty" bson:"-"`
+	VerificationStatus string `json:"verification_status,omitempty" bson:"-"`
 }
 
 // firebase_uidを使用し、該当ユーザーが接近可能なすべての店舗リストを返却
@@ -52,9 +53,25 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]StoreWithStatus, error) {
 			return nil, err
 		}
 
-		// マネージャーの場合はstaffStatusなし
+		// マネージャーの場合、各店舗のverification_statusをstore_licenseから取得
+		licenseCollection := db.GetCollection(DatabaseName, CollectionStoreLicense)
 		for _, store := range stores {
-			storesWithStatus = append(storesWithStatus, StoreWithStatus{Store: store})
+			var license models.StoreLicense
+			verificationStatus := "NOT_SUBMITTED" // デフォルト値
+
+			// store_licenseからverification_statusを取得
+			err := licenseCollection.FindOne(ctx, bson.M{"store_id": store.StoreID}).Decode(&license)
+			if err == nil {
+				verificationStatus = license.VerificationStatus
+			} else if err != mongo.ErrNoDocuments {
+				// エラーがあってもスキップして続行（ログ出力は必要に応じて）
+				// log.Printf("--- [GetStoresByFirebaseUID] 경고: store_id '%s'의 라이선스 조회 중 에러: %v", store.StoreID, err)
+			}
+
+			storesWithStatus = append(storesWithStatus, StoreWithStatus{
+				Store:              store,
+				VerificationStatus: verificationStatus,
+			})
 		}
 
 	// 職員の場合、store_staff_infoテーブルから承認された店舗を取得
