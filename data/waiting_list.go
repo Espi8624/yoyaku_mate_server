@@ -14,6 +14,11 @@ import (
 )
 
 func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
+	// 期限切れデータの自動更新
+	if err := AutoExpireWaitingItems(storeID); err != nil {
+		log.Printf("Warning: Failed to auto-expire waiting items: %v", err)
+	}
+
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -23,9 +28,16 @@ func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 	// 日本時間帯設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
-	// window: 先日 23時 ~ 明日 1時
-	windowStart := time.Date(now.Year(), now.Month(), now.Day()-1, 23, 0, 0, 0, jst)
-	windowEnd := time.Date(now.Year(), now.Month(), now.Day()+1, 1, 0, 0, 0, jst)
+
+	// 02:00を基準とした営業日ウィンドウの設定
+	var windowStart time.Time
+	if now.Hour() < 2 {
+		windowStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
+	} else {
+		windowStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
+	}
+	windowEnd := windowStart.Add(24 * time.Hour)
+
 	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id": storeID,
@@ -58,6 +70,52 @@ func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 	}
 
 	return waitingListData, nil
+}
+
+// 24時間（または営業日）が経過した待機データを 'no_show' に自動更新
+func AutoExpireWaitingItems(storeID string) error {
+	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+
+	// 現在の営業日の開始時刻(02:00)を計算
+	var businessDayStart time.Time
+	if now.Hour() < 2 {
+		businessDayStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
+	} else {
+		businessDayStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
+	}
+
+	cutoffStr := businessDayStart.Format("2006-01-02T15:04:05.000+09:00")
+
+	// 現在の営業日より前に登録された 'waiting' または 'notified' 状態のデータを抽出
+	filter := bson.M{
+		"store_id": storeID,
+		"status":   bson.M{"$in": []string{"waiting", "notified"}},
+		"registration_time": bson.M{
+			"$lt": cutoffStr,
+		},
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"status": "no_show",
+		},
+	}
+
+	result, err := collection.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return err
+	}
+
+	if result.ModifiedCount > 0 {
+		log.Printf("Auto-expired %d items for store %s", result.ModifiedCount, storeID)
+	}
+
+	return nil
 }
 
 // 新しいウェイティングリスト項目作成
@@ -171,7 +229,14 @@ func ClearWaitingList(storeID string) error {
 	// 日本時間帯設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
+
+	// 02:00を基準とした営業日ウィンドウの設定
+	var startOfDay time.Time
+	if now.Hour() < 2 {
+		startOfDay = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
+	} else {
+		startOfDay = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
+	}
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	// Filter for today's waiting items
@@ -234,9 +299,15 @@ func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingLis
 	// 日本時間帯設定
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
-	// window: 先日 23時 ~ 明日 1時
-	windowStart := time.Date(now.Year(), now.Month(), now.Day()-1, 23, 0, 0, 0, jst)
-	windowEnd := time.Date(now.Year(), now.Month(), now.Day()+1, 1, 0, 0, 0, jst)
+	// 02:00を基準とした営業日ウィンドウの設定
+	var windowStart time.Time
+	if now.Hour() < 2 {
+		windowStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
+	} else {
+		windowStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
+	}
+	windowEnd := windowStart.Add(24 * time.Hour)
+
 	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
 	filter := bson.M{
 		"store_id":   storeID,
