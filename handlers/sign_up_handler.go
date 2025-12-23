@@ -214,12 +214,12 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			// lineLoginUrl = baseURL + "?" + params.Encode() // URL完成
 
 		case "staff":
-			if req.StoreID == nil || *req.StoreID == "" {
+			if req.StoreID == "" {
 				return nil, fmt.Errorf("store ID is required for staff role")
 			}
 
 			var existingStore models.Store
-			err := storeCollection.FindOne(sessCtx, bson.M{"store_id": *req.StoreID}).Decode(&existingStore)
+			err := storeCollection.FindOne(sessCtx, bson.M{"store_id": req.StoreID}).Decode(&existingStore)
 			if err == mongo.ErrNoDocuments {
 				return nil, fmt.Errorf("store with the provided ID not found")
 			} else if err != nil {
@@ -231,6 +231,24 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, fmt.Errorf("invalid or unsupported user role: %s", req.Role)
 		}
 
+		// Parse TermsAgreedAt
+		var termsAgreedAt time.Time
+		if req.TermsAgreedAt != "" {
+			parsedTime, err := time.Parse(time.RFC3339, req.TermsAgreedAt)
+			if err == nil {
+				termsAgreedAt = parsedTime
+			}
+		}
+
+		// Parse PrivacyAgreedAt
+		var privacyAgreedAt time.Time
+		if req.PrivacyAgreedAt != "" {
+			parsedTime, err := time.Parse(time.RFC3339, req.PrivacyAgreedAt)
+			if err == nil {
+				privacyAgreedAt = parsedTime
+			}
+		}
+
 		newUser := models.User{
 			ID:               newUserID,
 			FirebaseUID:      req.FirebaseUID,
@@ -240,6 +258,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			Phone:            req.PhoneNumber,
 			Role:             req.Role,
 			StoreID:          storeIdForUser,
+			TermsAgreed:      req.TermsAgreed,
+			TermsAgreedAt:    termsAgreedAt,
+			PrivacyAgreed:    req.PrivacyAgreed,
+			PrivacyAgreedAt:  privacyAgreedAt,
 		}
 
 		// ユーザー生成
