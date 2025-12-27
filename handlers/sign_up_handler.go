@@ -163,7 +163,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			initialLicenseInfo := models.StoreLicense{
 				ID:                 primitive.NewObjectID(),
 				StoreID:            newStore.StoreID,
-				VerificationStatus: models.StatusPending,
+				VerificationStatus: models.StatusNotSubmitted,
 				CreatedAt:          time.Now(),
 				UpdatedAt:          time.Now(),
 				// LineAuthToken:      lineToken,
@@ -357,13 +357,24 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
+	// 1. MongoDB check
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
 	count, err := userCollection.CountDocuments(r.Context(), bson.M{"email": req.Email})
 	if err != nil {
 		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	utils.RespondWithJSON(w, map[string]bool{"available": count == 0}, http.StatusOK)
+
+	// 2. Firebase Auth check
+	// MongoDBに存在しない場合でもFirebaseに存在する可能性があるため、チェックする
+	// 最終加入段階で、エラー400防止のため、チェックする
+	_, err = auth.GetUserByEmail(r.Context(), req.Email)
+	firebaseExists := (err == nil)
+
+	// DBまたはFirebaseに存在する場合、利用できない
+	isUnavailable := (count > 0) || firebaseExists
+
+	utils.RespondWithJSON(w, map[string]bool{"available": !isUnavailable}, http.StatusOK)
 }
 
 func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -487,7 +498,7 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		initialLicenseInfo := models.StoreLicense{
 			ID:                 primitive.NewObjectID(),
 			StoreID:            newStore.StoreID,
-			VerificationStatus: models.StatusPending,
+			VerificationStatus: models.StatusNotSubmitted,
 			CreatedAt:          time.Now(),
 			UpdatedAt:          time.Now(),
 			// LineAuthToken:      lineToken,

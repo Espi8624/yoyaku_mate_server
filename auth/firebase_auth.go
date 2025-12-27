@@ -34,3 +34,8 @@ func VerifyIDToken(ctx context.Context, idToken string) (string, error) {
 	}
 	return token.UID, nil
 }
+
+// メールアドレスでFirebaseユーザーを取得（存在確認用）
+func GetUserByEmail(ctx context.Context, email string) (*auth.UserRecord, error) {
+	return firebaseAuth.GetUserByEmail(ctx, email)
+}
