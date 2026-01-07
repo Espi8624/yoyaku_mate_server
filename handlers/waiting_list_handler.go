@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
@@ -19,10 +20,10 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 			handleGetAverageWaitingTime(w, r)
 			return
 		}
-		// if r.URL.Query().Get("waiting_id") != "" {
-		// 	handleGetUserWaitingList(w, r)
-		// 	return
-		// }
+		if r.URL.Query().Get("action") == "qr_token" {
+			handleGetQRToken(w, r)
+			return
+		}
 		handleGetWaitingList(w, r)
 	case http.MethodPost:
 		if r.URL.Query().Get("action") == "clear" {
@@ -90,15 +91,35 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 今日のQRトークンを取得
+	vToken := r.URL.Query().Get("v_token")
+	if vToken == "" {
+		// v_tokenがクエリパラメータに含まれていない場合、JSONボディに含まれているかチェックする
+		// まずクエリパラメータをチェックする
+		log.Printf("Missing v_token for store %s", newWaiting.StoreID)
+		http.Error(w, "QRコードが正しくないか、期限切れです。再度スキャンして下さい。", http.StatusForbidden)
+		return
+	}
+
+	// Date string in JST (YYYYMMDD)
+	jst := time.FixedZone("JST", 9*60*60)
+	dateStr := time.Now().In(jst).Format("20060102")
+
+	if !utils.VerifyHMACDateToken(newWaiting.StoreID, dateStr, vToken) {
+		log.Printf("Invalid v_token for store %s: %s (Expected for %s)", newWaiting.StoreID, vToken, dateStr)
+		http.Error(w, "QRコードが正しくないか、期限切れです。再度スキャンして下さい。", http.StatusForbidden)
+		return
+	}
+
 	// 必須フィールド検証
 	if newWaiting.StoreID == "" {
 		log.Printf("Missing required field: store_id")
-		http.Error(w, "Missing required field: store_id", http.StatusBadRequest)
+		http.Error(w, "店舗IDが正しくありません。", http.StatusBadRequest)
 		return
 	}
 	if newWaiting.PartySize <= 0 {
 		log.Printf("Invalid party_size: %d", newWaiting.PartySize)
-		http.Error(w, "Invalid party_size: must be greater than 0", http.StatusBadRequest)
+		http.Error(w, "人数が正しくありません。", http.StatusBadRequest)
 		return
 	}
 
@@ -387,4 +408,50 @@ func WaitingListUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
+}
+
+// QRトークンを取得する
+func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Firebase認証チェック
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+
+	idToken := authHeader[len("Bearer "):]
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	if err != nil || user == nil {
+		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role)
+	if err != nil || !hasPermission {
+		utils.RespondWithError(w, "Permission denied", http.StatusForbidden)
+		return
+	}
+
+	// JST基準の今日の日付
+	jst := time.FixedZone("JST", 9*60*60)
+	dateStr := time.Now().In(jst).Format("20060102")
+
+	token := utils.GenerateHMACDateToken(storeID, dateStr)
+
+	utils.RespondWithJSON(w, map[string]string{
+		"v_token": token,
+		"date":    dateStr,
+	}, http.StatusOK)
 }
