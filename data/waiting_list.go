@@ -8,6 +8,7 @@ import (
 	"yoyaku_mate_server/models"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/context"
@@ -124,7 +125,7 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Validate required fields
+	// 必須フィールドの検証
 	if item.StoreID == "" {
 		return nil, fmt.Errorf("store_id is required")
 	}
@@ -135,7 +136,7 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		return nil, fmt.Errorf("waiting_id is required")
 	}
 
-	// Set default values if not provided
+	// 提供されていない場合はデフォルト値を設定
 	if item.Status == "" {
 		item.Status = "waiting"
 	}
@@ -162,7 +163,7 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		item.WaitingID = now.Format("20060102-150405")
 	}
 
-	// Create BSON document
+	// BSONドキュメントを作成
 	doc := bson.M{
 		"store_id":          item.StoreID,
 		"waiting_id":        item.WaitingID,
@@ -177,23 +178,17 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		"notes":             item.Notes,
 	}
 
-	// Insert the new item
+	// 新規項目を挿入
 	result, err := collection.InsertOne(ctx, doc)
 	if err != nil {
 		log.Printf("Failed to insert waiting list item: %v\nDocument: %+v", err, doc)
 		return nil, fmt.Errorf("failed to insert waiting list item: %v", err)
 	}
 
-	// 挿入された document を照会し、返却
-	var createdItem models.WaitingList
-	filter := bson.M{"_id": result.InsertedID}
-	err = collection.FindOne(ctx, filter).Decode(&createdItem)
-	if err != nil {
-		log.Printf("Failed to fetch newly created waiting list item: %v", err)
-		return nil, fmt.Errorf("failed to fetch newly created item: %v", err)
-	}
+	// 挿入されたIDを設定して返却 (再取得を避ける)
+	item.ID = result.InsertedID.(primitive.ObjectID)
 
-	return &createdItem, nil
+	return &item, nil
 }
 
 // 特定店舗の次の利用可能なキュー番号を返却
@@ -239,7 +234,7 @@ func ClearWaitingList(storeID string) error {
 	}
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
-	// Filter for today's waiting items
+	// 今日の待機項目をフィルタリング
 	filter := bson.M{
 		"store_id": storeID,
 		"registration_time": bson.M{
@@ -249,14 +244,14 @@ func ClearWaitingList(storeID string) error {
 		"status": "waiting",
 	}
 
-	// Update to set status to cancelled
+	// ステータスをcancelledに更新
 	update := bson.M{
 		"$set": bson.M{
 			"status": "cancelled",
 		},
 	}
 
-	// Update all matching documents
+	// 一致するすべてのドキュメントを更新
 	result, err := collection.UpdateMany(ctx, filter, update)
 	if err != nil {
 		log.Printf("Failed to clear waiting list: %v", err)

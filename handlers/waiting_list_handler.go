@@ -8,6 +8,7 @@ import (
 	"time"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 )
@@ -179,6 +180,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
+	notifyStore(newWaiting.StoreID)
 }
 
 // WaitingList をクリアするリクエストを処理
@@ -239,6 +241,7 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
+	notifyStore(storeID)
 }
 
 // 特定のユーザーのウェイティングリスト項目を取得する GET リクエストを処理
@@ -349,6 +352,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		"message": "Status updated successfully",
 		"status":  updateRequest.Status,
 	}, http.StatusOK)
+	notifyStore(updateRequest.StoreID)
 }
 
 // 平均待機時間を返すハンドラ
@@ -454,4 +458,71 @@ func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 		"v_token": token,
 		"date":    dateStr,
 	}, http.StatusOK)
+}
+
+// HandleWaitingListStream はリアルタイムの待機リスト更新のためのServer-Sent Eventsを処理します
+func HandleWaitingListStream(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// SSE用のヘッダーを設定
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// このクライアント用のチャンネルを作成
+	clientChan := make(chan string, 10)
+
+	// クライアントを登録
+	broker := events.GetBroker()
+	broker.AddClient(storeID, clientChan)
+
+	// 接続が閉じられたときにクライアントを削除
+	defer broker.RemoveClient(storeID, clientChan)
+
+	// 接続終了を監視
+	notify := r.Context().Done()
+
+	// 初期データ送信 (オプションだがUX向上のため)
+	go func() {
+		waitingList, err := data.GetWaitingListData(storeID)
+		if err == nil {
+			jsonData, _ := json.Marshal(waitingList)
+			broker.Broadcast(storeID, string(jsonData))
+		}
+	}()
+
+	for {
+		select {
+		case <-notify:
+			return
+		case msg := <-clientChan:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			w.(http.Flusher).Flush()
+		}
+	}
+}
+
+// notifyStore は最新データを取得し、すべてのサブスクライバーにブロードキャストします
+func notifyStore(storeID string) {
+	// 最新データを取得
+	waitingList, err := data.GetWaitingListData(storeID)
+	if err != nil {
+		log.Printf("Error fetching waiting list for broadcast: %v", err)
+		return
+	}
+
+	// JSONにマーシャル
+	jsonData, err := json.Marshal(waitingList)
+	if err != nil {
+		log.Printf("Error marshaling waiting list for broadcast: %v", err)
+		return
+	}
+
+	// ブロードキャスト
+	events.GetBroker().Broadcast(storeID, string(jsonData))
 }
