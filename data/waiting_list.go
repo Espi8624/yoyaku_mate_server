@@ -7,6 +7,8 @@ import (
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 
+	"sort"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -63,6 +65,46 @@ func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 			continue
 		}
 		waitingListData = append(waitingListData, waitingListItem)
+	}
+
+	// 予想待ち時間の計算 (In-Memory)
+	// 1. アクティブな待機アイテム(waiting, notified)だけを抽出
+	var activeItems []models.WaitingList
+	for _, item := range waitingListData {
+		if item.Status == "waiting" || item.Status == "notified" {
+			activeItems = append(activeItems, item)
+		}
+	}
+
+	// 2. QueueNumber順にソート (念のため)
+	sort.Slice(activeItems, func(i, j int) bool {
+		return activeItems[i].QueueNumber < activeItems[j].QueueNumber
+	})
+
+	// 3. 全体リストを回しながら、アクティブなアイテムの場合、その順序に基づいて時間を計算
+	for i := range waitingListData {
+		if waitingListData[i].Status == "waiting" || waitingListData[i].Status == "notified" {
+			// アクティブリスト内でのインデックスを探す
+			// activeItemsはソートされているので、自身のQueueNumberより小さいものの数が待ち組数
+			// 店舗設定から予想待ち時間を取得 (非効率だが一旦ループ内で取得、本来は外で一回取得すべき)
+			// TODO: パフォーマンス最適化 (外で取得して渡す)
+			settings, err := GetStoreSettingsData(storeID)
+			minutesPerTeam := 10 // default
+			if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+				minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+			}
+
+			waitingCount := 0
+			for idx, active := range activeItems {
+				if active.QueueNumber == waitingListData[i].QueueNumber {
+					waitingCount = idx
+					break
+				}
+			}
+			waitingListData[i].EstimatedWaitTime = CalculateEstimatedWaitTime(waitingCount, minutesPerTeam)
+		} else {
+			waitingListData[i].EstimatedWaitTime = 0
+		}
 	}
 
 	if err := cursor.Err(); err != nil {
@@ -163,19 +205,42 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		item.WaitingID = now.Format("20060102-150405")
 	}
 
+	// 予想待ち時間の計算
+	// 現在の待機組数(waiting, notified)を取得
+	countFilter := bson.M{
+		"store_id": item.StoreID,
+		"status":   bson.M{"$in": []string{"waiting", "notified"}},
+		// 営業日の判定は必要か？ -> 既にClearWaitingList等で古いのは消えてる/cancelされてる前提なら不要だが、念のため日付入れてもいい
+		// 単純化のため、statusだけでカウントする (古いのが残ってたらそれも待ち時間に含めるのが安全)
+	}
+	activeCount, err := collection.CountDocuments(ctx, countFilter)
+	if err != nil {
+		log.Printf("Failed to count active waiting items: %v", err)
+		item.EstimatedWaitTime = 0 // エラー時は0
+	} else {
+		// 店舗設定から予想待ち時間を取得
+		settings, err := GetStoreSettingsData(item.StoreID)
+		minutesPerTeam := 10 // default
+		if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+			minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+		}
+		item.EstimatedWaitTime = CalculateEstimatedWaitTime(int(activeCount), minutesPerTeam)
+	}
+
 	// BSONドキュメントを作成
 	doc := bson.M{
-		"store_id":          item.StoreID,
-		"waiting_id":        item.WaitingID,
-		"queue_number":      item.QueueNumber,
-		"party_size":        item.PartySize,
-		"registration_time": item.RegistrationTime,
-		"contact":           item.Contact,
-		"status":            item.Status,
-		"nationality":       item.Nationality,
-		"called_time":       nil,
-		"entry_time":        nil,
-		"notes":             item.Notes,
+		"store_id":            item.StoreID,
+		"waiting_id":          item.WaitingID,
+		"queue_number":        item.QueueNumber,
+		"party_size":          item.PartySize,
+		"registration_time":   item.RegistrationTime,
+		"contact":             item.Contact,
+		"status":              item.Status,
+		"nationality":         item.Nationality,
+		"called_time":         nil,
+		"entry_time":          nil,
+		"notes":               item.Notes,
+		"estimated_wait_time": item.EstimatedWaitTime,
 	}
 
 	// 新規項目を挿入
@@ -342,6 +407,34 @@ func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingLis
 		return nil, err
 	}
 
+	// 各アイテムについて、自分より前の待機数をカウントして時間を計算
+	for i := range waitingListData {
+		if waitingListData[i].Status == "waiting" || waitingListData[i].Status == "notified" {
+			countFilter := bson.M{
+				"store_id": storeID,
+				"status":   bson.M{"$in": []string{"waiting", "notified"}},
+				"queue_number": bson.M{
+					"$lt": waitingListData[i].QueueNumber,
+				},
+			}
+			aheadCount, err := collection.CountDocuments(ctx, countFilter)
+			if err != nil {
+				log.Printf("Failed to count items ahead: %v", err)
+				waitingListData[i].EstimatedWaitTime = 0
+			} else {
+				// 店舗設定から予想待ち時間を取得
+				settings, err := GetStoreSettingsData(storeID)
+				minutesPerTeam := 10 // default
+				if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+					minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+				}
+				waitingListData[i].EstimatedWaitTime = CalculateEstimatedWaitTime(int(aheadCount), minutesPerTeam)
+			}
+		} else {
+			waitingListData[i].EstimatedWaitTime = 0
+		}
+	}
+
 	return waitingListData, nil
 }
 
@@ -484,4 +577,14 @@ func GetAverageWaitingTime(storeID string) (int, error) {
 	}
 	// 平均待機時間を計算
 	return int(totalSeconds / count), nil
+}
+
+// 予想待機時間を計算する共通ロジック
+// 将来的にAIロジックなどに置き換える場合はここを修正する
+func CalculateEstimatedWaitTime(waitingCount int, minutesPerTeam int) int {
+	// 単純な計算: 1組あたり minutesPerTeam 分
+	if minutesPerTeam <= 0 {
+		minutesPerTeam = 10
+	}
+	return waitingCount * minutesPerTeam
 }
