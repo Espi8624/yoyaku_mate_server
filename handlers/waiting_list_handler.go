@@ -180,7 +180,13 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
-	notifyStore(newWaiting.StoreID)
+
+	// DBの一貫性を確保するために少し待機してから通知
+	// 直後のFetchでデータが見えない場合があるため
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		notifyStore(newWaiting.StoreID)
+	}()
 }
 
 // handleClearWaitingList WaitingList をクリアするリクエストを処理
