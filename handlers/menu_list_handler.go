@@ -51,17 +51,18 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	var response []map[string]interface{}
 	for _, item := range menuListItems {
 		menuItem := map[string]interface{}{
-			"id":             item.ID.Hex(),
-			"store_id":       item.StoreID,
-			"menu_id":        item.MenuID,
-			"category":       item.Category,
-			"title":          item.Title,
-			"description":    item.Description,
-			"price":          item.Price,
-			"menu_image_url": item.MenuImageURL,
-			"created_at":     item.CreatedAt,
-			"updated_at":     item.UpdatedAt,
-			"menu_status":    item.MenuStatus,
+			"id":                     item.ID.Hex(),
+			"store_id":               item.StoreID,
+			"menu_id":                item.MenuID,
+			"category":               item.Category,
+			"title":                  item.Title,
+			"description":            item.Description,
+			"price":                  item.Price,
+			"menu_image_url":         item.MenuImageURL,
+			"created_at":             item.CreatedAt,
+			"updated_at":             item.UpdatedAt,
+			"menu_status":            item.MenuStatus,
+			"is_pre_order_available": item.IsPreOrderAvailable,
 		}
 		response = append(response, menuItem)
 	}
@@ -133,17 +134,18 @@ func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	menuItem := map[string]interface{}{
-		"id":             updatedMenu.ID.Hex(),
-		"store_id":       updatedMenu.StoreID,
-		"menu_id":        updatedMenu.MenuID,
-		"category":       updatedMenu.Category,
-		"title":          updatedMenu.Title,
-		"description":    updatedMenu.Description,
-		"price":          updatedMenu.Price,
-		"menu_image_url": updatedMenu.MenuImageURL,
-		"created_at":     updatedMenu.CreatedAt,
-		"updated_at":     updatedMenu.UpdatedAt,
-		"menu_status":    updatedMenu.MenuStatus,
+		"id":                     updatedMenu.ID.Hex(),
+		"store_id":               updatedMenu.StoreID,
+		"menu_id":                updatedMenu.MenuID,
+		"category":               updatedMenu.Category,
+		"title":                  updatedMenu.Title,
+		"description":            updatedMenu.Description,
+		"price":                  updatedMenu.Price,
+		"menu_image_url":         updatedMenu.MenuImageURL,
+		"created_at":             updatedMenu.CreatedAt,
+		"updated_at":             updatedMenu.UpdatedAt,
+		"menu_status":            updatedMenu.MenuStatus,
+		"is_pre_order_available": updatedMenu.IsPreOrderAvailable,
 	}
 
 	utils.RespondWithJSON(w, menuItem, http.StatusOK)
@@ -180,17 +182,18 @@ func HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	var response []map[string]interface{}
 	for _, item := range insertedItems {
 		menuItem := map[string]interface{}{
-			"id":             item.ID.Hex(),
-			"store_id":       item.StoreID,
-			"menu_id":        item.MenuID,
-			"category":       item.Category,
-			"title":          item.Title,
-			"description":    item.Description,
-			"price":          item.Price,
-			"menu_image_url": item.MenuImageURL,
-			"created_at":     item.CreatedAt,
-			"updated_at":     item.UpdatedAt,
-			"menu_status":    item.MenuStatus,
+			"id":                     item.ID.Hex(),
+			"store_id":               item.StoreID,
+			"menu_id":                item.MenuID,
+			"category":               item.Category,
+			"title":                  item.Title,
+			"description":            item.Description,
+			"price":                  item.Price,
+			"menu_image_url":         item.MenuImageURL,
+			"created_at":             item.CreatedAt,
+			"updated_at":             item.UpdatedAt,
+			"menu_status":            item.MenuStatus,
+			"is_pre_order_available": item.IsPreOrderAvailable,
 		}
 		response = append(response, menuItem)
 	}
