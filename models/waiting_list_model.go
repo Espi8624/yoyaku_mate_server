@@ -19,6 +19,14 @@ type WaitingList struct {
 	EntryTime         *string            `json:"entry_time,omitempty" bson:"entry_time,omitempty"`
 	Notes             *string            `json:"notes,omitempty" bson:"notes,omitempty"`
 	EstimatedWaitTime int                `json:"estimated_wait_time" bson:"estimated_wait_time"`
+	MenuItems         []MenuItem         `json:"menu_items,omitempty" bson:"menu_items,omitempty"`
+}
+
+type MenuItem struct {
+	MenuID   string `json:"menu_id" bson:"menu_id"`
+	Name     string `json:"name" bson:"name"`
+	Quantity int    `json:"quantity" bson:"quantity"`
+	Options  string `json:"options,omitempty" bson:"options,omitempty"`
 }
 
 type AverageWaitingTimeResponse struct {

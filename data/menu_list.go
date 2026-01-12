@@ -92,14 +92,15 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 
 		update := bson.M{
 			"$set": bson.M{
-				"store_id":    storeID,
-				"menu_id":     getStringValue(item, "menu_id"),
-				"category":    getStringValue(item, "category"),
-				"title":       getStringValue(item, "title"),
-				"description": getStringValue(item, "description"),
-				"price":       getIntValue(item, "price"),
-				"updated_at":  parseTimeToString(getStringValue(item, "updated_at")),
-				"menu_status": getStringValue(item, "menu_status"),
+				"store_id":               storeID,
+				"menu_id":                getStringValue(item, "menu_id"),
+				"category":               getStringValue(item, "category"),
+				"title":                  getStringValue(item, "title"),
+				"description":            getStringValue(item, "description"),
+				"price":                  getIntValue(item, "price"),
+				"updated_at":             parseTimeToString(getStringValue(item, "updated_at")),
+				"menu_status":            getStringValue(item, "menu_status"),
+				"is_pre_order_available": getBoolValue(item, "is_pre_order_available"),
 			},
 			"$setOnInsert": bson.M{
 				"created_at": parseTimeToString(getStringValue(item, "created_at")),
@@ -179,6 +180,11 @@ func UpdateSingleMenu(menuData map[string]interface{}) (*models.MenuList, error)
 	}
 	if menuStatus := getStringValue(menuData, "menu_status"); menuStatus != "" {
 		update["$set"].(bson.M)["menu_status"] = menuStatus
+	}
+	if val, ok := menuData["is_pre_order_available"]; ok {
+		if boolVal, ok := val.(bool); ok {
+			update["$set"].(bson.M)["is_pre_order_available"] = boolVal
+		}
 	}
 	if imageURL, exists := menuData["menu_image_url"]; exists {
 		if imageURLStr, ok := imageURL.(string); ok {
@@ -303,6 +309,21 @@ func getIntValue(item map[string]interface{}, key string) int {
 		log.Printf("Value for key '%s' cannot be converted to int: %v", key, val)
 	}
 	return 0
+}
+
+// ブール値を取得し、存在しない場合はfalseを返却
+func getBoolValue(item map[string]interface{}, key string) bool {
+	if val, ok := item[key]; ok {
+		if boolVal, ok := val.(bool); ok {
+			return boolVal
+		}
+		// 文字列 "true"/"false" もサポートする場合
+		if strVal, ok := val.(string); ok {
+			return strVal == "true"
+		}
+		log.Printf("Value for key '%s' is not a bool: %v", key, val)
+	}
+	return false
 }
 
 func UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error) {
