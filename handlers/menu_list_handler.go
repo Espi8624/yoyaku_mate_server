@@ -1,23 +1,28 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
 
 	"github.com/gorilla/mux"
 )
 
-// メニューリストのリクエストを処理
+// MenuListHandler メニューリストリクエストを処理
 func MenuListHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		handleGetMenuList(w, r)
 	case http.MethodPost:
-		handleBulkSaveMenuList(w, r)
+		HandleBulkSaveMenuList(w, r)
 	case http.MethodPatch:
 		handleUpdateSingleMenu(w, r)
 	default:
@@ -25,7 +30,7 @@ func MenuListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// メニューリストの取得を処理
+// handleGetMenuList メニューリストの取得を処理
 func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	// storeID をクエリパラメータから取得
 	storeID := r.URL.Query().Get("store_id")
@@ -65,15 +70,60 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, response, http.StatusOK)
 }
 
-// 単一メニューの更新を処理
+// verifyMenuEditPermission 権限チェック用ヘルパー
+func verifyMenuEditPermission(r *http.Request, storeID string) error {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return fmt.Errorf("Authorization header is required")
+	}
+	idToken := strings.TrimPrefix(authHeader, "Bearer ")
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		return fmt.Errorf("Invalid or expired token")
+	}
+
+	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	if err != nil || user == nil {
+		return fmt.Errorf("User not found")
+	}
+
+	// 権限チェック: マネージャーまたは「menu_edit」権限を持つスタッフ
+	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "menu_edit")
+	if err != nil {
+		return err
+	}
+	if !hasPermission {
+		return fmt.Errorf("修正権限がありません。")
+	}
+	return nil
+}
+
+// handleUpdateSingleMenu 単一メニューの更新を処理
 func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 	var menuData map[string]interface{}
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&menuData); err != nil {
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore
+
+	if err := json.Unmarshal(bodyBytes, &menuData); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+
+	storeID, ok := menuData["store_id"].(string)
+	if !ok || storeID == "" {
+		utils.RespondWithError(w, "store_id is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := verifyMenuEditPermission(r, storeID); err != nil {
+		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
+		return
+	}
 
 	updatedMenu, err := data.UpdateSingleMenu(menuData)
 	if err != nil {
@@ -99,11 +149,16 @@ func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, menuItem, http.StatusOK)
 }
 
-// メニューリストの一括保存を処理
-func handleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
+// HandleBulkSaveMenuList メニューリストの一括保存を処理
+func HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	if err := verifyMenuEditPermission(r, storeID); err != nil {
+		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 

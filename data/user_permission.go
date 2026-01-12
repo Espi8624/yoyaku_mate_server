@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// GetUserByFirebaseUID retrieves a user by their Firebase UID
+// GetUserByFirebaseUID Firebase UIDを使用してユーザーを取得
 func GetUserByFirebaseUID(firebaseUID string) (*models.User, error) {
 	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -29,10 +29,10 @@ func GetUserByFirebaseUID(firebaseUID string) (*models.User, error) {
 	return &user, nil
 }
 
-// CheckUserStorePermission checks if a user has permission to access a store
-// For managers: checks if they own the store
-// For staff: checks if they are APPROVED for the store
-func CheckUserStorePermission(userID primitive.ObjectID, storeID string, role string) (bool, error) {
+// CheckUserStorePermission ユーザーが店舗にアクセスする権限があるかを確認
+// マネージャーの場合: 店舗の所有者かどうかを確認
+// スタッフの場合: 店舗でAPPROVED状態であり、かつ必要な権限を持っているかを確認(指定されている場合)
+func CheckUserStorePermission(userID primitive.ObjectID, storeID string, role string, requiredPermission string) (bool, error) {
 	if role == "manager" {
 		// マネージャーの場合、店舗の所有者かどうかを確認
 		storeCollection := db.GetCollection(DatabaseName, CollectionStoreInfo)
@@ -54,6 +54,38 @@ func CheckUserStorePermission(userID primitive.ObjectID, storeID string, role st
 		return true, nil
 	}
 
-	// スタッフの場合、APPROVED状態かどうかを確認
-	return CheckStaffApprovalStatus(userID, storeID)
+	// スタッフの場合
+	// 1. APPROVED状態かどうかを確認
+	approved, err := CheckStaffApprovalStatus(userID, storeID)
+	if err != nil || !approved {
+		return false, err
+	}
+
+	// 2. 権限チェック (requiredPermissionが指定されている場合)
+	if requiredPermission != "" {
+		collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		var staffInfo models.StoreStaffInfo
+		err := collection.FindOne(ctx, bson.M{
+			"user_id":  userID,
+			"store_id": storeID,
+		}).Decode(&staffInfo)
+
+		if err != nil {
+			return false, err
+		}
+
+		hasPermission := false
+		for _, p := range staffInfo.Permissions {
+			if p == requiredPermission {
+				hasPermission = true
+				break
+			}
+		}
+		return hasPermission, nil
+	}
+
+	return true, nil
 }

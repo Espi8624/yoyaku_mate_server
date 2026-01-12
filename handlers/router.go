@@ -14,7 +14,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api.HandleFunc("/waiting-list/stream", HandleWaitingListStream)
 
 	api.HandleFunc("/menu-list", MenuListHandler).Methods("GET", "POST", "OPTIONS", "PATCH")
-	api.HandleFunc("/menu-list/bulk-save", handleBulkSaveMenuList)
+	api.HandleFunc("/menu-list/bulk-save", HandleBulkSaveMenuList)
 	api.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
 
 	api.HandleFunc("/store_settings", StoreSettingsHandler)
@@ -50,4 +50,5 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", GetStoreStaffHandler).Methods("GET", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}", UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
 }

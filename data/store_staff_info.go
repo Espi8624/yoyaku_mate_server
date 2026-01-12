@@ -12,7 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// CreateStoreStaffInfo creates a new store_staff_info record
+// CreateStoreStaffInfo 新しい店舗スタッフ情報を作成
 func CreateStoreStaffInfo(info models.StoreStaffInfo) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -29,7 +29,7 @@ func CreateStoreStaffInfo(info models.StoreStaffInfo) error {
 	return nil
 }
 
-// CheckStoreStaffExists checks if a user is already associated with a store
+// CheckStoreStaffExists ユーザーが既に店舗に所属しているかを確認
 func CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -72,13 +72,13 @@ func CheckStaffApprovalStatus(userID primitive.ObjectID, storeID string) (bool, 
 	return staffInfo.Status == models.StaffStatusApproved, nil
 }
 
-// GetStoreStaffByStoreID retrieves all staff members for a store with user details
+// GetStoreStaffByStoreID 店舗の全スタッフ情報をユーザー詳細とともに取得
 func GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Aggregation pipeline to join with user_info
+	// UserInfoとJoinするための集計パイプライン
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: bson.M{"store_id": storeID}}},
 		{{Key: "$lookup", Value: bson.M{
@@ -89,15 +89,16 @@ func GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
 		}}},
 		{{Key: "$unwind", Value: "$user_details"}},
 		{{Key: "$project", Value: bson.M{
-			"_id":        1,
-			"user_id":    1,
-			"store_id":   1,
-			"role":       1,
-			"status":     1,
-			"created_at": 1,
-			"updated_at": 1,
-			"user_name":  "$user_details.user_name",
-			"email":      "$user_details.email",
+			"_id":         1,
+			"user_id":     1,
+			"store_id":    1,
+			"role":        1,
+			"status":      1,
+			"permissions": 1,
+			"created_at":  1,
+			"updated_at":  1,
+			"user_name":   "$user_details.user_name",
+			"email":       "$user_details.email",
 		}}},
 	}
 
@@ -117,7 +118,7 @@ func GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
 	return results, nil
 }
 
-// UpdateStoreStaffStatus updates the status of a staff member
+// UpdateStoreStaffStatus スタッフのステータスを更新
 func UpdateStoreStaffStatus(staffID string, status string) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -138,6 +139,33 @@ func UpdateStoreStaffStatus(staffID string, status string) error {
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	if err != nil {
 		log.Printf("Failed to update store staff status: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// UpdateStoreStaffPermissions スタッフの権限を更新
+func UpdateStoreStaffPermissions(staffID string, permissions []string) error {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(staffID)
+	if err != nil {
+		return err
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"permissions": permissions,
+			"updated_at":  time.Now(),
+		},
+	}
+
+	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	if err != nil {
+		log.Printf("Failed to update store staff permissions: %v", err)
 		return err
 	}
 
