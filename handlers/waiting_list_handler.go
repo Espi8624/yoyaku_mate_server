@@ -43,7 +43,7 @@ func WaitingListHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// WaitingList アップデートのためのポーリングリクエストを処理
+// HandleWaitingListPolling WaitingList アップデートのためのポーリングリクエストを処理
 func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -62,7 +62,7 @@ func HandleWaitingListPolling(w http.ResponseWriter, r *http.Request) {
 	// log.Printf("Polling request handled successfully for store_id: %s", storeID)
 }
 
-// WaitingList の取得を処理する GET リクエストを処理
+// handleGetWaitingList WaitingList の取得を処理する GET リクエストを処理
 func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 	// クエリパラメータから storeID を取得
 	storeID := r.URL.Query().Get("store_id")
@@ -83,7 +83,7 @@ func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
 }
 
-// 新しいウェイティングリスト作成処理 (POSTリクエスト処理)
+// handleCreateWaitingList 新しいウェイティングリスト作成処理 (POSTリクエスト処理)
 func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	var newWaiting models.WaitingList
 	if err := json.NewDecoder(r.Body).Decode(&newWaiting); err != nil {
@@ -143,7 +143,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
-		hasPermission, err := data.CheckUserStorePermission(user.ID, newWaiting.StoreID, user.Role)
+		hasPermission, err := data.CheckUserStorePermission(user.ID, newWaiting.StoreID, user.Role, "")
 		if err != nil {
 			log.Printf("Failed to check user permission: %v", err)
 			utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
@@ -183,7 +183,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	notifyStore(newWaiting.StoreID)
 }
 
-// WaitingList をクリアするリクエストを処理
+// handleClearWaitingList WaitingList をクリアするリクエストを処理
 func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -220,7 +220,7 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role)
+	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "")
 	if err != nil {
 		log.Printf("Failed to check user permission: %v", err)
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
@@ -270,7 +270,7 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 // 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 // }
 
-// 待機目録のステータスをアップデートする PATCH 要請を処理
+// handleUpdateWaitingStatus 待機目録のステータスをアップデートする PATCH 要請を処理
 func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	var updateRequest struct {
 		StoreID   string `json:"store_id"`
@@ -313,7 +313,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
-		hasPermission, err := data.CheckUserStorePermission(user.ID, updateRequest.StoreID, user.Role)
+		hasPermission, err := data.CheckUserStorePermission(user.ID, updateRequest.StoreID, user.Role, "")
 		if err != nil {
 			log.Printf("Failed to check user permission: %v", err)
 			utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
@@ -355,7 +355,7 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 	notifyStore(updateRequest.StoreID)
 }
 
-// 平均待機時間を返すハンドラ
+// handleGetAverageWaitingTime 平均待機時間を返すハンドラ
 func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -384,7 +384,7 @@ func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, resp, http.StatusOK)
 }
 
-// 待機ユーザー用データ確認メソッド
+// WaitingListUserHandler 待機ユーザー用データ確認メソッド
 func WaitingListUserHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -414,7 +414,7 @@ func WaitingListUserHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 }
 
-// QRトークンを取得する
+// handleGetQRToken QRトークンを取得する
 func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -442,7 +442,7 @@ func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role)
+	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "")
 	if err != nil || !hasPermission {
 		utils.RespondWithError(w, "Permission denied", http.StatusForbidden)
 		return
