@@ -124,6 +124,17 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 最大受付可能人数チェック
+	settings, err := data.GetStoreSettingsData(newWaiting.StoreID)
+	if err == nil {
+		maxCount := settings.Settings.WaitingPolicy.MaxWaitingCount
+		if maxCount > 0 && newWaiting.PartySize > maxCount {
+			log.Printf("Party size %d exceeds max waiting count %d", newWaiting.PartySize, maxCount)
+			http.Error(w, fmt.Sprintf("最大受付可能人数(%d人)を超えました", maxCount), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Authorizationヘッダーがある場合（スタッフ/マネージャー）、権限チェック
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
