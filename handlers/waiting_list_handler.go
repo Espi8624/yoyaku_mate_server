@@ -133,6 +133,15 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("最大受付可能人数(%d人)を超えました", maxCount), http.StatusBadRequest)
 			return
 		}
+
+		// 事前注文必須チェック
+		if settings.Settings.WaitingPolicy.EnableMenuSelection {
+			if len(newWaiting.MenuItems) == 0 {
+				log.Printf("Missing required menu selection for store %s", newWaiting.StoreID)
+				http.Error(w, "メニューの選択は必須です。少なくとも1つのメニューを選択してください。", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 
 	// Authorizationヘッダーがある場合（スタッフ/マネージャー）、権限チェック
