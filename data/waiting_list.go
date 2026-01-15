@@ -357,30 +357,18 @@ func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingLis
 
 	var waitingListData []models.WaitingList
 
-	// 日本時間帯設定
-	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
-	now := time.Now().In(jst)
-	// 02:00を基準とした営業日ウィンドウの設定
-	var windowStart time.Time
-	if now.Hour() < 2 {
-		windowStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
-	} else {
-		windowStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
-	}
-	windowEnd := windowStart.Add(24 * time.Hour)
-
-	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
+	// フィルター設定: storeIDとwaitingID、statusでフィルタリング
+	// 日付フィルタ(registration_time)は削除：waiting_idが一意であるため、厳密な日付チェックは不要であり、
+	// フォーマットやタイムゾーンの微妙な差異による404エラーを防ぐため。
 	filter := bson.M{
 		"store_id":   storeID,
 		"waiting_id": waitingID,
 		"status": bson.M{
 			"$in": []string{"waiting", "notified"},
 		},
-		"registration_time": bson.M{
-			"$gte": windowStart.Format("2006-01-02T15:04:05.000+09:00"),
-			"$lt":  windowEnd.Format("2006-01-02T15:04:05.000+09:00"),
-		},
 	}
+
+	log.Printf("[GetActiveWaitingList] Filter: %+v", filter)
 
 	// 결과를 registration_time 순서로 정렬하여 항상 같은 순서를 보장합니다.
 	opts := options.Find().SetSort(bson.M{"registration_time": 1})

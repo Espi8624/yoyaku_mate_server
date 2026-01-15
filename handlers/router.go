@@ -9,9 +9,10 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api := r.PathPrefix("/api").Subrouter()
 
 	api.HandleFunc("/waiting-list", WaitingListHandler)
-	api.HandleFunc("/waiting-list-user", WaitingListUserHandler)
 	api.HandleFunc("/waiting-list/poll", HandleWaitingListPolling)
 	api.HandleFunc("/waiting-list/stream", HandleWaitingListStream)
+
+	api.HandleFunc("/public/store_ai_context", StoreAIContextHandler)
 
 	api.HandleFunc("/menu-list", MenuListHandler).Methods("GET", "POST", "OPTIONS", "PATCH")
 	api.HandleFunc("/menu-list/bulk-save", HandleBulkSaveMenuList)

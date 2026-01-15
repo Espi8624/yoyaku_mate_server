@@ -124,7 +124,7 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 最大受付可能人数チェック
+	// 最大受付可能人数チェック & メニュー選択必須チェック
 	settings, err := data.GetStoreSettingsData(newWaiting.StoreID)
 	if err == nil {
 		maxCount := settings.Settings.WaitingPolicy.MaxWaitingCount
@@ -134,11 +134,11 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 事前注文必須チェック
+		// 事前メニュー選択が有効な場合、メニュー項目が必須かチェック
 		if settings.Settings.WaitingPolicy.EnableMenuSelection {
 			if len(newWaiting.MenuItems) == 0 {
-				log.Printf("Missing required menu selection for store %s", newWaiting.StoreID)
-				http.Error(w, "メニューの選択は必須です。少なくとも1つのメニューを選択してください。", http.StatusBadRequest)
+				log.Printf("Menu selection required but missing for store %s", newWaiting.StoreID)
+				http.Error(w, "メニューの選択は必須です。", http.StatusBadRequest)
 				return
 			}
 		}
@@ -408,36 +408,6 @@ func handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 		AverageText:    avgText,
 	}
 	utils.RespondWithJSON(w, resp, http.StatusOK)
-}
-
-// WaitingListUserHandler 待機ユーザー用データ確認メソッド
-func WaitingListUserHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	storeID := r.URL.Query().Get("store_id")
-	waitingID := r.URL.Query().Get("waiting_id")
-
-	if storeID == "" || waitingID == "" {
-		utils.RespondWithError(w, "Missing required parameters: store_id and waiting_id", http.StatusBadRequest)
-		return
-	}
-
-	waitingListItem, err := data.GetActiveWaitingList(storeID, waitingID)
-	if err != nil {
-		log.Printf("Failed to fetch user waiting list item: %v", err)
-		utils.RespondWithError(w, "Failed to fetch waiting list item", http.StatusInternalServerError)
-		return
-	}
-
-	if waitingListItem == nil {
-		utils.RespondWithJSON(w, map[string]interface{}{"message": "No waiting list item found for the given IDs"}, http.StatusNotFound)
-		return
-	}
-
-	utils.RespondWithJSON(w, waitingListItem, http.StatusOK)
 }
 
 // handleGetQRToken QRトークンを取得する

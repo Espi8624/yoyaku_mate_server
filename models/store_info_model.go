@@ -15,6 +15,7 @@ type Store struct {
 	UserID        primitive.ObjectID `bson:"user_id" json:"user_id"`
 	StoreID       string             `bson:"store_id" json:"store_id"`
 	StoreImageURL string             `bson:"store_image_url,omitempty" json:"store_image_url,omitempty"`
+	OpeningHours  string             `bson:"opening_hours,omitempty" json:"opening_hours,omitempty"`
 }
 
 type StoreWithLicense struct {
