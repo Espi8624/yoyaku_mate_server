@@ -189,7 +189,11 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 					ClosedDays: models.ClosedDays{
 						SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 					},
-					WaitingPolicy: models.WaitingPolicy{MaxWaitingCount: 100, EstimatedWaitTime: 10},
+					WaitingPolicy: models.WaitingPolicy{
+						MaxWaitingCount:     utils.GetIntPointerValue(req.MaxWaitingCount, 10),
+						EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
+						EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+					},
 				},
 				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
@@ -523,7 +527,11 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 				ClosedDays: models.ClosedDays{
 					SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 				},
-				WaitingPolicy: models.WaitingPolicy{MaxWaitingCount: 100, EstimatedWaitTime: 10},
+				WaitingPolicy: models.WaitingPolicy{
+					MaxWaitingCount:     utils.GetIntPointerValue(req.MaxWaitingCount, 10),
+					EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
+					EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+				},
 			},
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
