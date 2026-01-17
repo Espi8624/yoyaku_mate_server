@@ -20,6 +20,7 @@ type WaitingList struct {
 	Notes             *string            `json:"notes,omitempty" bson:"notes,omitempty"`
 	EstimatedWaitTime int                `json:"estimated_wait_time" bson:"estimated_wait_time"`
 	MenuItems         []MenuItem         `json:"menu_items,omitempty" bson:"menu_items,omitempty"`
+	Source            string             `json:"source,omitempty" bson:"source,omitempty"` // "web" or "app"
 }
 
 type MenuItem struct {

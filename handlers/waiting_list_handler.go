@@ -85,6 +85,16 @@ func handleGetWaitingList(w http.ResponseWriter, r *http.Request) {
 
 // handleCreateWaitingList 新しいウェイティングリスト作成処理 (POSTリクエスト処理)
 func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
+	// 今日のQRトークンを取得
+	vToken := r.URL.Query().Get("v_token")
+	if vToken == "" {
+		// v_tokenがクエリパラメータに含まれていない場合、JSONボディに含まれているかチェックする
+		// まずクエリパラメータをチェックする
+		log.Printf("Missing v_token in query parameter") // newWaiting.StoreID はまだデコードされていないため使用不可
+		http.Error(w, "QRコードが正しくないか、期限切れです。再度スキャンして下さい。", http.StatusForbidden)
+		return
+	}
+
 	var newWaiting models.WaitingList
 	if err := json.NewDecoder(r.Body).Decode(&newWaiting); err != nil {
 		log.Printf("Error decoding request body: %v", err)
@@ -92,19 +102,12 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 今日のQRトークンを取得
-	vToken := r.URL.Query().Get("v_token")
-	if vToken == "" {
-		// v_tokenがクエリパラメータに含まれていない場合、JSONボディに含まれているかチェックする
-		// まずクエリパラメータをチェックする
-		log.Printf("Missing v_token for store %s", newWaiting.StoreID)
-		http.Error(w, "QRコードが正しくないか、期限切れです。再度スキャンして下さい。", http.StatusForbidden)
-		return
-	}
-
 	// Date string in JST (YYYYMMDD)
 	jst := time.FixedZone("JST", 9*60*60)
 	dateStr := time.Now().In(jst).Format("20060102")
+
+	// Default source is web (QR code)
+	newWaiting.Source = "web"
 
 	if !utils.VerifyHMACDateToken(newWaiting.StoreID, dateStr, vToken) {
 		log.Printf("Invalid v_token for store %s: %s (Expected for %s)", newWaiting.StoreID, vToken, dateStr)
@@ -174,6 +177,8 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。スタッフとして承認されていることを確認してください。", http.StatusForbidden)
 			return
 		}
+		// Registered by staff/manager via App
+		newWaiting.Source = "app"
 	}
 
 	// ライセンス取得
