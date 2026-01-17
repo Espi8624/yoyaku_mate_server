@@ -87,3 +87,19 @@ func IsValidWaitingID(id string) bool {
 	}
 	return false
 }
+
+// GetIntPointerValue extracts int from pointer or returns default
+func GetIntPointerValue(ptr *int, defaultValue int) int {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultValue
+}
+
+// GetBoolPointerValue extracts bool from pointer or returns default
+func GetBoolPointerValue(ptr *bool, defaultValue bool) bool {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultValue
+}
