@@ -242,6 +242,7 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		"notes":               item.Notes,
 		"estimated_wait_time": item.EstimatedWaitTime,
 		"menu_items":          item.MenuItems,
+		"source":              item.Source,
 	}
 
 	// 新規項目を挿入
