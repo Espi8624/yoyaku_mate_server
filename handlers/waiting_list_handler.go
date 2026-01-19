@@ -423,31 +423,21 @@ func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Firebase認証チェック
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
-		return
-	}
+	// Public access allowed for Board/Kiosk display
+	// Authorization check removed to allow public board to fetch QR token
+	// This token is only used for registering new waiting items (which is public action)
 
-	idToken := authHeader[len("Bearer "):]
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
-	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
-		return
-	}
+	// Check if store exists/valid? (Optional but good)
+	// For now, we trust store_id is valid or GenerateHMACDateToken will just generate a token for it.
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
-	if err != nil || user == nil {
-		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "")
-	if err != nil || !hasPermission {
-		utils.RespondWithError(w, "Permission denied", http.StatusForbidden)
-		return
-	}
+	/*
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+				return
+			}
+		    // ... (Auth code removed)
+	*/
 
 	// JST基準の今日の日付
 	jst := time.FixedZone("JST", 9*60*60)
