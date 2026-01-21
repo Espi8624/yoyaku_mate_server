@@ -9,12 +9,104 @@ import (
 
 	"sort"
 
+	"strconv"
+	"strings"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/context"
 )
+
+// Helper: 店舗の営業開始時間に基づいて、現在の「営業日」の開始時刻(Cutoff)を計算する
+// 基本ロジック: その日の開店時間 - 1時間 を境界とする
+// 例: 10:00開店 -> 09:00 Cutoff.
+//
+//	17:00開店 -> 16:00 Cutoff.
+//
+// 設定がない場合やエラー時はデフォルト(04:00 AM)を使用
+func GetBusinessDayCutoff(storeID string, now time.Time) time.Time {
+	// デフォルト値: 04:00 AM
+	defaultCutoff := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
+
+	settings, err := GetStoreSettingsData(storeID)
+	if err != nil {
+		// 設定取得失敗時はデフォルトを使用 (時間帯判定のため前日チェックが必要)
+		// 単純化のため、現在の時刻と比較して決定
+		if now.Hour() < 4 {
+			return defaultCutoff.AddDate(0, 0, -1)
+		}
+		return defaultCutoff
+	}
+
+	// 24時間営業フラグのチェック
+	if settings.Settings.Is24Hours {
+		// ResetTimeを使用 (例: "06:00")
+		resetParts := strings.Split(settings.Settings.ResetTime, ":")
+		if len(resetParts) != 2 {
+			// ResetTimeが無効な場合はデフォルト(06:00)を使用
+			resetParts = []string{"06", "00"}
+		}
+
+		resetHour, _ := strconv.Atoi(resetParts[0])
+		resetMin, _ := strconv.Atoi(resetParts[1])
+
+		// その日のResetTime
+		cutoffTime := time.Date(now.Year(), now.Month(), now.Day(), resetHour, resetMin, 0, 0, now.Location())
+
+		// もし現在時刻がその日のCutoffより前なら、まだ「前日の営業日」とみなす
+		if now.Before(cutoffTime) {
+			return cutoffTime.AddDate(0, 0, -1)
+		}
+		return cutoffTime
+	}
+
+	// 今日の曜日 (例: "Monday", "Tuesday"...)
+	weekday := now.Weekday().String()
+
+	// 営業時間を取得
+	dayHours, ok := settings.Settings.OperatingHours[weekday]
+	if !ok || dayHours.Start == "" {
+		// 今日の設定がない場合、デフォルトを使用
+		// Log logic check: if now < 4, treating as previous day?
+		// Fallback to simple fixed 4am logic for safety
+		if now.Hour() < 4 {
+			return defaultCutoff.AddDate(0, 0, -1)
+		}
+		return defaultCutoff
+	}
+
+	// "10:00" -> 10, 0
+	parts := strings.Split(dayHours.Start, ":")
+	if len(parts) != 2 {
+		if now.Hour() < 4 {
+			return defaultCutoff.AddDate(0, 0, -1)
+		}
+		return defaultCutoff
+	}
+	startHour, _ := strconv.Atoi(parts[0])
+	startMin, _ := strconv.Atoi(parts[1])
+
+	// Cutoff = OpenTime - 1 hour
+	cutoffHour := startHour - 1
+	if cutoffHour < 0 {
+		cutoffHour = 23 // 前日の23時 (稀なケース)
+		// 日付計算が複雑になるため、0時未満になる場合は前日扱いにする必要があるが
+		// Dateコンストラクタは負の値を正規化しないため注意。
+		// ここでは単純に StartHour >= 1 前提、もしくは 0時開店なら 23時リセット。
+	}
+
+	cutoffTime := time.Date(now.Year(), now.Month(), now.Day(), cutoffHour, startMin, 0, 0, now.Location())
+
+	// もし現在時刻がその日のCutoffより前なら、まだ「前日の営業日」とみなす
+	if now.Before(cutoffTime) {
+		return cutoffTime.AddDate(0, 0, -1)
+	}
+
+	// もし現在時刻がCutoffを過ぎていれば、今日の営業日
+	return cutoffTime
+}
 
 func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 	// 期限切れデータの自動更新
@@ -32,13 +124,8 @@ func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60) // UTC+9
 	now := time.Now().In(jst)
 
-	// 02:00を基準とした営業日ウィンドウの設定
-	var windowStart time.Time
-	if now.Hour() < 2 {
-		windowStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
-	} else {
-		windowStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
-	}
+	// 営業日ウィンドウの設定 (Dynamic Cutoff)
+	windowStart := GetBusinessDayCutoff(storeID, now)
 	windowEnd := windowStart.Add(24 * time.Hour)
 
 	// フィルター設定: storeIDとwindow範囲の登録時間でフィルタリング
@@ -124,13 +211,8 @@ func AutoExpireWaitingItems(storeID string) error {
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
 
-	// 現在の営業日の開始時刻(02:00)を計算
-	var businessDayStart time.Time
-	if now.Hour() < 2 {
-		businessDayStart = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
-	} else {
-		businessDayStart = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
-	}
+	// 現在の営業日の開始時刻(Cutoff)を計算 (Dynamic)
+	businessDayStart := GetBusinessDayCutoff(storeID, now)
 
 	cutoffStr := businessDayStart.Format("2006-01-02T15:04:05.000+09:00")
 
@@ -258,21 +340,33 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	return &item, nil
 }
 
-// 特定店舗の次の利用可能なキュー番号を返却
+// 特定店舗の次の利用可能なキュー番号を返却 (営業日ごとにリセット)
 func GetNextQueueNumber(storeID string) (int, error) {
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 特定店舗の最大キュー番号を取得
+	// 営業日の開始日時を計算 (Dynamic Cutoff)
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	now := time.Now().In(jst)
+	businessDayStart := GetBusinessDayCutoff(storeID, now)
+
+	businessDayStartStr := businessDayStart.Format("2006-01-02T15:04:05.000+09:00")
+
+	// 特定店舗の今日の営業日以降の最大キュー番号を取得
 	opts := options.FindOne().SetSort(bson.D{{Key: "queue_number", Value: -1}})
-	filter := bson.D{{Key: "store_id", Value: storeID}}
+	filter := bson.M{
+		"store_id": storeID,
+		"registration_time": bson.M{
+			"$gte": businessDayStartStr,
+		},
+	}
 
 	var lastItem models.WaitingList
 	err := collection.FindOne(ctx, filter, opts).Decode(&lastItem)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			// もしドキュメントが存在しない場合、キュー番号1から開始
+			// もし今日のドキュメントが存在しない場合、キュー番号1から開始
 			return 1, nil
 		}
 		return 0, err
@@ -292,13 +386,8 @@ func ClearWaitingList(storeID string) error {
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
 
-	// 02:00を基準とした営業日ウィンドウの設定
-	var startOfDay time.Time
-	if now.Hour() < 2 {
-		startOfDay = time.Date(now.Year(), now.Month(), now.Day()-1, 2, 0, 0, 0, jst)
-	} else {
-		startOfDay = time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, jst)
-	}
+	// 営業日ウィンドウの設定 (Dynamic)
+	startOfDay := GetBusinessDayCutoff(storeID, now)
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	// 今日の待機項目をフィルタリング

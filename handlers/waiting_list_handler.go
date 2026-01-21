@@ -102,9 +102,13 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Date string in JST (YYYYMMDD)
+	// Date string in JST (YYYYMMDD) with Dynamic Cutoff
 	jst := time.FixedZone("JST", 9*60*60)
-	dateStr := time.Now().In(jst).Format("20060102")
+	now := time.Now().In(jst)
+
+	// Use dynamic business day cutoff
+	businessDate := data.GetBusinessDayCutoff(newWaiting.StoreID, now)
+	dateStr := businessDate.Format("20060102")
 
 	// Default source is web (QR code)
 	newWaiting.Source = "web"
@@ -439,9 +443,13 @@ func handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 		    // ... (Auth code removed)
 	*/
 
-	// JST基準の今日の日付
+	// JST基準の日付 (Dynamic Cutoff)
 	jst := time.FixedZone("JST", 9*60*60)
-	dateStr := time.Now().In(jst).Format("20060102")
+	now := time.Now().In(jst)
+
+	// Use dynamic business day cutoff based on store hours
+	businessDate := data.GetBusinessDayCutoff(storeID, now)
+	dateStr := businessDate.Format("20060102")
 
 	token := utils.GenerateHMACDateToken(storeID, dateStr)
 
