@@ -174,18 +174,26 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// 店舗設定データ生成
+			operatingHours := req.OperatingHours
+			if len(operatingHours) == 0 {
+				operatingHours = map[string]models.StoreDayHours{
+					"monday":    {Start: "09:00", End: "18:00"},
+					"tuesday":   {Start: "09:00", End: "18:00"},
+					"wednesday": {Start: "09:00", End: "18:00"},
+					"thursday":  {Start: "09:00", End: "18:00"},
+					"friday":    {Start: "09:00", End: "18:00"},
+					"saturday":  {Start: "09:00", End: "18:00"},
+					"sunday":    {Start: "09:00", End: "18:00"},
+				}
+			}
+
 			storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
 			defaultSettings := models.StoreSetting{
 				ID:        primitive.NewObjectID(),
 				StoreID:   newStore.StoreID,
 				ManagerID: newUserID.Hex(),
 				Settings: models.Settings{
-					OperatingHours: map[string]models.StoreDayHours{
-						"monday": {Start: "09:00", End: "18:00"}, "tuesday": {Start: "09:00", End: "18:00"},
-						"wednesday": {Start: "09:00", End: "18:00"}, "thursday": {Start: "09:00", End: "18:00"},
-						"friday": {Start: "09:00", End: "18:00"}, "saturday": {Start: "09:00", End: "18:00"},
-						"sunday": {Start: "09:00", End: "18:00"},
-					},
+					OperatingHours: operatingHours,
 					ClosedDays: models.ClosedDays{
 						SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 					},
@@ -194,6 +202,8 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 						EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
 						EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
 					},
+					Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
+					ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
 				},
 				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 			}
@@ -512,18 +522,26 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, fmt.Errorf("failed to create initial license info: %w", err)
 		}
 
+		operatingHours := req.OperatingHours
+		if len(operatingHours) == 0 {
+			operatingHours = map[string]models.StoreDayHours{
+				"monday":    {Start: "09:00", End: "18:00"},
+				"tuesday":   {Start: "09:00", End: "18:00"},
+				"wednesday": {Start: "09:00", End: "18:00"},
+				"thursday":  {Start: "09:00", End: "18:00"},
+				"friday":    {Start: "09:00", End: "18:00"},
+				"saturday":  {Start: "09:00", End: "18:00"},
+				"sunday":    {Start: "09:00", End: "18:00"},
+			}
+		}
+
 		storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
 		defaultSettings := models.StoreSetting{
 			ID:        primitive.NewObjectID(),
 			StoreID:   newStore.StoreID,
 			ManagerID: existingUser.ID.Hex(),
 			Settings: models.Settings{
-				OperatingHours: map[string]models.StoreDayHours{
-					"monday": {Start: "09:00", End: "18:00"}, "tuesday": {Start: "09:00", End: "18:00"},
-					"wednesday": {Start: "09:00", End: "18:00"}, "thursday": {Start: "09:00", End: "18:00"},
-					"friday": {Start: "09:00", End: "18:00"}, "saturday": {Start: "09:00", End: "18:00"},
-					"sunday": {Start: "09:00", End: "18:00"},
-				},
+				OperatingHours: operatingHours,
 				ClosedDays: models.ClosedDays{
 					SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 				},
@@ -532,6 +550,8 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 					EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
 					EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
 				},
+				Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
+				ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
 			},
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}

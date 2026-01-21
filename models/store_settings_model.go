@@ -15,6 +15,8 @@ type Settings struct {
 	OperatingHours map[string]StoreDayHours `bson:"operating_hours" json:"operating_hours"`
 	ClosedDays     ClosedDays               `bson:"closed_days" json:"closed_days"`
 	WaitingPolicy  WaitingPolicy            `bson:"waiting_policy" json:"waiting_policy"`
+	Is24Hours      bool                     `bson:"is_24_hours" json:"is_24_hours"`
+	ResetTime      string                   `bson:"reset_time" json:"reset_time"` // HH:MM format
 }
 
 type StoreDayHours struct {

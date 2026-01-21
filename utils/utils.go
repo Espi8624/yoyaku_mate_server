@@ -103,3 +103,11 @@ func GetBoolPointerValue(ptr *bool, defaultValue bool) bool {
 	}
 	return defaultValue
 }
+
+// GetStringPointerValue extracts string from pointer or returns default
+func GetStringPointerValue(ptr *string, defaultValue string) string {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultValue
+}
