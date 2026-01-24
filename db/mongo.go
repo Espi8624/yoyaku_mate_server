@@ -14,6 +14,11 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+const (
+	DatabaseName          = "saboten_provider"
+	CollectionWaitingList = "waiting_list"
+)
+
 var MongoClient *mongo.Client
 
 // ウェイティングリストの更新を監視するための構造体
@@ -60,6 +65,13 @@ func InitMongoDB(uri string) error {
 		}
 
 		log.Println("MongoDB connect success")
+
+		// Create indexes
+		if err := EnsureIndexes(); err != nil {
+			log.Printf("Failed to create indexes: %v", err)
+			// Index creation failure should not stop server startup, but warn loudly
+		}
+
 		return nil
 	}
 
@@ -117,4 +129,33 @@ func GetCollection(database, collection string) *mongo.Collection {
 		return nil
 	}
 	return MongoClient.Database(database).Collection(collection)
+}
+
+// コレクションのインデックスを作成
+func EnsureIndexes() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	collection := GetCollection(DatabaseName, CollectionWaitingList)
+	if collection == nil {
+		return nil
+	}
+
+	// 統計用複合インデックス: store_id + registration_time (降順)
+	// これにより、store_idによるフィルタリングとregistration_timeによる範囲クエリ（今日の統計など）が最適化されます
+	indexModel := mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "store_id", Value: 1},
+			{Key: "registration_time", Value: -1},
+		},
+		Options: options.Index().SetName("idx_store_reg_time"),
+	}
+
+	_, err := collection.Indexes().CreateOne(ctx, indexModel)
+	if err != nil {
+		return err
+	}
+	log.Println("Created compound index: idx_store_reg_time on waiting_list")
+
+	return nil
 }
