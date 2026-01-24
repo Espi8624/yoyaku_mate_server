@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -110,4 +111,17 @@ func GetStringPointerValue(ptr *string, defaultValue string) string {
 		return *ptr
 	}
 	return defaultValue
+}
+
+// FormatDuration は秒数を "X分Y秒" または "X秒" 形式にフォーマットします
+func FormatDuration(seconds int) string {
+	if seconds < 0 {
+		return "--分"
+	}
+	min := seconds / 60
+	sec := seconds % 60
+	if min > 0 {
+		return fmt.Sprintf("%d分%d秒", min, sec)
+	}
+	return fmt.Sprintf("%d秒", sec)
 }
