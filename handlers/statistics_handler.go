@@ -72,14 +72,27 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, error) {
+	// 店舗情報の取得（タイムゾーン確認のため）
+	store, err := data.GetStoreData(storeID)
+	locationName := "Asia/Tokyo"
+	if err == nil && store != nil && store.Timezone != "" {
+		locationName = store.Timezone
+	}
+
+	// タイムゾーンのロード
+	loc, err := time.LoadLocation(locationName)
+	if err != nil {
+		log.Printf("Failed to load location '%s', defaulting to Asia/Tokyo: %v", locationName, err)
+		loc = time.FixedZone("Asia/Tokyo", 9*60*60)
+		locationName = "Asia/Tokyo"
+	}
+
 	collection := db.GetCollection(db.DatabaseName, db.CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// JST（日本標準時）
-	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
-	now := time.Now().In(jst)
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, jst)
+	now := time.Now().In(loc)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 
 	// 日付範囲設定
 	var startDate time.Time
@@ -95,13 +108,13 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		dateFormat = "%Y-%m-%d"
 	case "monthly":
 		// 今月初めから
-		startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, jst)
+		startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 		// 前期間: 先月初めから
 		prevStartDate = startDate.AddDate(0, -1, 0)
 		dateFormat = "%Y-%m-%d"
 	case "yearly":
 		// 今年初めから
-		startDate = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, jst)
+		startDate = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
 		// 前期間: 去年初めから
 		prevStartDate = startDate.AddDate(-1, 0, 0)
 		dateFormat = "%Y-%m" // 月単位集計
@@ -114,7 +127,9 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 	}
 
 	// フィルタ開始日を「前期間の開始日」に設定して、両方の期間のデータを取得する
-	startFilter := prevStartDate.Format("2006-01-02T15:04:05.000+09:00")
+	// MongoDBの保存時間はUTCかISO文字列だが、フィルタは文字列比較で行っているため
+	// フォーマットには注意が必要。ここでは単純な文字列比較のためオフセット付きでフォーマットする。
+	startFilter := prevStartDate.Format("2006-01-02T15:04:05.000") // タイムゾーンオフセットはデータ依存
 
 	matchStage := bson.D{{Key: "$match", Value: bson.D{
 		{Key: "store_id", Value: storeID},
@@ -138,34 +153,34 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		}},
 	}}}
 
-	facetStage := bson.D{{Key: "$facet", Value: bson.D{
-		// 1. 訪問者数基本データ (既存)
+	// 注意: MongoDBのAggregationで複数の独立した集計を行うには、
+	// 通常 $facet を使いますが、メモリ制限を回避するためにここでは
+	// 「期間データ」と「今日のデータ」に分けてクエリを実行します。
+
+	// Query A: 期間全体の統計 (Visitor, Charts)
+	// $facetは便利ですが、16MB/100MB制限があるため、ここでは
+	// 期間が長い場合のリスクを減らすため、$project で必要なフィールドだけを残してから $facet します。
+	// 入力ドキュメントを最小化します。
+
+	projectMinimalStage := bson.D{{Key: "$project", Value: bson.D{
+		{Key: "reg_date_obj", Value: 1},
+		{Key: "status", Value: 1},
+	}}}
+
+	periodFacetStage := bson.D{{Key: "$facet", Value: bson.D{
 		{Key: "visitor_counts", Value: bson.A{
 			bson.D{{Key: "$project", Value: bson.D{
 				{Key: "status", Value: 1},
-				{Key: "day_str", Value: bson.D{
-					{Key: "$dateToString", Value: bson.D{
-						{Key: "format", Value: "%Y-%m-%d"},
-						{Key: "date", Value: "$reg_date_obj"},
-						{Key: "timezone", Value: "Asia/Tokyo"},
-					}},
-				}},
+				{Key: "day_str", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: "%Y-%m-%d"}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$day_str"},
 				{Key: "completed_count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
 			}}},
 		}},
-		// 2. チャート用データ集計 (期間によってグルーピングが変わる)
 		{Key: "chart_data", Value: bson.A{
 			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{
-					{Key: "$dateToString", Value: bson.D{
-						{Key: "format", Value: dateFormat},
-						{Key: "date", Value: "$reg_date_obj"},
-						{Key: "timezone", Value: "Asia/Tokyo"},
-					}},
-				}},
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
 				{Key: "status", Value: 1},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
@@ -174,39 +189,41 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			}}},
 			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		}},
-		// 2.5 No-Show チャート用データ集計
 		{Key: "no_show_chart_data", Value: bson.A{
 			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{
-					{Key: "$dateToString", Value: bson.D{
-						{Key: "format", Value: dateFormat},
-						{Key: "date", Value: "$reg_date_obj"},
-						{Key: "timezone", Value: "Asia/Tokyo"},
-					}},
-				}},
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
 				{Key: "status", Value: 1},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{
-					bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}},
-					1, 0,
-				}}}}}},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
 			}}},
 			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		}},
-		// 3. 時間帯別 (今日のみ)
+	}}}
+
+	cursorPeriod, err := collection.Aggregate(ctx, mongo.Pipeline{matchStage, addFieldsStage, projectMinimalStage, periodFacetStage})
+	if err != nil {
+		return nil, err
+	}
+	defer cursorPeriod.Close(ctx)
+
+	var periodResults []bson.M
+	if err = cursorPeriod.All(ctx, &periodResults); err != nil {
+		return nil, err
+	}
+
+	// Query B: 今日の詳細データ (Hourly, WaitTime, Stats)
+	// Matchステージを今日のみに絞ることで高速化＆メモリ節約
+	todayMatchStage := bson.D{{Key: "$match", Value: bson.D{
+		{Key: "store_id", Value: storeID},
+		{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: today.Format("2006-01-02T15:04:05.000+09:00")}}},
+	}}}
+
+	todayFacetStage := bson.D{{Key: "$facet", Value: bson.D{
 		{Key: "hourly_today", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "reg_date_obj", Value: bson.D{{Key: "$gte", Value: today}}},
-			}}},
 			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "hour", Value: bson.D{
-					{Key: "$hour", Value: bson.D{
-						{Key: "date", Value: "$reg_date_obj"},
-						{Key: "timezone", Value: "Asia/Tokyo"},
-					}},
-				}},
+				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$hour"},
@@ -214,56 +231,50 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			}}},
 			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		}},
-		// 4. 待ち時間 (今日のみ)
 		{Key: "wait_times_today", Value: bson.A{
 			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "reg_date_obj", Value: bson.D{{Key: "$gte", Value: today}}},
 				{Key: "status", Value: "completed"},
 				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
 			}}},
 			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "wait_duration", Value: bson.D{
-					{Key: "$divide", Value: bson.A{
-						bson.D{{Key: "$subtract", Value: bson.A{"$entry_date_obj", "$reg_date_obj"}}},
-						1000,
-					}},
-				}},
+				{Key: "wait_duration", Value: bson.D{{Key: "$divide", Value: bson.A{bson.D{{Key: "$subtract", Value: bson.A{"$entry_date_obj", "$reg_date_obj"}}}, 1000}}}},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: nil},
 				{Key: "avg_wait", Value: bson.D{{Key: "$avg", Value: "$wait_duration"}}},
 			}}},
 		}},
-		// 5. No Show率 (今日のみ)
 		{Key: "status_stats_today", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "reg_date_obj", Value: bson.D{{Key: "$gte", Value: today}}},
-			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: nil},
 				{Key: "total", Value: bson.D{{Key: "$sum", Value: 1}}},
-				{Key: "no_show_cancel", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{
-					bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}},
-					1, 0,
-				}}}}}},
+				{Key: "no_show_cancel", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
 			}}},
 		}},
 	}}}
 
-	cursor, err := collection.Aggregate(ctx, mongo.Pipeline{matchStage, addFieldsStage, facetStage})
+	cursorToday, err := collection.Aggregate(ctx, mongo.Pipeline{todayMatchStage, addFieldsStage, todayFacetStage})
 	if err != nil {
 		return nil, err
 	}
-	defer cursor.Close(ctx)
+	defer cursorToday.Close(ctx)
 
-	var results []bson.M
-	if err = cursor.All(ctx, &results); err != nil {
+	var todayResults []bson.M
+	if err = cursorToday.All(ctx, &todayResults); err != nil {
 		return nil, err
 	}
 
+	// Combine Results
 	result := bson.M{}
-	if len(results) > 0 {
-		result = results[0]
+	if len(periodResults) > 0 {
+		for k, v := range periodResults[0] {
+			result[k] = v
+		}
+	}
+	if len(todayResults) > 0 {
+		for k, v := range todayResults[0] {
+			result[k] = v
+		}
 	}
 
 	response := &models.StatisticsResponse{}
@@ -392,7 +403,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 	} else if period == "yearly" {
 		currentMonth := int(now.Month())
 		for i := 1; i <= currentMonth; i++ {
-			d := time.Date(now.Year(), time.Month(i), 1, 0, 0, 0, 0, jst)
+			d := time.Date(now.Year(), time.Month(i), 1, 0, 0, 0, 0, loc)
 			key := d.Format("2006-01") // 月単位フォーマット
 
 			// 前期間: 1年前

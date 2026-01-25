@@ -16,6 +16,7 @@ type Store struct {
 	StoreID       string             `bson:"store_id" json:"store_id"`
 	StoreImageURL string             `bson:"store_image_url,omitempty" json:"store_image_url,omitempty"`
 	OpeningHours  string             `bson:"opening_hours,omitempty" json:"opening_hours,omitempty"`
+	Timezone      string             `bson:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 type StoreWithLicense struct {
