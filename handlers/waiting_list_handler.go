@@ -148,6 +148,18 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "メニューの選択は必須です。", http.StatusBadRequest)
 				return
 			}
+			// 1人1メニュー制限チェック
+			if settings.Settings.WaitingPolicy.RequireOneMenuPerPerson {
+				totalQuantity := 0
+				for _, item := range newWaiting.MenuItems {
+					totalQuantity += item.Quantity
+				}
+				if totalQuantity < newWaiting.PartySize {
+					log.Printf("One menu per person check failed: total %d, party %d", totalQuantity, newWaiting.PartySize)
+					http.Error(w, "お一人様につき少なくとも1つのメニューを注文してください。", http.StatusBadRequest)
+					return
+				}
+			}
 		}
 	}
 

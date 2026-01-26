@@ -32,7 +32,8 @@ type ClosedDays struct {
 }
 
 type WaitingPolicy struct {
-	MaxWaitingCount     int  `bson:"max_waiting_count" json:"max_waiting_count"`
-	EstimatedWaitTime   int  `bson:"estimated_wait_time" json:"estimated_wait_time"`
-	EnableMenuSelection bool `bson:"enable_menu_selection" json:"enable_menu_selection"`
+	MaxWaitingCount         int  `bson:"max_waiting_count" json:"max_waiting_count"`
+	EstimatedWaitTime       int  `bson:"estimated_wait_time" json:"estimated_wait_time"`
+	EnableMenuSelection     bool `bson:"enable_menu_selection" json:"enable_menu_selection"`
+	RequireOneMenuPerPerson bool `bson:"require_one_menu_per_person" json:"require_one_menu_per_person"`
 }

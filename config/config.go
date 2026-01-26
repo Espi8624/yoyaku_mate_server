@@ -58,6 +58,12 @@ func Load() Config {
 		return getDefaultConfig()
 	}
 
+	// Environment variables override
+	if mongoURI := os.Getenv("MONGODB_URI"); mongoURI != "" {
+		cfg.MongoDB.URI = mongoURI
+		log.Println("Using MONGODB_URI from environment variable")
+	}
+
 	cfg.R2 = R2Config{
 		AccountID:    os.Getenv("R2_ACCOUNT_ID"),
 		AccessKey:    os.Getenv("R2_ACCESS_KEY"),
