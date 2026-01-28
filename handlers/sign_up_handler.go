@@ -138,12 +138,16 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			createdStore := models.Store{
-				ID:        primitive.NewObjectID(),
-				StoreName: *req.StoreName,
-				Address:   *req.StoreAddress,
-				Phone:     *req.StoreTelNumber,
-				StoreID:   primitive.NewObjectID().Hex(),
-				UserID:    newUserID,
+				ID:         primitive.NewObjectID(),
+				StoreName:  *req.StoreName,
+				Address:    *req.StoreAddress,
+				Building:   utils.GetStringPointerValue(req.StoreBuilding, ""), // New
+				ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
+				Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
+				City:       utils.GetStringPointerValue(req.StoreCity, ""),
+				Phone:      *req.StoreTelNumber,
+				StoreID:    primitive.NewObjectID().Hex(),
+				UserID:     newUserID,
 			}
 
 			_, err = storeCollection.InsertOne(sessCtx, createdStore)
@@ -198,9 +202,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 						SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 					},
 					WaitingPolicy: models.WaitingPolicy{
-						MaxWaitingCount:     utils.GetIntPointerValue(req.MaxWaitingCount, 10),
-						EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
-						EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+						MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
+						EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
+						EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+						RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
 					},
 					Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
 					ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
@@ -490,12 +495,16 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 		// 新しい店舗データ生成
 		newStore := models.Store{
-			ID:        primitive.NewObjectID(),
-			StoreName: *req.StoreName,
-			Address:   *req.StoreAddress,
-			Phone:     *req.StoreTelNumber,
-			StoreID:   primitive.NewObjectID().Hex(),
-			UserID:    existingUser.ID,
+			ID:         primitive.NewObjectID(),
+			StoreName:  *req.StoreName,
+			Address:    *req.StoreAddress,
+			Building:   utils.GetStringPointerValue(req.StoreBuilding, ""), // New
+			ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
+			Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
+			City:       utils.GetStringPointerValue(req.StoreCity, ""),
+			Phone:      *req.StoreTelNumber,
+			StoreID:    primitive.NewObjectID().Hex(),
+			UserID:     existingUser.ID,
 		}
 		_, err = storeCollection.InsertOne(sessCtx, newStore)
 		if err != nil {
@@ -546,9 +555,10 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 					SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 				},
 				WaitingPolicy: models.WaitingPolicy{
-					MaxWaitingCount:     utils.GetIntPointerValue(req.MaxWaitingCount, 10),
-					EstimatedWaitTime:   utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
-					EnableMenuSelection: utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+					MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
+					EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
+					EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+					RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
 				},
 				Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
 				ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
