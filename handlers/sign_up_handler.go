@@ -121,130 +121,108 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch req.Role {
 		case "manager":
-			if req.StoreName == nil || *req.StoreName == "" {
-				return nil, fmt.Errorf("store name is required for manager role")
-			}
-			if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
-				return nil, fmt.Errorf("invalid store phone number format (e.g., 02-123-4567)")
-			}
+			// 店舗情報がある場合のみ作成 (Refactor: 任意項目化)
+			if req.StoreName != nil && *req.StoreName != "" {
+				if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
+					return nil, fmt.Errorf("invalid store phone number format (e.g., 02-123-4567)")
+				}
 
-			// 店舗電話番号重複検査
-			count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
-			if err != nil {
-				return nil, fmt.Errorf("database error during store phone check: %w", err)
-			}
-			if count > 0 {
-				return nil, fmt.Errorf("a store with this phone number already exists")
-			}
+				// 店舗電話番号重複検査
+				count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
+				if err != nil {
+					return nil, fmt.Errorf("database error during store phone check: %w", err)
+				}
+				if count > 0 {
+					return nil, fmt.Errorf("a store with this phone number already exists")
+				}
 
-			createdStore := models.Store{
-				ID:         primitive.NewObjectID(),
-				StoreName:  *req.StoreName,
-				Address:    *req.StoreAddress,
-				Building:   utils.GetStringPointerValue(req.StoreBuilding, ""), // New
-				ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
-				Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
-				City:       utils.GetStringPointerValue(req.StoreCity, ""),
-				Phone:      *req.StoreTelNumber,
-				StoreID:    primitive.NewObjectID().Hex(),
-				UserID:     newUserID,
-			}
+				createdStore := models.Store{
+					ID:         primitive.NewObjectID(),
+					StoreName:  *req.StoreName,
+					Address:    *req.StoreAddress,
+					Building:   utils.GetStringPointerValue(req.StoreBuilding, ""),
+					ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
+					Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
+					City:       utils.GetStringPointerValue(req.StoreCity, ""),
+					Phone:      *req.StoreTelNumber,
+					StoreID:    primitive.NewObjectID().Hex(),
+					UserID:     newUserID,
+				}
 
-			_, err = storeCollection.InsertOne(sessCtx, createdStore)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create store: %w", err)
-			}
-			newStore = &createdStore
-			storeIdForUser = newStore.StoreID
+				_, err = storeCollection.InsertOne(sessCtx, createdStore)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create store: %w", err)
+				}
+				newStore = &createdStore
+				storeIdForUser = newStore.StoreID
 
-			// LINE認証Token生成
-			// lineToken, err := utils.GenerateSecureToken(32)
-			// if err != nil {
-			// 	return nil, fmt.Errorf("failed to generate security token: %w", err)
-			// }
+				// License & Settings Creation
+				licenseCollection := db.GetCollection(DatabaseName, StoreLicenseCollection)
+				initialLicenseInfo := models.StoreLicense{
+					ID:                 primitive.NewObjectID(),
+					StoreID:            newStore.StoreID,
+					VerificationStatus: models.StatusNotSubmitted,
+					CreatedAt:          time.Now(),
+					UpdatedAt:          time.Now(),
+				}
+				_, err = licenseCollection.InsertOne(sessCtx, initialLicenseInfo)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create license info: %w", err)
+				}
 
-			licenseCollection := db.GetCollection(DatabaseName, StoreLicenseCollection)
-			initialLicenseInfo := models.StoreLicense{
-				ID:                 primitive.NewObjectID(),
-				StoreID:            newStore.StoreID,
-				VerificationStatus: models.StatusNotSubmitted,
-				CreatedAt:          time.Now(),
-				UpdatedAt:          time.Now(),
-				// LineAuthToken:      lineToken,
-			}
-			_, err = licenseCollection.InsertOne(sessCtx, initialLicenseInfo)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create license info: %w", err)
-			}
+				// 店舗設定データ生成
+				operatingHours := req.OperatingHours
+				if len(operatingHours) == 0 {
+					operatingHours = map[string]models.StoreDayHours{
+						"monday":    {Start: "09:00", End: "18:00"},
+						"tuesday":   {Start: "09:00", End: "18:00"},
+						"wednesday": {Start: "09:00", End: "18:00"},
+						"thursday":  {Start: "09:00", End: "18:00"},
+						"friday":    {Start: "09:00", End: "18:00"},
+						"saturday":  {Start: "09:00", End: "18:00"},
+						"sunday":    {Start: "09:00", End: "18:00"},
+					}
+				}
 
-			// 店舗設定データ生成
-			operatingHours := req.OperatingHours
-			if len(operatingHours) == 0 {
-				operatingHours = map[string]models.StoreDayHours{
-					"monday":    {Start: "09:00", End: "18:00"},
-					"tuesday":   {Start: "09:00", End: "18:00"},
-					"wednesday": {Start: "09:00", End: "18:00"},
-					"thursday":  {Start: "09:00", End: "18:00"},
-					"friday":    {Start: "09:00", End: "18:00"},
-					"saturday":  {Start: "09:00", End: "18:00"},
-					"sunday":    {Start: "09:00", End: "18:00"},
+				storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
+				defaultSettings := models.StoreSetting{
+					ID:        primitive.NewObjectID(),
+					StoreID:   newStore.StoreID,
+					ManagerID: newUserID.Hex(),
+					Settings: models.Settings{
+						OperatingHours: operatingHours,
+						ClosedDays: models.ClosedDays{
+							SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
+						},
+						WaitingPolicy: models.WaitingPolicy{
+							MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
+							EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
+							EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
+							RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
+						},
+						Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
+						ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
+					},
+					UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+				}
+				_, err = storeSettingsCollection.InsertOne(sessCtx, defaultSettings)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create default store settings: %w", err)
 				}
 			}
 
-			storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
-			defaultSettings := models.StoreSetting{
-				ID:        primitive.NewObjectID(),
-				StoreID:   newStore.StoreID,
-				ManagerID: newUserID.Hex(),
-				Settings: models.Settings{
-					OperatingHours: operatingHours,
-					ClosedDays: models.ClosedDays{
-						SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
-					},
-					WaitingPolicy: models.WaitingPolicy{
-						MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
-						EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
-						EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
-						RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
-					},
-					Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
-					ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
-				},
-				UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-			}
-			_, err = storeSettingsCollection.InsertOne(sessCtx, defaultSettings)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create default store settings: %w", err)
-			}
-
-			// LINEログインURL生成
-			// lineChannelID := os.Getenv("LINE_LOGIN_CHANNEL_ID")
-			// lineCallbackURL := os.Getenv("LINE_CALLBACK_URL")
-
-			// baseURL := "https://access.line.me/oauth2/v2.1/authorize"
-			// params := url.Values{}
-			// params.Add("response_type", "code")
-			// params.Add("client_id", lineChannelID)
-			// params.Add("redirect_uri", lineCallbackURL)
-			// params.Add("state", lineToken) // state価で生成したtokenを使用
-			// params.Add("scope", "openid profile")
-			// params.Add("bot_prompt", "aggressive")
-
-			// lineLoginUrl = baseURL + "?" + params.Encode() // URL完成
-
 		case "staff":
-			if req.StoreID == "" {
-				return nil, fmt.Errorf("store ID is required for staff role")
+			// 店舗IDがある場合のみチェック (Refactor: 任意項目化)
+			if req.StoreID != "" {
+				var existingStore models.Store
+				err := storeCollection.FindOne(sessCtx, bson.M{"store_id": req.StoreID}).Decode(&existingStore)
+				if err == mongo.ErrNoDocuments {
+					return nil, fmt.Errorf("store with the provided ID not found")
+				} else if err != nil {
+					return nil, fmt.Errorf("database error while verifying store: %w", err)
+				}
+				storeIdForUser = existingStore.StoreID
 			}
-
-			var existingStore models.Store
-			err := storeCollection.FindOne(sessCtx, bson.M{"store_id": req.StoreID}).Decode(&existingStore)
-			if err == mongo.ErrNoDocuments {
-				return nil, fmt.Errorf("store with the provided ID not found")
-			} else if err != nil {
-				return nil, fmt.Errorf("database error while verifying store: %w", err)
-			}
-			storeIdForUser = existingStore.StoreID
 
 		default:
 			return nil, fmt.Errorf("invalid or unsupported user role: %s", req.Role)
@@ -276,7 +254,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			Email:            req.Email,
 			Phone:            req.PhoneNumber,
 			Role:             req.Role,
-			StoreID:          storeIdForUser,
+			StoreID:          storeIdForUser, // 空文字の場合はomitemptyで無視、または空文字として保存
 			TermsAgreed:      req.TermsAgreed,
 			TermsAgreedAt:    termsAgreedAt,
 			PrivacyAgreed:    req.PrivacyAgreed,
@@ -289,8 +267,8 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 
-		// Staffの場合、store_staff_infoにも追加
-		if req.Role == "staff" {
+		// Staffの場合、店舗に参加する場合のみ store_staff_infoにも追加
+		if req.Role == "staff" && storeIdForUser != "" {
 			storeStaffCollection := db.GetCollection(DatabaseName, "store_staff_info")
 			newStaffInfo := models.StoreStaffInfo{
 				ID:        primitive.NewObjectID(),
