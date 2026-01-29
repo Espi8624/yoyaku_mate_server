@@ -196,7 +196,18 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
+			}}},
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+		}},
+		{Key: "cancelled_chart_data", Value: bson.A{
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$group_key"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
 			}}},
 			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		}},
@@ -227,7 +238,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$hour"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
 			}}},
 			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 		}},
@@ -337,6 +348,19 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		}
 	}
 
+	// --- 2.6 Cancelled チャートデータ統計のパース ---
+	response.CancelledChartData = make([]models.ChartData, 0)
+	cancelledChartMap := make(map[string]int)
+
+	if cancelCharts, ok := result["cancelled_chart_data"].(bson.A); ok {
+		for _, c := range cancelCharts {
+			cMap := c.(bson.M)
+			key := cMap["_id"].(string)
+			count := int(cMap["count"].(int32))
+			cancelledChartMap[key] = count
+		}
+	}
+
 	// 日付/月の欠落部分を0で埋め、前期間をマッピングする
 	if period == "weekly" {
 		for i := 0; i < 7; i++ {
@@ -365,6 +389,15 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 				Label:     label,
 				Value:     nsVal,
 				PrevValue: nsPrevVal,
+			})
+
+			// Cancelled チャート
+			cVal := cancelledChartMap[key]
+			cPrevVal := cancelledChartMap[prevKey]
+			response.CancelledChartData = append(response.CancelledChartData, models.ChartData{
+				Label:     label,
+				Value:     cVal,
+				PrevValue: cPrevVal,
 			})
 		}
 	} else if period == "monthly" {
@@ -399,6 +432,15 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 				Value:     nsVal,
 				PrevValue: nsPrevVal,
 			})
+
+			// Cancelled チャート
+			cVal := cancelledChartMap[key]
+			cPrevVal := cancelledChartMap[prevKey]
+			response.CancelledChartData = append(response.CancelledChartData, models.ChartData{
+				Label:     label,
+				Value:     cVal,
+				PrevValue: cPrevVal,
+			})
 		}
 	} else if period == "yearly" {
 		currentMonth := int(now.Month())
@@ -428,6 +470,15 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 				Label:     label,
 				Value:     nsVal,
 				PrevValue: nsPrevVal,
+			})
+
+			// Cancelled チャート
+			cVal := cancelledChartMap[key]
+			cPrevVal := cancelledChartMap[prevKey]
+			response.CancelledChartData = append(response.CancelledChartData, models.ChartData{
+				Label:     label,
+				Value:     cVal,
+				PrevValue: cPrevVal,
 			})
 		}
 	} else {

@@ -20,11 +20,12 @@ type ChartData struct {
 }
 
 type StatisticsResponse struct {
-	VisitorStats     VisitorStats `json:"visitor_stats"`
-	HourlyCongestion []HourlyData `json:"hourly_congestion"`
-	ChartData        []ChartData  `json:"chart_data"`        // 選択された期間のチャートデータ
-	AverageWaitTime  string       `json:"average_wait_time"` // 例: "15分"
-	WaitTimeSeconds  int          `json:"wait_time_seconds"`
-	NoShowRate       float64      `json:"no_show_rate"`
-	NoShowChartData  []ChartData  `json:"no_show_chart_data"` // 期間ごとのNo-Show数
+	VisitorStats       VisitorStats `json:"visitor_stats"`
+	HourlyCongestion   []HourlyData `json:"hourly_congestion"`
+	ChartData          []ChartData  `json:"chart_data"`        // 選択された期間のチャートデータ
+	AverageWaitTime    string       `json:"average_wait_time"` // 例: "15分"
+	WaitTimeSeconds    int          `json:"wait_time_seconds"`
+	NoShowRate         float64      `json:"no_show_rate"`
+	NoShowChartData    []ChartData  `json:"no_show_chart_data"`   // 期間ごとのNo-Show数
+	CancelledChartData []ChartData  `json:"cancelled_chart_data"` // 期間ごとのキャンセル数
 }
