@@ -12,17 +12,19 @@ import (
 
 // StoreAIContextResponse AIに注入する店舗コンテキスト情報構造体
 type StoreAIContextResponse struct {
-	StoreName         string                          `json:"store_name"`
-	Phone             string                          `json:"phone"`
-	Address           string                          `json:"address"`
-	OpeningHours      string                          `json:"opening_hours"`       // 表示用文字列 (簡易版)
-	CurrentWaitCount  int                             `json:"current_wait_count"`  // 現在の待機組数
-	EstimatedWaitTime int                             `json:"estimated_wait_time"` // 予想待機時間 (分)
-	MaxCapacity       int                             `json:"max_capacity"`        // 最大待機可能組数
-	LastUpdated       string                          `json:"last_updated"`
-	Menus             []models.MenuList               `json:"menus"`               // メニューリスト
-	OperatingHoursMap map[string]models.StoreDayHours `json:"operating_hours_map"` // 詳細な営業時間設定
-	ClosedDays        models.ClosedDays               `json:"closed_days"`         // 定休日設定
+	StoreName               string                          `json:"store_name"`
+	Phone                   string                          `json:"phone"`
+	Address                 string                          `json:"address"`
+	OpeningHours            string                          `json:"opening_hours"`       // 表示用文字列 (簡易版)
+	CurrentWaitCount        int                             `json:"current_wait_count"`  // 現在の待機組数
+	EstimatedWaitTime       int                             `json:"estimated_wait_time"` // 予想待機時間 (分)
+	MaxCapacity             int                             `json:"max_capacity"`        // 最大待機可能組数
+	LastUpdated             string                          `json:"last_updated"`
+	Menus                   []models.MenuList               `json:"menus"`                       // メニューリスト
+	OperatingHoursMap       map[string]models.StoreDayHours `json:"operating_hours_map"`         // 詳細な営業時間設定
+	ClosedDays              models.ClosedDays               `json:"closed_days"`                 // 定休日設定
+	RequireOneMenuPerPerson bool                            `json:"require_one_menu_per_person"` // 1人1メニュー制
+	AIAdditionalInfo        string                          `json:"ai_additional_info"`          // AIへの追加情報
 }
 
 // StoreAIContextHandler AIチャットボット用リアルタイム店舗情報提供ハンドラ
@@ -53,6 +55,8 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 	formattedHours := ""
 	var operatingHoursMap map[string]models.StoreDayHours
 	var closedDays models.ClosedDays
+	var requireOneMenuPerPerson bool
+	var aiAdditionalInfo string
 
 	if err == nil {
 		if settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
@@ -63,6 +67,8 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 		// 詳細な営業時間と定休日データを取得
 		operatingHoursMap = settings.Settings.OperatingHours
 		closedDays = settings.Settings.ClosedDays
+		requireOneMenuPerPerson = settings.Settings.WaitingPolicy.RequireOneMenuPerPerson // 設定値を反映
+		aiAdditionalInfo = settings.Settings.AIAdditionalInfo                             // 追加情報を反映
 
 		// 営業時間のフォーマット (簡易表示用)
 		if len(settings.Settings.OperatingHours) > 0 {
@@ -108,17 +114,19 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	response := StoreAIContextResponse{
-		StoreName:         store.StoreName,
-		Phone:             store.Phone,
-		Address:           store.Address,
-		OpeningHours:      finalOpeningHours,
-		CurrentWaitCount:  currentWaitCount,
-		EstimatedWaitTime: totalEstimatedTime,
-		MaxCapacity:       maxCapacity,
-		LastUpdated:       time.Now().In(jst).Format(time.RFC3339),
-		Menus:             menuList,
-		OperatingHoursMap: operatingHoursMap,
-		ClosedDays:        closedDays,
+		StoreName:               store.StoreName,
+		Phone:                   store.Phone,
+		Address:                 store.Address,
+		OpeningHours:            finalOpeningHours,
+		CurrentWaitCount:        currentWaitCount,
+		EstimatedWaitTime:       totalEstimatedTime,
+		MaxCapacity:             maxCapacity,
+		LastUpdated:             time.Now().In(jst).Format(time.RFC3339),
+		Menus:                   menuList,
+		OperatingHoursMap:       operatingHoursMap,
+		ClosedDays:              closedDays,
+		RequireOneMenuPerPerson: requireOneMenuPerPerson,
+		AIAdditionalInfo:        aiAdditionalInfo,
 	}
 
 	// 7. JSONレスポンス送信
