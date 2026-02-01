@@ -61,7 +61,8 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 統計情報の計算
-	stats, err := CalculateStatistics(storeID, period)
+	dateStr := r.URL.Query().Get("date")
+	stats, err := CalculateStatistics(storeID, period, dateStr)
 	if err != nil {
 		log.Printf("Failed to calculate statistics for store %s: %v", storeID, err)
 		utils.RespondWithError(w, "Failed to calculate statistics", http.StatusInternalServerError)
@@ -71,7 +72,7 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, stats, http.StatusOK)
 }
 
-func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, error) {
+func CalculateStatistics(storeID, period, dateStr string) (*models.StatisticsResponse, error) {
 	// 店舗情報の取得（タイムゾーン確認のため）
 	store, err := data.GetStoreData(storeID)
 	locationName := "Asia/Tokyo"
@@ -91,7 +92,31 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	now := time.Now().In(loc)
+	var now time.Time
+	if dateStr != "" {
+		// dateStr should be "YYYY-MM-DD"
+		parsed, err := time.ParseInLocation("2006-01-02", dateStr, loc)
+		if err != nil {
+			log.Printf("Invalid date format: %s. Defaulting to now.", dateStr)
+			now = time.Now().In(loc)
+		} else {
+			// Set time to end of day? Or current time of day if it's today?
+			// Actually, for "statistics around this date", usually we treat "now" as the reference point.
+			// If user navigates to "2024-01-01", we should treat "now" as "2024-01-01 23:59:59" or 00:00:00?
+			// For "This Week" (ending on the date), it should probably be the requested date.
+			// Let's assume the user picked a specific day.
+			// However, time.Parse sets it to 00:00:00.
+			// If we want "Weekly" statistics ending on this day, we need to be careful.
+			// Existing logic: current day is included.
+			// Let's set the time component to current time if it's today, or 23:59:59 if past?
+			// Simpler: Just use the date object (00:00:00).
+			// But wait, "today" variable below is used as reference.
+			now = parsed
+		}
+	} else {
+		now = time.Now().In(loc)
+	}
+
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 
 	// 日付範囲設定
@@ -226,15 +251,42 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 
 	// Query B: 今日の詳細データ (Hourly, WaitTime, Stats)
 	// Matchステージを今日のみに絞ることで高速化＆メモリ節約
-	todayMatchStage := bson.D{{Key: "$match", Value: bson.D{
+	// Query B: Today & Yesterday detailed data (Combined for efficiency)
+	// We want to compare Hourly data with Yesterday.
+
+	yesterday := today.AddDate(0, 0, -1)
+
+	// Refactored Strategy:
+	// 1. Match: >= Yesterday (Cover both days)
+	// 2. Facets:
+	//    - hourly_today: Match date >= Today
+	//    - hourly_yesterday: Match date < Today
+	//    - wait_times_today: Match date >= Today
+	//    - status_stats_today: Match date >= Today
+
+	combinedMatchStage := bson.D{{Key: "$match", Value: bson.D{
 		{Key: "store_id", Value: storeID},
-		{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: today.Format("2006-01-02T15:04:05.000+09:00")}}},
+		{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: yesterday.Format("2006-01-02T15:04:05.000")}}},
 	}}}
 
-	todayFacetStage := bson.D{{Key: "$facet", Value: bson.D{
+	combinedFacetStage := bson.D{{Key: "$facet", Value: bson.D{
 		{Key: "hourly_today", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: today.Format("2006-01-02T15:04:05.000")}}}}}},
 			bson.D{{Key: "$project", Value: bson.D{
 				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$hour"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+			}}},
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+		}},
+		{Key: "hourly_yesterday", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "registration_time", Value: bson.D{{Key: "$lt", Value: today.Format("2006-01-02T15:04:05.000")}}}}}},
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: "$hour"},
@@ -244,6 +296,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		}},
 		{Key: "wait_times_today", Value: bson.A{
 			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: today.Format("2006-01-02T15:04:05.000")}}},
 				{Key: "status", Value: "completed"},
 				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
 			}}},
@@ -256,6 +309,9 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			}}},
 		}},
 		{Key: "status_stats_today", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: today.Format("2006-01-02T15:04:05.000")}}},
+			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: nil},
 				{Key: "total", Value: bson.D{{Key: "$sum", Value: 1}}},
@@ -264,7 +320,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		}},
 	}}}
 
-	cursorToday, err := collection.Aggregate(ctx, mongo.Pipeline{todayMatchStage, addFieldsStage, todayFacetStage})
+	cursorToday, err := collection.Aggregate(ctx, mongo.Pipeline{combinedMatchStage, addFieldsStage, combinedFacetStage})
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +348,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 
 	// --- 1. 訪問者統計のパース (既存ロジック) ---
 	todayStr := today.Format("2006-01-02")
-	yesterday := today.AddDate(0, 0, -1)
+	// yesterday is already defined at top of Query B
 	yesterdayStr := yesterday.Format("2006-01-02")
 	lastWeek := today.AddDate(0, 0, -7)
 	lastWeekStr := lastWeek.Format("2006-01-02")
@@ -371,7 +427,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			prevD := d.AddDate(0, 0, -7)
 			prevKey := prevD.Format("2006-01-02")
 
-			label := d.Format("1/2")
+			label := d.Format("2")
 
 			// 訪問者チャート
 			val := chartMap[key]
@@ -401,10 +457,11 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			})
 		}
 	} else if period == "monthly" {
-		daysInMonth := now.Day()
-		if daysInMonth < 1 {
-			daysInMonth = 1
-		}
+		// 月末の日付を取得して、そこまでの日数分ループする
+		// startDate is 1st of the month
+		nextMonth := startDate.AddDate(0, 1, 0)
+		daysInMonth := nextMonth.AddDate(0, 0, -1).Day()
+
 		for i := 0; i < daysInMonth; i++ {
 			d := startDate.AddDate(0, 0, i)
 			key := d.Format("2006-01-02")
@@ -413,7 +470,7 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			prevD := d.AddDate(0, -1, 0)
 			prevKey := prevD.Format("2006-01-02")
 
-			label := d.Format("1/2")
+			label := d.Format("2")
 
 			// 訪問者チャート
 			val := chartMap[key]
@@ -443,9 +500,9 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			})
 		}
 	} else if period == "yearly" {
-		currentMonth := int(now.Month())
-		for i := 1; i <= currentMonth; i++ {
-			d := time.Date(now.Year(), time.Month(i), 1, 0, 0, 0, 0, loc)
+		// 1月から12月まで固定で表示
+		for i := 1; i <= 12; i++ {
+			d := time.Date(startDate.Year(), time.Month(i), 1, 0, 0, 0, 0, loc)
 			key := d.Format("2006-01") // 月単位フォーマット
 
 			// 前期間: 1年前
@@ -485,9 +542,11 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 		// Auto/Default -> 今日の時間別データのみ
 	}
 
-	// --- 3. 時間別データ (既存) ---
+	// --- 3. 時間別データ (既存 + 前日) ---
 	var hourlyData []models.HourlyData
 	hourlyMap := make(map[int]int)
+	hourlyPrevMap := make(map[int]int)
+
 	if hourly, ok := result["hourly_today"].(bson.A); ok {
 		for _, h := range hourly {
 			hMap := h.(bson.M)
@@ -496,8 +555,21 @@ func CalculateStatistics(storeID, period string) (*models.StatisticsResponse, er
 			hourlyMap[hour] = count
 		}
 	}
+	if hourlyPrev, ok := result["hourly_yesterday"].(bson.A); ok {
+		for _, h := range hourlyPrev {
+			hMap := h.(bson.M)
+			hour := int(hMap["_id"].(int32))
+			count := int(hMap["count"].(int32))
+			hourlyPrevMap[hour] = count
+		}
+	}
+
 	for i := 0; i < 24; i++ {
-		hourlyData = append(hourlyData, models.HourlyData{Hour: i, Count: hourlyMap[i]})
+		hourlyData = append(hourlyData, models.HourlyData{
+			Hour:      i,
+			Count:     hourlyMap[i],
+			PrevCount: hourlyPrevMap[i],
+		})
 	}
 	response.HourlyCongestion = hourlyData
 

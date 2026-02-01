@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -69,6 +70,25 @@ func Load() Config {
 		AccessKey:    os.Getenv("R2_ACCESS_KEY"),
 		SecretKey:    os.Getenv("R2_SECRET_KEY"),
 		PublicDomain: os.Getenv("R2_PUBLIC_DOMAIN"),
+	}
+
+	// Override AllowedOrigins from environment variable (comma separated)
+	if allowedOrigins := os.Getenv("ALLOWED_ORIGINS"); allowedOrigins != "" {
+		origins := strings.Split(allowedOrigins, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+		cfg.Server.AllowOrigins = origins
+		log.Printf("Overriding AllowedOrigins from env: %v", cfg.Server.AllowOrigins)
+	} else {
+		// If Env is not set, ensure we have at least "*" or default from file
+		// If file didn't specify and env didn't specify, default to "*" for backward compatibility if needed?
+		// But best practice is strictly what's in config.
+		// For now, if empty, let's look at main.go (it was hardcoded to *).
+		// Let's ensure if cfg.Server.AllowOrigins is empty, we default to "*" to match previous behavior if config file is missing it.
+		if len(cfg.Server.AllowOrigins) == 0 {
+			cfg.Server.AllowOrigins = []string{"*"}
+		}
 	}
 
 	return cfg
