@@ -1,8 +1,9 @@
 package models
 
 type HourlyData struct {
-	Hour  int `json:"hour" bson:"hour"`
-	Count int `json:"count" bson:"count"`
+	Hour      int `json:"hour" bson:"hour"`
+	Count     int `json:"count" bson:"count"`
+	PrevCount int `json:"prev_count" bson:"prev_count"`
 }
 
 type VisitorStats struct {

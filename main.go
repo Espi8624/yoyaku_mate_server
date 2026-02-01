@@ -9,6 +9,7 @@ import (
 	"yoyaku_mate_server/db"
 	handlers "yoyaku_mate_server/handlers"
 
+	"github.com/didip/tollbooth/v7"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 )
@@ -64,7 +65,7 @@ func main() {
 
 	// Configure CORS
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   cfg.Server.AllowOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
@@ -72,9 +73,23 @@ func main() {
 
 	handler := c.Handler(r)
 
+	// Rate Limiting Middleware (5 requests per second per IP)
+	// Burst of 10 to allow parallel requests (like images/css or multiple API calls)
+	lmt := tollbooth.NewLimiter(5, nil)
+	lmt.SetBurst(10)
+
+	// Create a custom handler for rejection to return JSON
+	lmt.SetMessage(`{"status": "error", "message": "Too Many Requests"}`)
+	lmt.SetStatusCode(http.StatusTooManyRequests)
+	lmt.SetOnLimitReached(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+	})
+
+	rateLimitedHandler := tollbooth.LimitHandler(lmt, handler)
+
 	// Start server
 	log.Printf("Server starting on %s...", cfg.Server.Port)
-	if err := http.ListenAndServe(cfg.Server.Port, handler); err != nil {
+	if err := http.ListenAndServe(cfg.Server.Port, rateLimitedHandler); err != nil {
 		log.Fatal("Server failed to start: ", err)
 	}
 }
