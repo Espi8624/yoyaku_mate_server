@@ -181,6 +181,37 @@ func handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Double Login Check
+		loginToken := r.Header.Get("X-Login-Token")
+		// If client sends token, verify it. If not, currently we might skip or fail.
+		// For rollout phase: strict check if header exists? Or fail if missing?
+		// Plan says: "Require X-Login-Token".
+		// Note: Old clients won't send it. If we deploy this, old clients break?
+		// Yes. But user wants this. We will update frontend too.
+		if loginToken != "" {
+			valid, err := auth.VerifyLoginToken(user.ID, loginToken)
+			if err != nil || !valid {
+				utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized) // Special error code
+				return
+			}
+		}
+		// If loginToken is empty, should we fail?
+		// For now, let's enforce it ONLY if it's sent, or enforce strictly?
+		// Strict enforcement is better for security, but breaks backward compatibility instantly.
+		// Let's enforce strictly to meet the requirement "Prevent Duplicate Login".
+		// If we don't enforce strictly strategies, a malicious user just omits the header.
+		// So we MUST enforce it.
+		if loginToken == "" {
+			// However, during dev, maybe lax? No, let's go for strict but maybe allow if user.LoginToken is empty (first migration)?
+			// Actually, verifying login token returns error if DB has token but request doesn't.
+			// Let's call VerifyLoginToken with empty string if header is missing.
+			valid, err := auth.VerifyLoginToken(user.ID, loginToken)
+			if err != nil || !valid {
+				utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		// 権限チェック（マネージャーまたはAPPROVED状態のスタッフのみ）
 		hasPermission, err := data.CheckUserStorePermission(user.ID, newWaiting.StoreID, user.Role, "")
 		if err != nil {
@@ -263,6 +294,14 @@ func handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		log.Printf("Failed to get user by Firebase UID: %v", err)
 		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		return
+	}
+
+	// Double Login Check
+	loginToken := r.Header.Get("X-Login-Token")
+	valid, err := auth.VerifyLoginToken(user.ID, loginToken)
+	if err != nil || !valid {
+		utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
 		return
 	}
 
@@ -356,6 +395,15 @@ func handleUpdateWaitingStatus(w http.ResponseWriter, r *http.Request) {
 		if err != nil || user == nil {
 			log.Printf("Failed to get user by Firebase UID: %v", err)
 			utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+			return
+		}
+
+		// Double Login Check
+		// Only check if it's a staff/manager action
+		loginToken := r.Header.Get("X-Login-Token")
+		valid, err := auth.VerifyLoginToken(user.ID, loginToken)
+		if err != nil || !valid {
+			utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
 			return
 		}
 

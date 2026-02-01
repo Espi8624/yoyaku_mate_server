@@ -259,6 +259,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			TermsAgreedAt:    termsAgreedAt,
 			PrivacyAgreed:    req.PrivacyAgreed,
 			PrivacyAgreedAt:  privacyAgreedAt,
+			LoginToken:       utils.GenerateRandomString(32), // Generate initial login token
 		}
 
 		// ユーザー生成

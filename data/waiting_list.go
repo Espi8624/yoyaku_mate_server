@@ -256,9 +256,10 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	if item.PartySize <= 0 {
 		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
-	if item.WaitingID == "" {
-		return nil, fmt.Errorf("waiting_id is required")
-	}
+	// 以前はここで waiting_id が必須だったが、今はサーバー側で生成するためチェックしない。
+	// if item.WaitingID == "" {
+	// 	return nil, fmt.Errorf("waiting_id is required")
+	// }
 
 	// 提供されていない場合はデフォルト値を設定
 	if item.Status == "" {
@@ -281,11 +282,14 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		now := time.Now().In(jst)
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
-	if item.WaitingID == "" {
-		jst := time.FixedZone("Asia/Tokyo", 9*60*60)
-		now := time.Now().In(jst)
-		item.WaitingID = now.Format("20060102-150405")
-	}
+	// WaitingIDをサーバー側で生成 (Collision防止: Milliseconds追加)
+	// Clientからのwaiting_idは無視し、常にサーバー時間ベースで生成する
+	now := time.Now()
+	// Format: YYYYMMDD-HHmmss-SSS (e.g., 20240201-123456-789)
+	item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
+
+	// UserID (firebase_uid) はAuth tokenから設定済み (Handler側)
+	// StoreID はHandler側で設定済み
 
 	// 予想待ち時間の計算
 	// 現在の待機組数(waiting, notified)を取得
@@ -342,38 +346,13 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 
 // 特定店舗の次の利用可能なキュー番号を返却 (営業日ごとにリセット)
 func GetNextQueueNumber(storeID string) (int, error) {
-	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	// 営業日の開始日時を計算 (Dynamic Cutoff)
 	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 	now := time.Now().In(jst)
 	businessDayStart := GetBusinessDayCutoff(storeID, now)
 
-	businessDayStartStr := businessDayStart.Format("2006-01-02T15:04:05.000+09:00")
-
-	// 特定店舗の今日の営業日以降の最大キュー番号を取得
-	opts := options.FindOne().SetSort(bson.D{{Key: "queue_number", Value: -1}})
-	filter := bson.M{
-		"store_id": storeID,
-		"registration_time": bson.M{
-			"$gte": businessDayStartStr,
-		},
-	}
-
-	var lastItem models.WaitingList
-	err := collection.FindOne(ctx, filter, opts).Decode(&lastItem)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			// もし今日のドキュメントが存在しない場合、キュー番号1から開始
-			return 1, nil
-		}
-		return 0, err
-	}
-
-	// 次のキュー番号を返却
-	return lastItem.QueueNumber + 1, nil
+	// Atomic Counterを使用
+	return GetNextSequence(storeID, businessDayStart)
 }
 
 // 特定店舗の今日のウェイティングリストをキャンセル状態に更新
