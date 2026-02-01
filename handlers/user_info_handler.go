@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
@@ -117,16 +118,54 @@ func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) 
 }
 
 // GET /api/provider_user/firebase_uid?uid=xxxx
+// This acts as a "Secondary Login" or "Session Start" endpoint.
 func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Verify Authentication
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		return
+	}
+	idToken := strings.TrimPrefix(authHeader, "Bearer ")
+	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Validate Request UID
 	uid := r.URL.Query().Get("uid")
 	if uid == "" {
 		utils.RespondWithError(w, "Missing uid parameter", http.StatusBadRequest)
 		return
 	}
+	if firebaseUID != uid {
+		utils.RespondWithError(w, "Token UID does not match request UID", http.StatusForbidden)
+		return
+	}
+
+	// 3. Generate New Login Token (Session ID)
+	newLoginToken := utils.GenerateRandomString(32)
+
+	// 4. Update User in DB with new token
+	// First, get the user to find their ID
 	user, err := data.GetUserDataByFirebaseUID(uid)
 	if err != nil {
 		utils.RespondWithError(w, "User not found", http.StatusNotFound)
 		return
 	}
+	// Update LoginToken field
+	err = data.UpdateUserData(user.ID, map[string]interface{}{
+		"login_token": newLoginToken,
+		"updated_at":  time.Now(),
+	})
+	if err != nil {
+		utils.RespondWithError(w, "Failed to update login session", http.StatusInternalServerError)
+		return
+	}
+
+	// 5. Update user object in memory to return correct data
+	user.LoginToken = newLoginToken
+
 	utils.RespondWithJSON(w, user, http.StatusOK)
 }
