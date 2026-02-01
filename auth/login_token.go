@@ -36,5 +36,7 @@ func VerifyLoginToken(userID primitive.ObjectID, token string) (bool, error) {
 		return false, fmt.Errorf("session expired or logged in from another device")
 	}
 
+	// fmt.Printf("[VerifyLoginToken] Success for User %s. Token: '%s'\n", userID.Hex(), token)
+
 	return true, nil
 }

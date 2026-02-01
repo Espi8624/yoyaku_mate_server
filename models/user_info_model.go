@@ -21,5 +21,5 @@ type User struct {
 	TermsAgreedAt    time.Time          `bson:"terms_agreed_at" json:"terms_agreed_at"`
 	PrivacyAgreed    bool               `bson:"privacy_agreed" json:"privacy_agreed"`
 	PrivacyAgreedAt  time.Time          `bson:"privacy_agreed_at" json:"privacy_agreed_at"`
-	LoginToken       string             `bson:"login_token,omitempty" json:"login_token,omitempty"` // For duplicate login prevention
+	LoginToken       string             `bson:"login_token,omitempty" json:"login_token"` // For duplicate login prevention (Removed omitempty)
 }

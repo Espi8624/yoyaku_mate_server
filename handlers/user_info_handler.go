@@ -144,28 +144,31 @@ func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Generate New Login Token (Session ID)
-	newLoginToken := utils.GenerateRandomString(32)
+	// 3. Check Intent (Regenerate Token?)
+	regenerateToken := r.URL.Query().Get("regenerate_token") == "true"
 
-	// 4. Update User in DB with new token
-	// First, get the user to find their ID
+	// 4. Get User Data First
 	user, err := data.GetUserDataByFirebaseUID(uid)
 	if err != nil {
 		utils.RespondWithError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	// Update LoginToken field
-	err = data.UpdateUserData(user.ID, map[string]interface{}{
-		"login_token": newLoginToken,
-		"updated_at":  time.Now(),
-	})
-	if err != nil {
-		utils.RespondWithError(w, "Failed to update login session", http.StatusInternalServerError)
-		return
-	}
 
-	// 5. Update user object in memory to return correct data
-	user.LoginToken = newLoginToken
+	if regenerateToken {
+		// Generate New Login Token (Session ID)
+		newLoginToken := utils.GenerateRandomString(32)
+
+		// Update User in DB with new token
+		err = data.UpdateUserData(user.ID, map[string]interface{}{
+			"login_token": newLoginToken,
+			"updated_at":  time.Now(),
+		})
+		if err != nil {
+			utils.RespondWithError(w, "Failed to update login session", http.StatusInternalServerError)
+			return
+		}
+		user.LoginToken = newLoginToken
+	}
 
 	utils.RespondWithJSON(w, user, http.StatusOK)
 }
