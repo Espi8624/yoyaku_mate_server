@@ -27,6 +27,8 @@ type StatisticsResponse struct {
 	AverageWaitTime    string       `json:"average_wait_time"` // 例: "15分"
 	WaitTimeSeconds    int          `json:"wait_time_seconds"`
 	NoShowRate         float64      `json:"no_show_rate"`
+	TotalCancelled     int          `json:"total_cancelled"`
+	TotalNoShow        int          `json:"total_no_show"`
 	NoShowChartData    []ChartData  `json:"no_show_chart_data"`   // 期間ごとのNo-Show数
 	CancelledChartData []ChartData  `json:"cancelled_chart_data"` // 期間ごとのキャンセル数
 }
