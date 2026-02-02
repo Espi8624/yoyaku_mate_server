@@ -92,15 +92,17 @@ func InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]mo
 
 		update := bson.M{
 			"$set": bson.M{
-				"store_id":               storeID,
-				"menu_id":                getStringValue(item, "menu_id"),
-				"category":               getStringValue(item, "category"),
-				"title":                  getStringValue(item, "title"),
-				"description":            getStringValue(item, "description"),
-				"price":                  getIntValue(item, "price"),
-				"updated_at":             parseTimeToString(getStringValue(item, "updated_at")),
-				"menu_status":            getStringValue(item, "menu_status"),
-				"is_pre_order_available": getBoolValue(item, "is_pre_order_available"),
+				"store_id":                 storeID,
+				"menu_id":                  getStringValue(item, "menu_id"),
+				"category":                 getStringValue(item, "category"),
+				"title":                    getStringValue(item, "title"),
+				"description":              getStringValue(item, "description"),
+				"price":                    getIntValue(item, "price"),
+				"updated_at":               parseTimeToString(getStringValue(item, "updated_at")),
+				"menu_status":              getStringValue(item, "menu_status"),
+				"is_pre_order_available":   getBoolValue(item, "is_pre_order_available"),
+				"title_translations":       item["title_translations"],
+				"description_translations": item["description_translations"],
 			},
 			"$setOnInsert": bson.M{
 				"created_at": parseTimeToString(getStringValue(item, "created_at")),
@@ -185,6 +187,12 @@ func UpdateSingleMenu(menuData map[string]interface{}) (*models.MenuList, error)
 		if boolVal, ok := val.(bool); ok {
 			update["$set"].(bson.M)["is_pre_order_available"] = boolVal
 		}
+	}
+	if val, ok := menuData["title_translations"]; ok {
+		update["$set"].(bson.M)["title_translations"] = val
+	}
+	if val, ok := menuData["description_translations"]; ok {
+		update["$set"].(bson.M)["description_translations"] = val
 	}
 	if imageURL, exists := menuData["menu_image_url"]; exists {
 		if imageURLStr, ok := imageURL.(string); ok {
