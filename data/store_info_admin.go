@@ -37,6 +37,21 @@ func GetStoresByStatus(status string) ([]models.StoreWithLicense, error) {
 	}}}
 	pipeline = append(pipeline, unwindStage)
 
+	// User Info Lookup
+	userLookupStage := bson.D{{Key: "$lookup", Value: bson.D{
+		{Key: "from", Value: "user_info"}, // CollectionUserInfo constant would be better but string works
+		{Key: "localField", Value: "storeDetails.user_id"},
+		{Key: "foreignField", Value: "_id"},
+		{Key: "as", Value: "userDetails"},
+	}}}
+	pipeline = append(pipeline, userLookupStage)
+
+	userUnwindStage := bson.D{{Key: "$unwind", Value: bson.M{
+		"path":                       "$userDetails",
+		"preserveNullAndEmptyArrays": true,
+	}}}
+	pipeline = append(pipeline, userUnwindStage)
+
 	projectStage := bson.D{{Key: "$project", Value: bson.D{
 		{Key: "store_id", Value: "$store_id"},
 		{Key: "store_name", Value: "$storeDetails.store_name"},
@@ -45,6 +60,9 @@ func GetStoresByStatus(status string) ([]models.StoreWithLicense, error) {
 		{Key: "license_image_url", Value: "$license_image_url"},
 		{Key: "verification_status", Value: "$verification_status"},
 		{Key: "created_at", Value: "$created_at"},
+		{Key: "user_name", Value: "$userDetails.user_name"},
+		{Key: "user_email", Value: "$userDetails.email"},
+		{Key: "user_phone", Value: "$userDetails.phone"},
 		{Key: "_id", Value: 0},
 	}}}
 	pipeline = append(pipeline, projectStage)
