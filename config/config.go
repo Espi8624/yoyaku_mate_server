@@ -64,6 +64,14 @@ func Load() Config {
 		cfg.MongoDB.URI = mongoURI
 		log.Println("Using MONGODB_URI from environment variable")
 	}
+	if mongoDB := os.Getenv("MONGODB_DATABASE"); mongoDB != "" {
+		cfg.MongoDB.Database = mongoDB
+		log.Println("Using MONGODB_DATABASE from environment variable")
+	}
+	if serverPort := os.Getenv("SERVER_PORT"); serverPort != "" {
+		cfg.Server.Port = serverPort
+		log.Println("Using SERVER_PORT from environment variable")
+	}
 
 	cfg.R2 = R2Config{
 		AccountID:    os.Getenv("R2_ACCOUNT_ID"),
