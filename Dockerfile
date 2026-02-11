@@ -31,8 +31,20 @@ COPY --from=build /saboten-server /saboten-server
 # サーバー実行時にこのフォルダから設定ファイルを読み取れる
 COPY --from=build /src/config /config
 
+# Run in non-interactive mode for Infisical install
+# jq 추가 (JSON 파싱용)
+RUN apk add --no-cache curl bash jq && \
+    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
+    apk add infisical
+
 # 8080portを公開
 EXPOSE 8080
 
-# サーバー実行
-CMD exec /saboten-server
+# サーバー実行 (Infisical을 통해 실행, 환경변수로 환경 지정)
+# 1. API를 통해 직접 토큰 발급 (CLI 로그인 문제 우회)
+# 2. 발급받은 토큰으로 run 실행
+CMD sh -c "export INFISICAL_TOKEN=\$(curl --silent --location --request POST 'https://app.infisical.com/api/v1/auth/universal-auth/login' \
+    --header 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode \"clientId=\${INFISICAL_CLIENT_ID}\" \
+    --data-urlencode \"clientSecret=\${INFISICAL_CLIENT_SECRET}\" | jq -r .accessToken) && \
+    infisical run --token=\${INFISICAL_TOKEN} --projectId=\${INFISICAL_PROJECT_ID} --env=\${INFISICAL_ENV:-dev} -- /saboten-server"

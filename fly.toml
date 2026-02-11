@@ -12,7 +12,7 @@ primary_region = 'nrt'
 
 [env]
   PORT = '8080'
-  GO_ENV = "production"
+
 
 [dns]
   nameservers = ["8.8.8.8", "8.8.4.4"]
