@@ -531,7 +531,6 @@ func HandleWaitingListStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// このクライアント用のチャンネルを作成
 	clientChan := make(chan string, 10)

@@ -35,7 +35,7 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]StoreWithStatus, error) {
 		return nil, err
 	}
 
-	// log.Printf("--- [GetStoresByFirebaseUID] 성공: 사용자 '%s' (ID: %s, Role: %s)를 찾았습니다. 이제 가게를 조회합니다.", user.Username, user.ID.Hex(), user.Role)
+	// log.Printf("--- [GetStoresByFirebaseUID] 성공: 사용자 '%s' (ID: %s, Role: %s)를 찾았습니다. 이제 가게를 조회합니다.", user.UserName, user.ID.Hex(), user.Role)
 	var storesWithStatus []StoreWithStatus
 
 	switch user.Role {

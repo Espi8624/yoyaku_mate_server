@@ -13,7 +13,7 @@ import (
 
 // VerifyLoginToken checks if the provided login token matches the one in the database.
 func VerifyLoginToken(userID primitive.ObjectID, token string) (bool, error) {
-	collection := db.GetCollection("saboten_provider", "user_info") // Hardcoded DB name for now matching constants
+	collection := db.GetCollection("project_rusui", "user_info") // Hardcoded DB name for now matching constants
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

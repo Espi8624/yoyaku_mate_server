@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DatabaseName          = "saboten_provider"
+	DatabaseName          = "project_rusui"
 	CollectionWaitingList = "waiting_list"
 )
 

@@ -110,7 +110,7 @@ func getDefaultConfig() Config {
 			Timeout  int    `json:"timeout"`
 		}{
 			URI:      "mongodb://localhost:27017",
-			Database: "saboten_provider",
+			Database: "project_rusui",
 			Timeout:  30,
 		},
 		Server: struct {

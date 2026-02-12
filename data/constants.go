@@ -1,7 +1,7 @@
 package data
 
 const (
-	DatabaseName             = "saboten_provider"
+	DatabaseName             = "project_rusui"
 	CollectionUserInfo       = "user_info"
 	CollectionStoreInfo      = "store_info"
 	CollectionWaitingList    = "waiting_list"

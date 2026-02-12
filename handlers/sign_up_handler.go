@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DatabaseName            = "saboten_provider"
+	DatabaseName            = "project_rusui"
 	UsersCollection         = "user_info"
 	StoresCollection        = "store_info"
 	StoreSettingsCollection = "store_settings"
