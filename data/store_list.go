@@ -7,6 +7,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // StoreWithStatus は店舗情報とスタッフステータスを含む構造体
@@ -38,9 +39,13 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]StoreWithStatus, error) {
 	// log.Printf("--- [GetStoresByFirebaseUID] 성공: 사용자 '%s' (ID: %s, Role: %s)를 찾았습니다. 이제 가게를 조회합니다.", user.UserName, user.ID.Hex(), user.Role)
 	var storesWithStatus []StoreWithStatus
 
+	// Sort by _id ascending (Registration Order)
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{Key: "_id", Value: 1}})
+
 	switch user.Role {
 	case "manager":
-		cursor, err := storeCollection.Find(ctx, bson.M{"user_id": user.ID})
+		cursor, err := storeCollection.Find(ctx, bson.M{"user_id": user.ID}, findOptions)
 		if err != nil {
 			// log.Printf("--- [GetStoresByFirebaseUID] 에러: 매니저의 가게 목록 조회 중 DB 에러: %v", err)
 			return nil, err
@@ -84,7 +89,7 @@ func GetStoresByFirebaseUID(firebaseUid string) ([]StoreWithStatus, error) {
 			"status": bson.M{
 				"$in": []string{models.StaffStatusPending, models.StaffStatusApproved, models.StaffStatusRejected},
 			},
-		})
+		}, findOptions)
 		if err != nil {
 			return nil, err
 		}
