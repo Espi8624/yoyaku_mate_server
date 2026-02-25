@@ -14,6 +14,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api.HandleFunc("/statistics", StatisticsHandler)
 
 	api.HandleFunc("/public/store_ai_context", StoreAIContextHandler)
+	api.HandleFunc("/public/ai-chat", AIChatHandler).Methods("POST", "OPTIONS")
 
 	api.HandleFunc("/menu-list", MenuListHandler).Methods("GET", "POST", "OPTIONS", "PATCH")
 	api.HandleFunc("/menu-list/bulk-save", HandleBulkSaveMenuList)
