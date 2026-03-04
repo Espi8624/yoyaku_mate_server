@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
@@ -225,10 +224,8 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
-	assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
-
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile("saboten-assets", assetsPublicDomain, file, header)
+	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
 		log.Printf("Error uploading file to Minio: %v", err)
 		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)

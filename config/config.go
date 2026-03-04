@@ -23,10 +23,12 @@ type Config struct {
 }
 
 type R2Config struct {
-	AccountID    string `json:"accountId"`
-	AccessKey    string `json:"accessKey"`
-	SecretKey    string `json:"secretKey"`
-	PublicDomain string `json:"publicDomain"`
+	AccountID          string `json:"accountId"`
+	AccessKey          string `json:"accessKey"`
+	SecretKey          string `json:"secretKey"`
+	AssetsBucketName   string // R2_ASSETS_BUCKET_NAME: 公開バケット名 (例: saboten-assets-prod)
+	AssetsPublicDomain string // R2_ASSETS_PUBLIC_DOMAIN: 公開バケットのパブリックドメイン
+	BizBucketName      string // R2_BIZ_BUCKET_NAME: 非公開バケット名 (例: saboten-biz-prod)
 }
 
 var cfg Config
@@ -74,10 +76,12 @@ func Load() Config {
 	}
 
 	cfg.R2 = R2Config{
-		AccountID:    os.Getenv("R2_ACCOUNT_ID"),
-		AccessKey:    os.Getenv("R2_ACCESS_KEY"),
-		SecretKey:    os.Getenv("R2_SECRET_KEY"),
-		PublicDomain: os.Getenv("R2_PUBLIC_DOMAIN"),
+		AccountID:          os.Getenv("R2_ACCOUNT_ID"),
+		AccessKey:          os.Getenv("R2_ACCESS_KEY"),
+		SecretKey:          os.Getenv("R2_SECRET_KEY"),
+		AssetsBucketName:   os.Getenv("R2_ASSETS_BUCKET_NAME"),
+		AssetsPublicDomain: os.Getenv("R2_ASSETS_PUBLIC_DOMAIN"),
+		BizBucketName:      os.Getenv("R2_BIZ_BUCKET_NAME"),
 	}
 
 	// Override AllowedOrigins from environment variable (comma separated)
@@ -121,10 +125,12 @@ func getDefaultConfig() Config {
 			AllowOrigins: []string{"http://localhost:3000", "https://localhost:3000"},
 		},
 		R2: R2Config{
-			AccountID:    os.Getenv("R2_ACCOUNT_ID"),
-			AccessKey:    os.Getenv("R2_ACCESS_KEY"),
-			SecretKey:    os.Getenv("R2_SECRET_KEY"),
-			PublicDomain: os.Getenv("R2_PUBLIC_DOMAIN"),
+			AccountID:          os.Getenv("R2_ACCOUNT_ID"),
+			AccessKey:          os.Getenv("R2_ACCESS_KEY"),
+			SecretKey:          os.Getenv("R2_SECRET_KEY"),
+			AssetsBucketName:   os.Getenv("R2_ASSETS_BUCKET_NAME"),
+			AssetsPublicDomain: os.Getenv("R2_ASSETS_PUBLIC_DOMAIN"),
+			BizBucketName:      os.Getenv("R2_BIZ_BUCKET_NAME"),
 		},
 	}
 }

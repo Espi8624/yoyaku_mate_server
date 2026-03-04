@@ -53,7 +53,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not initialize R2 client: %v", err)
 	}
-	uploadHandler := handlers.NewUploadHandler(storageClient)
+	uploadHandler := handlers.NewUploadHandler(
+		storageClient,
+		cfg.R2.AssetsBucketName,
+		cfg.R2.AssetsPublicDomain,
+		cfg.R2.BizBucketName,
+	)
 
 	// Initialize HTTP mux
 	// mux := http.NewServeMux()

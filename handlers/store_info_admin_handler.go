@@ -60,7 +60,7 @@ func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	signedURL, err := h.Minio.GetPresignedURL("saboten-biz", imageKey)
+	signedURL, err := h.Minio.GetPresignedURL(h.BizBucketName, imageKey)
 	if err != nil {
 		log.Printf("Error generating presigned URL: %v", err)
 		utils.RespondWithError(w, "Could not generate image URL", http.StatusInternalServerError)

@@ -9,12 +9,20 @@ import (
 
 // UploadHandler は Minio クライアントを依存関係として持つ
 type UploadHandler struct {
-	Minio *data.MinioClient
+	Minio              *data.MinioClient
+	AssetsBucketName   string
+	AssetsPublicDomain string
+	BizBucketName      string
 }
 
 // ハンドラ初期化
-func NewUploadHandler(minio *data.MinioClient) *UploadHandler {
-	return &UploadHandler{Minio: minio}
+func NewUploadHandler(minio *data.MinioClient, assetsBucket, assetsPublicDomain, bizBucket string) *UploadHandler {
+	return &UploadHandler{
+		Minio:              minio,
+		AssetsBucketName:   assetsBucket,
+		AssetsPublicDomain: assetsPublicDomain,
+		BizBucketName:      bizBucket,
+	}
 }
 
 // 営業許可証のアップロードリクエストを処理
@@ -48,7 +56,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	// assetsPublicDomain := os.Getenv("R2_ASSETS_PUBLIC_DOMAIN")
 
 	// MinIOにアップロード
-	fileKey, err := h.Minio.UploadFile("saboten-biz", "", file, header)
+	fileKey, err := h.Minio.UploadFile(h.BizBucketName, "", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
 		http.Error(w, "Could not upload file", http.StatusInternalServerError)
