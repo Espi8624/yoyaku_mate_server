@@ -370,3 +370,105 @@ func UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error
 
 	return &updatedMenu, nil
 }
+
+// カテゴリー名の一括更新 (Bulk Update Category)
+func BulkUpdateMenuCategory(storeID string, oldCategory string, newCategory string) (int64, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if storeID == "" || oldCategory == "" || newCategory == "" {
+		return 0, fmt.Errorf("store_id, oldCategory, and newCategory are required")
+	}
+
+	filter := bson.M{
+		"store_id": storeID,
+		"category": oldCategory,
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"category":   newCategory,
+			"updated_at": time.Now().Format(time.RFC3339),
+		},
+	}
+
+	result, err := collection.UpdateMany(ctx, filter, update)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk update menu categories: %w", err)
+	}
+
+	log.Printf("[DATABASE] Bulk updated %d menu items from category '%s' to '%s' for store '%s'", result.ModifiedCount, oldCategory, newCategory, storeID)
+	return result.ModifiedCount, nil
+}
+
+// カテゴリーのメニュ一括削除 (データを完全に削除)
+func BulkDeleteMenuCategory(storeID string, category string) (int64, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if storeID == "" || category == "" {
+		return 0, fmt.Errorf("store_id and category are required")
+	}
+
+	filter := bson.M{
+		"store_id": storeID,
+		"category": category,
+	}
+
+	result, err := collection.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk delete menu category: %w", err)
+	}
+
+	log.Printf("[DATABASE] Bulk deleted %d menu items in category '%s' for store '%s'", result.DeletedCount, category, storeID)
+	return result.DeletedCount, nil
+}
+
+// ストアの全メニュ一括削除 (データを完全に削除)
+func BulkDeleteAllMenus(storeID string) (int64, error) {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if storeID == "" {
+		return 0, fmt.Errorf("store_id is required")
+	}
+
+	filter := bson.M{
+		"store_id": storeID,
+	}
+
+	result, err := collection.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, fmt.Errorf("failed to bulk delete all menus: %w", err)
+	}
+
+	log.Printf("[DATABASE] Bulk deleted %d menu items for store '%s'", result.DeletedCount, storeID)
+	return result.DeletedCount, nil
+}
+
+// 単一メニュー削除 (データを完全に削除)
+func DeleteSingleMenu(menuID string) error {
+	collection := db.GetCollection(DatabaseName, CollectionMenuList)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(menuID)
+	if err != nil {
+		return fmt.Errorf("invalid menu ID format: %w", err)
+	}
+
+	filter := bson.M{"_id": objID}
+	result, err := collection.DeleteOne(ctx, filter)
+	if err != nil {
+		return fmt.Errorf("failed to delete menu item: %w", err)
+	}
+
+	if result.DeletedCount == 0 {
+		return fmt.Errorf("no menu found with ID: %s", menuID)
+	}
+
+	return nil
+}

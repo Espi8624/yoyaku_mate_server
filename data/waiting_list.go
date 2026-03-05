@@ -168,19 +168,18 @@ func GetWaitingListData(storeID string) ([]models.WaitingList, error) {
 		return activeItems[i].QueueNumber < activeItems[j].QueueNumber
 	})
 
+	// N+1 最適化: 店舗設定はループの外で1回だけ取得する
+	settings, err := GetStoreSettingsData(storeID)
+	minutesPerTeam := 10 // default
+	if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+	}
+
 	// 3. 全体リストを回しながら、アクティブなアイテムの場合、その順序に基づいて時間を計算
 	for i := range waitingListData {
 		if waitingListData[i].Status == "waiting" || waitingListData[i].Status == "notified" {
 			// アクティブリスト内でのインデックスを探す
 			// activeItemsはソートされているので、自身のQueueNumberより小さいものの数が待ち組数
-			// 店舗設定から予想待ち時間を取得 (非効率だが一旦ループ内で取得、本来は外で一回取得すべき)
-			// TODO: パフォーマンス最適化 (外で取得して渡す)
-			settings, err := GetStoreSettingsData(storeID)
-			minutesPerTeam := 10 // default
-			if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
-				minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
-			}
-
 			waitingCount := 0
 			for idx, active := range activeItems {
 				if active.QueueNumber == waitingListData[i].QueueNumber {
@@ -465,6 +464,13 @@ func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingLis
 		return nil, err
 	}
 
+	// N+1 最適化: 店舗設定はループの外で1回だけ取得する
+	settings, err := GetStoreSettingsData(storeID)
+	minutesPerTeam := 10 // default
+	if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+	}
+
 	// 各アイテムについて、自分より前の待機数をカウントして時間を計算
 	for i := range waitingListData {
 		if waitingListData[i].Status == "waiting" || waitingListData[i].Status == "notified" {
@@ -480,12 +486,6 @@ func GetActiveWaitingList(storeID string, waitingID string) ([]models.WaitingLis
 				log.Printf("Failed to count items ahead: %v", err)
 				waitingListData[i].EstimatedWaitTime = 0
 			} else {
-				// 店舗設定から予想待ち時間を取得
-				settings, err := GetStoreSettingsData(storeID)
-				minutesPerTeam := 10 // default
-				if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
-					minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
-				}
 				waitingListData[i].EstimatedWaitTime = CalculateEstimatedWaitTime(int(aheadCount), minutesPerTeam)
 			}
 		} else {
@@ -588,53 +588,63 @@ func UpdateWaitingItemStatus(storeID string, waitingID string, status string) er
 
 // 平均待機時間（秒）を返す
 // 担当者：紙谷
+// MongoDB Aggregationパイプラインで最近30日間の平均値のみをDB内で演算して取得
 func GetAverageWaitingTime(storeID string) (int, error) {
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// フィルター設定
-	filter := bson.M{
-		"store_id":   storeID,
-		"entry_time": bson.M{"$ne": nil},
+	// 最近 30日 (性能及び現実的な体感大気時間を反映するため)
+	thirtyDaysAgo := time.Now().AddDate(0, 0, -30).Format(time.RFC3339)
+
+	pipeline := mongo.Pipeline{
+		// 1. 条件に該当する要素をフィルタリング (最近30日以内、entry_timeが存在する要素)
+		{{Key: "$match", Value: bson.M{
+			"store_id":          storeID,
+			"entry_time":        bson.M{"$ne": nil},
+			"registration_time": bson.M{"$gte": thirtyDaysAgo},
+		}}},
+		// 2. 文字列の日付をDateオブジェクトに変換
+		{{Key: "$addFields", Value: bson.M{
+			"reg_date":   bson.M{"$toDate": "$registration_time"},
+			"entry_date": bson.M{"$toDate": "$entry_time"},
+		}}},
+		// 3. グループ化して個数と待機時間(ミリ秒 -> 秒)の平均を計算
+		{{Key: "$group", Value: bson.M{
+			"_id":   nil,
+			"count": bson.M{"$sum": 1},
+			"avgWaitMillis": bson.M{
+				"$avg": bson.M{
+					"$subtract": []interface{}{"$entry_date", "$reg_date"},
+				},
+			},
+		}}},
 	}
 
-	// entry_timeがnilでないドキュメントを取得
-	cursor, err := collection.Find(ctx, filter)
+	cursor, err := collection.Aggregate(ctx, pipeline)
 	if err != nil {
+		log.Printf("Failed to aggregate average wait time: %v", err)
 		return 0, err
 	}
 	defer cursor.Close(ctx)
 
-	// 平均待機時間を計算
-	totalSeconds := int64(0)
-	count := int64(0)
+	var result []struct {
+		Count         int     `bson:"count"`
+		AvgWaitMillis float64 `bson:"avgWaitMillis"`
+	}
 
-	// 各ドキュメントをループして待機時間を計算
-	for cursor.Next(ctx) {
-		var item models.WaitingList
-		if err := cursor.Decode(&item); err != nil {
-			continue
-		}
-		// 登録時間と入店時間をパース
-		reg, err1 := time.Parse(time.RFC3339, item.RegistrationTime)
-		var ent time.Time
-		var err2 error
-		if item.EntryTime != nil {
-			ent, err2 = time.Parse(time.RFC3339, *item.EntryTime)
-		} else {
-			err2 = fmt.Errorf("entry_time is nil")
-		}
-		if err1 == nil && err2 == nil {
-			totalSeconds += int64(ent.Sub(reg).Seconds())
-			count++
-		}
+	if err = cursor.All(ctx, &result); err != nil {
+		log.Printf("Failed to decode aggregation result: %v", err)
+		return 0, err
 	}
-	if count < 40 {
-		return -1, nil // 40件未満なら-1
+
+	if len(result) == 0 || result[0].Count < 40 {
+		return -1, nil // 40件未満なら-1を返す
 	}
-	// 平均待機時間を計算
-	return int(totalSeconds / count), nil
+
+	// ミリ秒を秒に変換
+	averageSeconds := int(result[0].AvgWaitMillis / 1000)
+	return averageSeconds, nil
 }
 
 // 予想待機時間を計算する共通ロジック

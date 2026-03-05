@@ -21,6 +21,12 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
 
 	api.HandleFunc("/store_settings", StoreSettingsHandler)
+	// ProviderMenu endpoints
+	api.HandleFunc("/provider_menu", MenuListHandler).Methods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+	api.HandleFunc("/provider_menu/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
+	api.HandleFunc("/provider_menu/category/bulk-update", HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
+	api.HandleFunc("/provider_menu/category/bulk-delete", HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/provider_menu/all/bulk-delete", HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/provider_user", UserHandler)
 	api.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
 	api.HandleFunc("/provider_store", StoreHandler)

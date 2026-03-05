@@ -90,12 +90,14 @@ func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := data.UpdateStoreData(storeID, update); err != nil {
+	updatedStore, err := data.UpdateStoreData(storeID, update)
+	if err != nil {
 		utils.RespondWithError(w, "Failed to update store info", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
+	// REST 標準: PUT レスポンスに更新後のリソースを返却 (200 OK)
+	utils.RespondWithJSON(w, updatedStore, http.StatusOK)
 }
 
 func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {

@@ -54,11 +54,13 @@ func UserHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		if err := data.UpdateUserData(objectID, update); err != nil {
+		updatedUser, err := data.UpdateUserData(objectID, update)
+		if err != nil {
 			utils.RespondWithError(w, "Failed to update user info", http.StatusInternalServerError)
 			return
 		}
-		utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
+		// REST 標準: PUT レスポンスに更新後のリソースを返却
+		utils.RespondWithJSON(w, updatedUser, http.StatusOK)
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -156,7 +158,7 @@ func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
 		newLoginToken := utils.GenerateRandomString(32)
 
 		// Update User in DB with new token
-		err = data.UpdateUserData(user.ID, map[string]interface{}{
+		_, err = data.UpdateUserData(user.ID, map[string]interface{}{
 			"login_token": newLoginToken,
 			"updated_at":  time.Now(),
 		})

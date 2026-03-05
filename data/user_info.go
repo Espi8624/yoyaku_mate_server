@@ -10,6 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/net/context"
 )
 
@@ -31,20 +32,28 @@ func GetUserData(userID primitive.ObjectID) (models.User, error) {
 	return user, nil
 }
 
-// User データ更新
-func UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) error {
+// User データ更新、更新後のドキュメントを返却 (REST 標準)
+func UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) (*models.User, error) {
 	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	filter := bson.M{"_id": userID}
 	updateDoc := bson.M{"$set": update}
-	_, err := collection.UpdateOne(ctx, filter, updateDoc)
+
+	after := options.After
+	var updatedUser models.User
+	err := collection.FindOneAndUpdate(
+		ctx,
+		filter,
+		updateDoc,
+		&options.FindOneAndUpdateOptions{ReturnDocument: &after},
+	).Decode(&updatedUser)
 	if err != nil {
 		log.Printf("Failed to update user info: %v", err)
-		return err
+		return nil, err
 	}
-	return nil
+	return &updatedUser, nil
 }
 
 func UpdateUserImageURL(firebaseUID string, userImageURL string) (*models.User, error) {

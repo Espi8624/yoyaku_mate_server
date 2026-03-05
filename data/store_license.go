@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type MinioClient struct {
@@ -116,8 +117,8 @@ func UpdateStoreLicenseInfo(storeID string, imageURL string) error {
 	return nil
 }
 
-// store_license コレクションのドキュメントを更新
-func UpdateLicenseInfoAfterUpload(storeID string, imageURL string) error {
+// store_license コレクションのドキュメントを更新し、更新後のドキュメントを返却 (REST 標準)
+func UpdateLicenseInfoAfterUpload(storeID string, imageURL string) (*models.StoreLicense, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreLicense)
 
 	filter := bson.M{"store_id": storeID}
@@ -125,7 +126,7 @@ func UpdateLicenseInfoAfterUpload(storeID string, imageURL string) error {
 	update := bson.M{
 		"$set": bson.M{
 			"license_image_url":   imageURL,
-			"verification_status": models.StatusPendingReview, // ステータスを "PENDING" (審査中)に変更
+			"verification_status": models.StatusPendingReview,
 			"updated_at":          time.Now(),
 		},
 	}
@@ -133,17 +134,19 @@ func UpdateLicenseInfoAfterUpload(storeID string, imageURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	result, err := collection.UpdateOne(ctx, filter, update)
+	after := options.After
+	var updatedLicense models.StoreLicense
+	err := collection.FindOneAndUpdate(
+		ctx,
+		filter,
+		update,
+		&options.FindOneAndUpdateOptions{ReturnDocument: &after},
+	).Decode(&updatedLicense)
 	if err != nil {
 		log.Printf("Error: Failed to update license document in MongoDB. storeID: %s, err: %v", storeID, err)
-		return err
-	}
-
-	if result.MatchedCount == 0 {
-		log.Printf("Warning: No license document found for the given storeID. storeID: %s", storeID)
-		return nil
+		return nil, err
 	}
 
 	log.Printf("DATABASE: Successfully updated license info for storeID: %s.", storeID)
-	return nil
+	return &updatedLicense, nil
 }

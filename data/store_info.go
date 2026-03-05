@@ -11,6 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // store_id で店舗情報を取得
@@ -32,20 +33,28 @@ func GetStoreData(storeID string) (*models.Store, error) {
 	return &store, nil
 }
 
-// 店舗情報を更新
-func UpdateStoreData(storeID string, update map[string]interface{}) error {
+// 店舗情報を更新し、更新後のドキュメントを返却 (REST 標準: PUT レスポンスに更新後リソースを包含)
+func UpdateStoreData(storeID string, update map[string]interface{}) (*models.Store, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	filter := bson.M{"store_id": storeID}
 	updateDoc := bson.M{"$set": update}
-	_, err := collection.UpdateOne(ctx, filter, updateDoc)
+
+	after := options.After
+	var updatedStore models.Store
+	err := collection.FindOneAndUpdate(
+		ctx,
+		filter,
+		updateDoc,
+		&options.FindOneAndUpdateOptions{ReturnDocument: &after},
+	).Decode(&updatedStore)
 	if err != nil {
 		log.Printf("Failed to update store info for store_id '%s': %v", storeID, err)
-		return err
+		return nil, err
 	}
-	return nil
+	return &updatedStore, nil
 }
 
 func UpdateStoreImageURL(storeID string, storeImageURL string) (*models.Store, error) {
