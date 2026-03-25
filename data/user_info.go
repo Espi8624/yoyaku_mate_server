@@ -104,8 +104,8 @@ func GetUserDataByFirebaseUID(firebaseUID string) (models.User, error) {
 
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			// log.Printf("--- [GetUserDataByFirebaseUID] 경고: firebaseUid '%s'를 가진 사용자를 DB에서 찾지 못했습니다. 빈 객체를 반환합니다.", firebaseUID)
-			return models.User{}, nil
+			// log.Printf("--- [GetUserDataByFirebaseUID] 경고: firebaseUid '%s'를 가진 사용자를 DB에서 찾지 못했습니다. ErrNoDocuments 반환.", firebaseUID)
+			return models.User{}, mongo.ErrNoDocuments
 		}
 
 		// log.Printf("--- [GetUserDataByFirebaseUID] 에러: 사용자 조회 중 DB 에러 발생: %v", err)

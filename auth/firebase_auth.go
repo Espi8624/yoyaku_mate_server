@@ -35,6 +35,16 @@ func VerifyIDToken(ctx context.Context, idToken string) (string, error) {
 	return token.UID, nil
 }
 
+// IDトークンを検証し、UID と emailVerified の両方を返却（会員登録専用）
+func VerifyIDTokenWithEmailVerified(ctx context.Context, idToken string) (string, bool, error) {
+	token, err := firebaseAuth.VerifyIDToken(ctx, idToken)
+	if err != nil {
+		return "", false, err
+	}
+	emailVerified, _ := token.Claims["email_verified"].(bool)
+	return token.UID, emailVerified, nil
+}
+
 // メールアドレスでFirebaseユーザーを取得（存在確認用）
 func GetUserByEmail(ctx context.Context, email string) (*auth.UserRecord, error) {
 	return firebaseAuth.GetUserByEmail(ctx, email)

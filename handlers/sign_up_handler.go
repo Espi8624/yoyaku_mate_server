@@ -40,9 +40,14 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUIDFromToken, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUIDFromToken, emailVerified, err := auth.VerifyIDTokenWithEmailVerified(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	// メール未認証のアカウントは登録不可
+	if !emailVerified {
+		utils.RespondWithError(w, "Email verification required before signup", http.StatusForbidden)
 		return
 	}
 
@@ -365,9 +370,14 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Firebase Auth check
 	// MongoDBに存在しない場合でもFirebaseに存在する可能性があるため、チェックする
-	// 最終加入段階で、エラー400防止のため、チェックする
-	_, err = auth.GetUserByEmail(r.Context(), req.Email)
-	firebaseExists := (err == nil)
+	// ただし、メール未認証のアカウントは再登録を許可する
+	firebaseUserRecord, firebaseErr := auth.GetUserByEmail(r.Context(), req.Email)
+	firebaseExists := (firebaseErr == nil)
+
+	// 未認証のFirebaseアカウントは再登録可能（中断された登録フローへの対応）
+	if firebaseExists && firebaseUserRecord != nil && !firebaseUserRecord.EmailVerified {
+		firebaseExists = false
+	}
 
 	// DBまたはFirebaseに存在する場合、利用できない
 	isUnavailable := (count > 0) || firebaseExists
