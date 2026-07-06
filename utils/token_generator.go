@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"os"
 )
 
@@ -13,8 +14,10 @@ var HMACSecret = []byte(os.Getenv("HMAC_SECRET"))
 
 func init() {
 	if len(HMACSecret) == 0 {
-		// Fallback for development (not secure for production)
-		HMACSecret = []byte("yoyaku-mate-fallback-secret-2024")
+		// 환경변수 HMAC_SECRET이 설정되지 않은 경우 (로컬 개발 전용)
+		// Production 환경에서는 반드시 HMAC_SECRET 환경변수를 설정해야 함
+		log.Println("WARNING: HMAC_SECRET is not set. Using insecure fallback for local development only.")
+		HMACSecret = []byte("local-dev-only-do-not-use-in-production")
 	}
 }
 
