@@ -25,7 +25,10 @@ go.work.sum
 .env
 
 # secret key
-# secret key
 config/production.json
 config/development.json
+config/serviceAccountKey.json
 serviceAccountKey.json
+
+# Infisical
+.infisical.json
