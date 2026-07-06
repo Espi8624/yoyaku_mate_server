@@ -21,10 +21,6 @@ func main() {
 	// Initialize MongoDB
 	if err := db.InitMongoDB(cfg.MongoDB.URI); err != nil {
 		log.Printf("MongoDB初期化失敗: %v", err)
-	} else {
-		// Start monitoring waiting list collection
-		collection := db.GetCollection(cfg.MongoDB.Database, "waiting_list")
-		go db.MonitorWaitingList(collection)
 	}
 
 	// MinIO クライアント初期化

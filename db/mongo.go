@@ -3,11 +3,8 @@ package db
 import (
 	"context"
 	"log"
-	"reflect"
 	"time"
 	"yoyaku_mate_server/config"
-	"yoyaku_mate_server/events"
-	"yoyaku_mate_server/models"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -20,13 +17,6 @@ const (
 )
 
 var MongoClient *mongo.Client
-
-// ウェイティングリストの更新を監視するための構造体
-type WaitingListUpdate struct {
-	OperationType string             `json:"operationType"`
-	FullDocument  models.WaitingList `json:"fullDocument"`
-	DocumentKey   interface{}        `json:"documentKey"`
-}
 
 // Initialize MongoDB connection
 func InitMongoDB(uri string) error {
@@ -77,49 +67,6 @@ func InitMongoDB(uri string) error {
 
 	log.Println("MongoDB connect failed after 5 attempts")
 	return err
-}
-
-// 　ウェイティングコレクションの変更を監視する
-func MonitorWaitingList(collection *mongo.Collection) {
-	if collection == nil {
-		log.Println("collection is nil, need MongoDB connection check")
-		return
-	}
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	var lastData []models.WaitingList
-	ctx := context.Background()
-
-	for range ticker.C {
-		// Fetch current data
-		cursor, err := collection.Find(ctx, bson.M{})
-		if err != nil {
-			log.Printf("Error fetching waiting list data: %v", err)
-			continue
-		}
-
-		var currentData []models.WaitingList
-		if err := cursor.All(ctx, &currentData); err != nil {
-			log.Printf("Error decoding waiting list data: %v", err)
-			cursor.Close(ctx)
-			continue
-		}
-		cursor.Close(ctx)
-
-		// Compare with last data
-		if !reflect.DeepEqual(lastData, currentData) {
-			// Data has changed, notify clients
-			for _, item := range currentData {
-				if storeID := item.StoreID; storeID != "" {
-					events.NotifyStoreUpdate(storeID)
-					// log.Printf("Change detected for store %s", storeID)
-				}
-			}
-			lastData = currentData
-		}
-	}
 }
 
 // // MongoDB collection 取得
