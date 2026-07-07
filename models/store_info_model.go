@@ -1,0 +1,37 @@
+package models
+
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// store_info モデル
+type Store struct {
+	ID            primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
+	StoreName     string             `bson:"store_name" json:"store_name"`
+	Address       string             `bson:"address" json:"address"`
+	Building      string             `bson:"building" json:"building"`
+	ZipCode       string             `bson:"zip_code,omitempty" json:"zip_code,omitempty"`
+	Prefecture    string             `bson:"prefecture,omitempty" json:"prefecture,omitempty"`
+	City          string             `bson:"city,omitempty" json:"city,omitempty"`
+	Phone         string             `bson:"phone" json:"phone"`
+	UserID        primitive.ObjectID `bson:"user_id" json:"user_id"`
+	StoreID       string             `bson:"store_id" json:"store_id"`
+	StoreImageURL string             `bson:"store_image_url,omitempty" json:"store_image_url,omitempty"`
+	OpeningHours  string             `bson:"opening_hours,omitempty" json:"opening_hours,omitempty"`
+	Timezone      string             `bson:"timezone,omitempty" json:"timezone,omitempty"`
+}
+
+type StoreWithLicense struct {
+	StoreID            string    `bson:"store_id"            json:"store_id"`
+	StoreName          string    `bson:"store_name"          json:"store_name"`
+	Address            string    `bson:"address"             json:"address"`
+	Phone              string    `bson:"phone"               json:"phone"`
+	LicenseImageURL    string    `bson:"license_image_url"   json:"license_image_url"`
+	VerificationStatus string    `bson:"verification_status" json:"verification_status"`
+	CreatedAt          time.Time `bson:"created_at"          json:"created_at"`
+	UserName           string    `bson:"user_name"           json:"user_name"`
+	UserEmail          string    `bson:"user_email"          json:"user_email"`
+	UserPhone          string    `bson:"user_phone"          json:"user_phone"`
+}
