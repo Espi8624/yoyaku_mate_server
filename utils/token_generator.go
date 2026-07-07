@@ -6,24 +6,30 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log"
-	"os"
+	"sync"
+	"yoyaku_mate_server/config"
 )
 
-// 開発用のFallback
-var HMACSecret = []byte(os.Getenv("HMAC_SECRET"))
+var (
+	hmacOnce sync.Once
+)
 
-func init() {
-	if len(HMACSecret) == 0 {
-		// 환경변수 HMAC_SECRET이 설정되지 않은 경우 (로컬 개발 전용)
-		// Production 환경에서는 반드시 HMAC_SECRET 환경변수를 설정해야 함
-		log.Println("WARNING: HMAC_SECRET is not set. Using insecure fallback for local development only.")
-		HMACSecret = []byte("local-dev-only-do-not-use-in-production")
+// configパッケージからHMAC秘密鍵を取得する補助関数
+func getHMACSecret() []byte {
+	secret := config.Get().HMACSecret
+	if secret == "" {
+		hmacOnce.Do(func() {
+			// 環境変数/JSON設定で HMAC_SECRET が指定されていない場合、警告ログを出力
+			log.Println("WARNING: HMAC_SECRET is not set. Using insecure fallback for local development only.")
+		})
+		return []byte("local-dev-only-do-not-use-in-production")
 	}
+	return []byte(secret)
 }
 
 // HMACトークンを生成する
 func GenerateHMACDateToken(storeID string, dateStr string) string {
-	h := hmac.New(sha256.New, HMACSecret)
+	h := hmac.New(sha256.New, getHMACSecret())
 	h.Write([]byte(storeID + ":" + dateStr))
 	return hex.EncodeToString(h.Sum(nil))
 }

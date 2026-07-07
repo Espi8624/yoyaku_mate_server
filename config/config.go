@@ -18,8 +18,10 @@ type Config struct {
 	Server struct {
 		Port         string   `json:"port"`
 		AllowOrigins []string `json:"allowOrigins"`
+		URL          string   `json:"url"`
 	} `json:"server"`
-	R2 R2Config `json:"r2"`
+	R2         R2Config `json:"r2"`
+	HMACSecret string   `json:"hmacSecret"`
 }
 
 type R2Config struct {
@@ -36,18 +38,28 @@ var cfg Config
 func Load() Config {
 	env := os.Getenv("GO_ENV")
 	if env == "" {
-		log.Println("Warning: GO_ENV is not set. Defaulting to 'development'.")
+		// デフォルトで'development'を使用
 		env = "development"
 	}
 	log.Printf("Loading configuration for environment: %s", env)
 
 	fileName := env + ".json"
-	configPath := filepath.Join("/", "config", fileName)
 
+	// ローカル起動時は相対パス "config/xxx.json" を先に確認
+	configPath := filepath.Join("config", fileName)
 	f, err := os.Open(configPath)
 	if err != nil {
-		log.Printf("Warning: Could not open config file at '%s', using default config. Error: %v", configPath, err)
-		return getDefaultConfig()
+		// ローカルの相対パスで見つからない場合、コンテナ環境の "/config/xxx.json" を試行
+		fallbackPath := filepath.Join("/", "config", fileName)
+		log.Printf("Warning: Could not open config file at local relative path '%s'. Trying fallback '%s'...", configPath, fallbackPath)
+
+		var openErr error
+		f, openErr = os.Open(fallbackPath)
+		if openErr != nil {
+			log.Printf("Warning: Could not open config file at fallback path '%s', using default config. Error: %v", fallbackPath, openErr)
+			return getDefaultConfig()
+		}
+		configPath = fallbackPath
 	}
 	defer f.Close()
 
@@ -73,6 +85,14 @@ func Load() Config {
 	if serverPort := os.Getenv("SERVER_PORT"); serverPort != "" {
 		cfg.Server.Port = serverPort
 		log.Println("Using SERVER_PORT from environment variable")
+	}
+	if serverURL := os.Getenv("SERVER_URL"); serverURL != "" {
+		cfg.Server.URL = serverURL
+		log.Println("Using SERVER_URL from environment variable")
+	}
+	if hmacSecret := os.Getenv("HMAC_SECRET"); hmacSecret != "" {
+		cfg.HMACSecret = hmacSecret
+		log.Println("Using HMAC_SECRET from environment variable")
 	}
 
 	cfg.R2 = R2Config{
@@ -120,9 +140,11 @@ func getDefaultConfig() Config {
 		Server: struct {
 			Port         string   `json:"port"`
 			AllowOrigins []string `json:"allowOrigins"`
+			URL          string   `json:"url"`
 		}{
 			Port:         ":8080",
 			AllowOrigins: []string{"http://localhost:3000", "https://localhost:3000"},
+			URL:          "http://localhost:8080",
 		},
 		R2: R2Config{
 			AccountID:          os.Getenv("R2_ACCOUNT_ID"),
@@ -132,6 +154,7 @@ func getDefaultConfig() Config {
 			AssetsPublicDomain: os.Getenv("R2_ASSETS_PUBLIC_DOMAIN"),
 			BizBucketName:      os.Getenv("R2_BIZ_BUCKET_NAME"),
 		},
+		HMACSecret: "local-dev-only-do-not-use-in-production",
 	}
 }
 

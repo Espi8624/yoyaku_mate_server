@@ -24,7 +24,4 @@ type StoreLicense struct {
 	AdminComment       string             `bson:"admin_comment,omitempty"     json:"admin_comment,omitempty"`
 	CreatedAt          time.Time          `bson:"created_at"          json:"created_at"`
 	UpdatedAt          time.Time          `bson:"updated_at"          json:"updated_at"`
-	// LineLoginUrl       string             `bson:"line_login_url,omitempty"     json:"line_login_url,omitempty"`
-	// LineAuthToken      string             `bson:"line_auth_token,omitempty" json:"line_auth_token,omitempty"`
-	// LineUserID         string             `bson:"line_user_id,omitempty" json:"line_user_id,omitempty"`
 }

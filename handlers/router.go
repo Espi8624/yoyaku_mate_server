@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/gorilla/mux"
 )
 
 func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
+	// ローカルファイルアップロードの静的ファイルサービングを設定
+	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 
@@ -46,8 +51,6 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
 
 	api.HandleFunc("/stores/upload-license", uploadHandler.UploadLicense)
-	api.HandleFunc("/auth/line/callback", LineCallbackHandler)
-	api.HandleFunc("/line/webhook", LineWebhookHandler)
 
 	// Admin endpoints
 	adminApi := api.PathPrefix("/admin").Subrouter()

@@ -67,6 +67,12 @@ func UserHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) {
+	// ストレージクライアントの初期化確認
+	if h.Minio == nil {
+		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	// 認証情報取得と検証
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {

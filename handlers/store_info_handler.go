@@ -101,6 +101,12 @@ func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {
+	// ストレージクライアントの初期化確認
+	if h.Minio == nil {
+		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	// storeId取得
 	vars := mux.Vars(r)
 	storeId := vars["storeId"]

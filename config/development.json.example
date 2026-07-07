@@ -1,0 +1,17 @@
+{
+    "mongodb": {
+        "uri": "mongodb://localhost:27017",
+        "database": "project_rusui",
+        "timeout": 30
+    },
+    "server": {
+        "port": ":8080",
+        "allowOrigins": [
+            "http://localhost:3000",
+            "https://localhost:3000",
+            "http://localhost:5173"
+        ],
+        "url": "http://localhost:8080"
+    },
+    "hmacSecret": "your-random-hmac-security-secret-key"
+}

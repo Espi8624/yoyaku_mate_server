@@ -27,6 +27,12 @@ func NewUploadHandler(minio *data.MinioClient, assetsBucket, assetsPublicDomain,
 
 // 営業許可証のアップロードリクエストを処理
 func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
+	// ストレージクライアントの初期化確認
+	if h.Minio == nil {
+		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return

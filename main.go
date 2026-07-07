@@ -35,20 +35,26 @@ func main() {
 	// }
 	// uploadHandler := handlers.NewUploadHandler(minioClient)
 
+	var storageClient *data.MinioClient
 	if cfg.R2.AccountID == "" {
-		log.Fatal("Fatal: R2_ACCOUNT_ID is not set.")
+		// R2_ACCOUNT_IDが設定されていない場合、ローカルストレージを使用するため空のインスタンスを生成
+		log.Println("Warning: R2_ACCOUNT_ID is not set. Using local file storage.")
+		storageClient = &data.MinioClient{}
+	} else {
+		r2Endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2.AccountID)
+		var r2Err error
+		storageClient, r2Err = data.NewMinioClient(
+			r2Endpoint,
+			cfg.R2.AccessKey,
+			cfg.R2.SecretKey,
+			"",
+		)
+		if r2Err != nil {
+			// クライアント初期化失敗時は警告を出力して続行
+			log.Printf("Warning: Could not initialize R2 client: %v", r2Err)
+		}
 	}
-	r2Endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2.AccountID)
 
-	storageClient, err := data.NewMinioClient(
-		r2Endpoint,
-		cfg.R2.AccessKey,
-		cfg.R2.SecretKey,
-		"",
-	)
-	if err != nil {
-		log.Fatalf("Could not initialize R2 client: %v", err)
-	}
 	uploadHandler := handlers.NewUploadHandler(
 		storageClient,
 		cfg.R2.AssetsBucketName,

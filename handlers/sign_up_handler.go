@@ -120,7 +120,6 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var storeIdForUser string
-		// var lineLoginUrl string
 		newUserID := primitive.NewObjectID()
 		var newStore *models.Store
 
@@ -296,7 +295,6 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 
 		if req.Role == "manager" {
 			response_data["store"] = newStore
-			// response_data["line_login_url"] = lineLoginUrl
 		}
 
 		return response_data, nil
@@ -501,11 +499,6 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// store_license及びstore_settings生成
-		// lineToken, err := utils.GenerateSecureToken(32)
-		// if err != nil {
-		// 	return nil, fmt.Errorf("failed to generate security token: %w", err)
-		// }
-
 		licenseCollection := db.GetCollection(DatabaseName, StoreLicenseCollection)
 		initialLicenseInfo := models.StoreLicense{
 			ID:                 primitive.NewObjectID(),
@@ -513,7 +506,6 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			VerificationStatus: models.StatusNotSubmitted,
 			CreatedAt:          time.Now(),
 			UpdatedAt:          time.Now(),
-			// LineAuthToken:      lineToken,
 		}
 		_, err = licenseCollection.InsertOne(sessCtx, initialLicenseInfo)
 		if err != nil {
@@ -559,27 +551,9 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			return nil, fmt.Errorf("failed to create default store settings: %w", err)
 		}
 
-		// var lineLoginUrl string
-
-		// LINEログインURL生成
-		// lineChannelID := os.Getenv("LINE_LOGIN_CHANNEL_ID")
-		// lineCallbackURL := os.Getenv("LINE_CALLBACK_URL")
-
-		// baseURL := "https://access.line.me/oauth2/v2.1/authorize"
-		// params := url.Values{}
-		// params.Add("response_type", "code")
-		// params.Add("client_id", lineChannelID)
-		// params.Add("redirect_uri", lineCallbackURL)
-		// params.Add("state", lineToken) // state価で生成したtokenを使用
-		// params.Add("scope", "openid profile")
-		// params.Add("bot_prompt", "aggressive")
-
-		// lineLoginUrl = baseURL + "?" + params.Encode() // URL完成
-
 		response_data := map[string]interface{}{}
 		response_data["user"] = existingUser
 		response_data["store"] = newStore
-		// response_data["line_login_url"] = lineLoginUrl
 
 		return response_data, nil
 	})

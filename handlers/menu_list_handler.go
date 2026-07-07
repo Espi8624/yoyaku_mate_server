@@ -366,6 +366,12 @@ func HandleBulkDeleteAllMenus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) {
+	// ストレージクライアントの初期化確認
+	if h.Minio == nil {
+		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	// menuId取得
 	vars := mux.Vars(r)
 	menuId := vars["menuId"]

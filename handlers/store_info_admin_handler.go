@@ -54,6 +54,12 @@ func UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 // 仮URLを返却
 func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http.Request) {
+	// ストレージクライアントの初期化確認
+	if h.Minio == nil {
+		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	imageKey := r.URL.Query().Get("key")
 	if imageKey == "" {
 		utils.RespondWithError(w, "Image key is required", http.StatusBadRequest)
