@@ -1,91 +1,93 @@
-# ⚙️ Yoyaku Mate - 統合APIバックエンドサーバー (Go Backend)
+# Rusui - バックエンドAPIサーバー（Go）
 
-> **Yoyaku Mate** バックエンドサーバーは、リアルタイム待機列サービスのビジネスロジック全体を処理する **GoベースのRESTful APIサーバー**です。MongoDB Atlasデータベースモデルの設計、Cloudflare R2ファイルアップロード、Firebase Admin SDK連携によるユーザー認証処理およびリアルタイム同期をサポートします。
+リアルタイム待機列管理、統計ダッシュボード、およびAI店舗案内チャットボットのコアインフラを提供する**Rusui**ビジネスバックエンドAPIサーバー
 
----
+## Problem
+* **リアルタイムデータ同期の遅延:** 数百人規模の待機顧客および店舗管理スタッフが、待機列のステータス変化（登録、呼び出し、完了、キャンセル）を遅延なく同時に同期する必要がありますが、従来のポーリング（Polling）方式はサーバーリソースを過剰に消費し、リアルタイム性が低下します。
+* **異常な過剰リクエストおよびセキュリティ脅威:** 待機登録時のマクロ攻撃や過度な無断API呼び出しによってサーバー負荷が加重される可能性があり、非認可ユーザーがデータベースを直接改ざんするセキュリティ上の脆弱性が存在します。
+* **非定型大容量データの管理:** 店舗の詳細設定、頻繁に変更されるメニュー構造、日別待機データの統計化、および大量の事業者登録証やメニュー画像のアップロードなどを高速で処理しながらも、データ整合性を維持する必要があります。
 
-## 🛠 Tech Stack (技術スタック)
+## Solution
+* **GoルーチンベースのSSE（Server-Sent Events）ブローカー構築:** 重いWebSocket接続の代わりに、軽量なSSEストリーミングエンドポイント（`events/broker.go`）をGoチャネルとゴルーチン（Goroutine）ベースで実装し、待機列ステータス変更の検知時に接続中のクライアントへ変更事項を1秒以内に単方向プッシュストリーミングします。
+* **ミドルウェアベースのセキュリティレイヤー確保:** `didip/tollbooth` ミドルウェアを導入し、IPあたりの秒間リクエスト回数を制限（Rate Limiting）することで異常なDDoS形態の過度なAPI攻撃を遮断し、Firebase Admin SDKを結合してすべての主要なバックオフィスAPIのJWTトークン有効性をバックエンド側で強力に検証します。
+* **MongoDB AtlasおよびCloudflare R2の結合:** 柔軟な非定型データスキーマ処理のためにMongoDB NoSQLを採用し、画像などの重いファイルアセットのアップロードはS3 API互換の高性能ストレージであるCloudflare R2に代行させるよう設計し、データベースおよびバックエンドサーバー本体の保存負荷を遮断しました。
 
-- **Language:** Go (Golang) 1.23
-- **Router:** `gorilla/mux` (HTTPマルチプレクサーによるルーティング)
-- **Database:** MongoDB Atlas (NoSQLデータストア)
-- **Object Storage:** Cloudflare R2 (S3互換の高パフォーマンスファイル/アセットストレージ)
-- **External Integration:**
-  - Firebase Admin SDK (ユーザー認証トークンの検証)
-- **Security & Middleware:**
-  - `rs/cors` (CORSポリシー管理)
-  - `didip/tollbooth` (Rate LimitingベースのAPI過剰リクエスト制限)
-- **Deployment:** Fly.io (Dockerコンテナベースのグローバル仮想サーバーホスティング)
+## Tech Stack
+* **Language:** Go (Golang) 1.23
+* **HTTP Router:** Gorilla Mux
+* **Database:** MongoDB Atlas
+* **Storage:** Cloudflare R2 (S3 API Client)
+* **Security:** Firebase Admin SDK (JWT Validation), rs/cors, didip/tollbooth (Rate Limiter)
+* **Deployment:** Fly.io, Docker (Multi-stage Build)
 
----
-
-## ✨ Key Features (主な機能)
-
-- **待機列リアルタイム管理API:** 店舗待機申請、順番変更、待機ステータス変更ロジックの処理およびデータトランザクションの保証。
-- **Firebase JWT認証連携:** クライアント（アプリ/Web）から渡されたFirebaseトークンの有効性をバックエンド側で検証し、安全なデータの読み書きを保証します。
-- **Cloudflare R2連携:** 静的ファイルのアップロード時、S3 API互換ライブラリを通じてファイル保存を効率的に代行します。
-- **安全なAPI構造:** 速度制限（Rate Limit）ミドルウェアを導入し、異常なDDoS形態の過剰なAPI攻撃を制限します。
-
----
-
-## 📂 Project Structure (ディレクトリ構造)
-
+## Architecture
+### 1. フォルダ構成
 ```bash
-├── auth/           # Firebase Admin SDK連携認証およびトークン発行/検証ロジック
-├── config/         # JSONファイルおよび環境変数による設定管理ロジック (config.go)
-├── data/           # 静的翻訳テンプレートおよびデータリソース
-├── db/             # MongoDB Atlas接続確立およびドライバー設定 (mongo.go)
+yoyaku_mate_server/
+├── auth/           # Firebase Admin SDK トークン検証および認証ミドルウェア
+├── config/         # 環境変数ロードおよび構成設定管理ロジック
+├── data/           # MongoDBクエリ実行およびデータアクセス（DAO）ビジネスロジック
+├── db/             # MongoDB Atlas 接続確立およびドライバー設定
+├── events/         # ゴルーチンベースのリアルタイムSSEイベント発行/購読ブローカー（broker.go）
 ├── handlers/       # ルーターエンドポイント別のビジネスハンドラー関数
 ├── models/         # MongoDBスキーマにマッピングされるGo構造体定義
-├── utils/          # HMACトークン発行、ロガー、日付ガイドのユーティリティ関数
-├── Dockerfile      # Fly.ioデプロイのためのDockerマルチステージビルド環境の構成
-├── fly.toml        # Fly.ioアプリケーション仮想サーバーの設定
-├── main.go         # サーバー実行のエントリーポイントおよびミドルウェア/ルーティング登録
-└── go.mod          # 依存モジュール定義ファイル
+├── utils/          # HMACトークン発行、ロガー、共通ユーティリティ関数
+├── Dockerfile      # Fly.io 配備のための Docker マルチステージビルド環境構成
+├── fly.toml        # Fly.io アプリケーション仮想サーバー設定
+├── main.go         # サーバー実行進入点およびミドルウェア/ルーティング登録
+└── go.mod          # 依存関係モジュール定義ファイル
 ```
 
----
+### 2. データフローアーキテクチャ
+```mermaid
+graph TD
+    Client["Web/App (React, Flutter)"] -->|"REST API / SSE (Stream)"| Router["Gorilla Mux Router"]
+    Router -->|"Rate Limiting"| Middleware["Tollbooth Middleware"]
+    Middleware -->|"Verify Auth"| Auth["Firebase Admin Auth Service"]
+    Middleware -->|"Business Handler"| Handlers["Route Handlers"]
+    Handlers -->|"Publish Event"| Broker["SSE Event Broker (events.Broker)"]
+    Handlers -->|"Read/Write"| DB["MongoDB Atlas"]
+    Handlers -->|"Upload Asset"| Storage["Cloudflare R2"]
+```
 
-## 🚀 Getting Started (はじめに)
+## Lessons Learned
+* **ゴルーチンリーク（Goroutine Leak）の遮断:** SSEストリーミング接続の際、クライアントの予期せぬ接続終了（Context Done）を即座に検知できないと、ブローカー内部のゴルーチンが消滅せず累積し続ける問題を防止するため、ContextとSelectチャネルを活用したライフサイクル管理手法を徹底して設計しました。
+* **Rate Limiterの微調整:** 並行して複数のアセットやAPI呼び出しを同時に送信するモバイル/Webクライアント環境の特性を考慮し、正常なユーザー体験を損なわないよう速度制限のしきい値とバースト（Burst 10）制限をチューニングし、セキュリティとユーザビリティを同時に確保しました。
+* **NoSQL整合性および安全な例外処理:** MongoDB Atlas ドライバーのクエリ作成時に例外処理を漏れなく実装し、try-catchパターンと同様にエラー変数を明確にキャッチして返却するように構成しました。トランザクションのない単一ドキュメント書き込み作業での無謬性を、バリデーション機能を導入して確保しました。
+
+## Getting Started（セットアップガイド）
 
 ### 1. 環境変数の設定
-ローカル起動の際、`.env.example`ファイルをコピーして、プロジェクトのルートディレクトリに `.env` ファイルを作成します。
+ローカル起動および配備環境での動作のために、以下の環境変数バインディングが必要です。
 
-```bash
-# テンプレートファイルをコピーしてローカル設定ファイルを作成
-cp .env.example .env
+```env
+PORT=:8080                               # サーバーポート
+MONGODB_URI=YOUR_MONGODB_ATLAS_URI       # MongoDB Atlas 接続URI
+MONGODB_DATABASE=YOUR_DB_NAME            # データベース名
+HMAC_SECRET=YOUR_SECURE_HMAC_KEY         # トークン暗号化用セキュリティキー
+R2_ACCOUNT_ID=YOUR_R2_ACCOUNT_ID         # Cloudflare R2 アカウントID
+R2_ACCESS_KEY=YOUR_R2_ACCESS_KEY         # R2 アクセスキー
+R2_SECRET_KEY=YOUR_R2_SECRET_KEY         # R2 シークレットキー
+R2_ASSETS_BUCKET_NAME=assets-bucket      # アップロード用 R2 バケット名
 ```
 
-コピーした `.env` ファイルを開き、必要な環境変数（`MONGODB_URI`、`R2_ACCESS_KEY` など）を入力します。
-
 ### 2. ローカル実行
-設定ファイルを利用して起動する場合は、`.example` ファイルをコピーして以下の設定ファイルを `config/` ディレクトリに配置します。
-
-* **`config/development.json`** (MongoDB等の接続先設定):
-  ```bash
-  cp config/development.json.example config/development.json
-  ```
-* **`config/serviceAccountKey.json`** (Firebase管理者鍵): Firebaseコンソールから取得したサービスアカウント鍵ファイルを配置します（テンプレートは `config/serviceAccountKey.json.example` を参照してください）。
-
-配置が完了したら、以下のコマンドで実行します。
+ローカル起動のためには、`config/development.json` および `config/serviceAccountKey.json` 設定ファイルが事前に配置されている必要があります。
 
 ```bash
-# 依存モジュールのインストール
+# 依存関係モジュールのダウンロード
 go mod download
 
 # サーバーの起動
 go run main.go
 ```
-サーバーが起動すると、 `http://localhost:8080` ポートでAPIサービスが動作します。
+サーバーが正常に起動すると、`http://localhost:8080` ポートでAPIゲートウェイが動作します。
 
----
-
-## 🐋 Deploy (デプロイ)
-
+## Deploy（デプロイ）
 本バックエンドプロジェクトは、**Fly.io**にDockerベースのマルチステージビルド方式でデプロイされます。
-GitHub Actions連携時、 `fly-deploy.yml` ワークフローを通じて `main` ブランチにプッシュした際に自動デプロイが実行されます。
+基本構成された GitHub Actions ワークフローを通じて、`main` ブランチへのプッシュ時に自動ビルドおよびデプロイが実行されます。
 
 ```bash
-# ローカルからFly.io CLIでデプロイを実行する場合
+# ローカル端末から直接 Fly.io デプロイをトリガーする場合
 flyctl deploy
 ```
