@@ -30,7 +30,7 @@ yoyaku_mate_server/
 ├── config/         # 환경 변수 로드 및 구성 설정 관리 로직
 ├── data/           # MongoDB 쿼리 실행 및 데이터 접근(DAO) 비즈니스 로직
 ├── db/             # MongoDB Atlas 연결 수립 및 드라이버 설정
-├── events/         # 고루틴 기반 실시간 SSE 이벤트 발행/구독 브로커 (broker.go)
+├── events/         # 고루틴 기반 실시간 SSE 이벤트 발행/구독 브로커 (broker.go, waiting_user_broker.go)
 ├── handlers/       # 라우터 엔드포인트별 비즈니스 핸들러 함수
 ├── models/         # MongoDB 스키마에 매핑되는 Go 구조체 정의
 ├── utils/          # HMAC 토큰 발급, 로거, 공통 유틸리티 함수
