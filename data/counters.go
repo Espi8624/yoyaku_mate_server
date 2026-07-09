@@ -15,14 +15,15 @@ import (
 
 const CollectionCounters = "counters"
 
-// GetNextSequence generates the next sequence number atomically.
-// It uses "lazy initialization" to handle cases where the counter document does not exist yet.
+// GetNextSequence は特定の店舗および営業日において、アトミック(原子性)に次の待機番号を発行する。
+// 営業日の初回登録時はカウンタドキュメントの遅延初期化(Lazy Initialization)を試み、
+// 同時挿入による競合発生時は、ユニークキーエラー(DuplicateKeyError)を検知して再帰的に再試行する。
 func GetNextSequence(storeID string, businessDate time.Time) (int, error) {
 	collection := db.GetCollection(DatabaseName, CollectionCounters)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Generate dateStr for the ID from the businessDate
+	// 営業日からカウンタID用の日付文字列(YYYYMMDD)を生成
 	dateStr := businessDate.Format("20060102")
 
 	filter := bson.M{
@@ -36,7 +37,7 @@ func GetNextSequence(storeID string, businessDate time.Time) (int, error) {
 		"$inc": bson.M{"seq": 1},
 	}
 
-	// Strategy: Try to update. If not found, Initialize.
+	// 処理戦略: まずインクリメント更新を試み、ドキュメントが存在しない場合は新規初期化を行う。
 	var updatedCounter models.Counter
 	after := options.After
 	opts := options.FindOneAndUpdate().SetReturnDocument(after)
