@@ -255,10 +255,23 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	if item.PartySize <= 0 {
 		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
-	// 以前はここで waiting_id が必須だったが、今はサーバー側で生成するためチェックしない。
-	// if item.WaitingID == "" {
-	// 	return nil, fmt.Errorf("waiting_id is required")
-	// }
+
+	// 冪等性検証: クライアントが waiting_id を送信した場合は重複チェックを実行
+	if item.WaitingID != "" {
+		var existingItem models.WaitingList // 重複検出時にクライアントへ返却する既存の待機データ
+		dupFilter := bson.M{                // 同一店舗内で同一のwaiting_idを持つデータを検索するフィルター
+			"store_id":   item.StoreID,
+			"waiting_id": item.WaitingID,
+		}
+		err := collection.FindOne(ctx, dupFilter).Decode(&existingItem)
+		if err == nil {
+			// 既に存在するため保存せずにべき等に返却
+			log.Printf("Duplicate waiting registration detected (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
+			return &existingItem, nil
+		} else if err != mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("failed to check duplicate waiting item: %v", err)
+		}
+	}
 
 	// 提供されていない場合はデフォルト値を設定
 	if item.Status == "" {
@@ -273,19 +286,18 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 	item.QueueNumber = nextQueueNumber
 
 	// ハンドラから移してきた基本値設定
-	if item.Status == "" {
-		item.Status = "waiting"
-	}
 	if item.RegistrationTime == "" {
 		jst := time.FixedZone("Asia/Tokyo", 9*60*60)
 		now := time.Now().In(jst)
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
-	// WaitingIDをサーバー側で生成 (Collision防止: Milliseconds追加)
-	// Clientからのwaiting_idは無視し、常にサーバー時間ベースで生成する
-	now := time.Now()
-	// Format: YYYYMMDD-HHmmss-SSS (e.g., 20240201-123456-789)
-	item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
+
+	// クライアントから waiting_id が送信されなかった場合のみサーバー時間基準で生成 (フォールバック)
+	if item.WaitingID == "" {
+		now := time.Now()
+		// Format: YYYYMMDD-HHmmss-SSS (e.g., 20240201-123456-789)
+		item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
+	}
 
 	// UserID (firebase_uid) はAuth tokenから設定済み (Handler側)
 	// StoreID はHandler側で設定済み
