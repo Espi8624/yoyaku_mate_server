@@ -30,7 +30,7 @@ yoyaku_mate_server/
 ├── config/         # 環境変数ロードおよび構成設定管理ロジック
 ├── data/           # MongoDBクエリ実行およびデータアクセス（DAO）ビジネスロジック
 ├── db/             # MongoDB Atlas 接続確立およびドライバー設定
-├── events/         # ゴルーチンベースのリアルタイムSSEイベント発行/購読ブローカー（broker.go）
+├── events/         # ゴルーチンベースのリアルタイムSSEイベント発行/購読ブローカー（broker.go, waiting_user_broker.go）
 ├── handlers/       # ルーターエンドポイント別のビジネスハンドラー関数
 ├── models/         # MongoDBスキーマにマッピングされるGo構造体定義
 ├── utils/          # HMACトークン発行、ロガー、共通ユーティリティ関数

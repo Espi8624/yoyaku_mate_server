@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"time"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
@@ -583,4 +584,154 @@ func notifyStore(storeID string) {
 
 	// ブロードキャスト
 	events.GetBroker().Broadcast(storeID, string(jsonData))
+
+	// 個別の待機ユーザー用SSEにもステータスアップデートを送信
+	notifyWaitingUsers(storeID)
+}
+
+// WaitingUserResponse は個別の待機顧客用SSEの応答データ構造です
+type WaitingUserResponse struct {
+	models.WaitingList
+	WaitingCount         int    `json:"waiting_count"`
+	EstimatedWaitingTime string `json:"estimated_waiting_time"`
+}
+
+// HandleWaitingItemStream は個別の待機顧客のリアルタイムステータス変化を監視するための Server-Sent Events を処理します
+func HandleWaitingItemStream(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	waitingID := r.URL.Query().Get("waiting_id")
+	if storeID == "" || waitingID == "" {
+		http.Error(w, "Missing store_id or waiting_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// SSE用のヘッダーを設定
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// クライアントチャンネルを作成
+	clientChan := make(chan string, 10)
+	key := storeID + ":" + waitingID
+
+	// ブローカーにクライアントを追加
+	broker := events.GetWaitingUserBroker()
+	broker.AddClient(key, clientChan)
+	defer broker.RemoveClient(key, clientChan)
+
+	// 接続終了を監視
+	notify := r.Context().Done()
+
+	// 初期データ送信
+	go func() {
+		res, err := getWaitingUserResponse(storeID, waitingID)
+		if err == nil {
+			jsonData, _ := json.Marshal(res)
+			broker.Broadcast(key, string(jsonData))
+		}
+	}()
+
+	for {
+		select {
+		case <-notify:
+			return
+		case msg := <-clientChan:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			w.(http.Flusher).Flush()
+		}
+	}
+}
+
+// getWaitingUserResponse は特定の待機アイテムの詳細応答データを構築します
+func getWaitingUserResponse(storeID string, waitingID string) (*WaitingUserResponse, error) {
+	waitingList, err := data.GetWaitingListData(storeID)
+	if err != nil {
+		return nil, err
+	}
+
+	var details *models.WaitingList
+	for i := range waitingList {
+		if waitingList[i].WaitingID == waitingID {
+			details = &waitingList[i]
+			break
+		}
+	}
+	if details == nil {
+		return nil, fmt.Errorf("waiting item not found")
+	}
+
+	// アクティブな待機アイテム(waiting, notified)だけを抽出
+	var activeItems []models.WaitingList
+	for _, item := range waitingList {
+		if item.Status == "waiting" || item.Status == "notified" {
+			activeItems = append(activeItems, item)
+		}
+	}
+
+	// QueueNumber順にソート
+	sort.Slice(activeItems, func(i, j int) bool {
+		return activeItems[i].QueueNumber < activeItems[j].QueueNumber
+	})
+
+	// 自分より前の人数をカウント
+	waitingCount := 0
+	for i, item := range activeItems {
+		if item.WaitingID == waitingID {
+			waitingCount = i
+			break
+		}
+	}
+
+	// 店舗設定からチームあたりの時間を取得
+	settings, err := data.GetStoreSettingsData(storeID)
+	minutesPerTeam := 10
+	if err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+	}
+
+	totalEstimatedMinutes := waitingCount * minutesPerTeam
+	estimatedWaitingTime := fmt.Sprintf("%d mins", totalEstimatedMinutes)
+
+	return &WaitingUserResponse{
+		WaitingList:          *details,
+		WaitingCount:         len(activeItems), // 全体待機数 (フロント getWaitingDetails と互換)
+		EstimatedWaitingTime: estimatedWaitingTime,
+	}, nil
+}
+
+// notifyWaitingUsers は特定の店舗のすべてのアクティブな待機顧客にアップデートを送信します
+func notifyWaitingUsers(storeID string) {
+	waitingList, err := data.GetWaitingListData(storeID)
+	if err != nil {
+		log.Printf("Error fetching waiting list for notifying users: %v", err)
+		return
+	}
+
+	broker := events.GetWaitingUserBroker()
+
+	for _, item := range waitingList {
+		key := storeID + ":" + item.WaitingID
+		
+		broker.Mutex.RLock()
+		clients, exists := broker.Clients[key]
+		clientsExist := exists && len(clients) > 0
+		broker.Mutex.RUnlock()
+
+		if clientsExist {
+			res, err := getWaitingUserResponse(storeID, item.WaitingID)
+			if err != nil {
+				log.Printf("Error generating response for active client %s: %v", key, err)
+				continue
+			}
+
+			jsonData, err := json.Marshal(res)
+			if err != nil {
+				log.Printf("Error marshaling response: %v", err)
+				continue
+			}
+
+			broker.Broadcast(key, string(jsonData))
+		}
+	}
 }
