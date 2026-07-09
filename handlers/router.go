@@ -16,6 +16,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	api.HandleFunc("/waiting-list", WaitingListHandler)
 	api.HandleFunc("/waiting-list/poll", HandleWaitingListPolling)
 	api.HandleFunc("/waiting-list/stream", HandleWaitingListStream)
+	api.HandleFunc("/waiting-list/stream-user", HandleWaitingItemStream)
 	api.HandleFunc("/statistics", StatisticsHandler)
 
 	api.HandleFunc("/public/store_ai_context", StoreAIContextHandler)
