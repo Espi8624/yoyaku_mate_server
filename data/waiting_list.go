@@ -265,8 +265,8 @@ func CreateWaitingListItem(item models.WaitingList) (*models.WaitingList, error)
 		}
 		err := collection.FindOne(ctx, dupFilter).Decode(&existingItem)
 		if err == nil {
-			// 既に存在するため保存せずにべき等に返却
-			log.Printf("Duplicate waiting registration detected (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
+			// 既に存在するため保存せずに冪等な操作として返却
+			log.Printf("Already existing waiting registration (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
 			return &existingItem, nil
 		} else if err != mongo.ErrNoDocuments {
 			return nil, fmt.Errorf("failed to check duplicate waiting item: %v", err)
