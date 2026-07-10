@@ -1,0 +1,54 @@
+# docs — yoyaku_mate_server 문서 인덱스
+
+## 구조
+
+```
+docs/
+├── features/           # 기능 사양 (무엇을 하는가)
+├── implementation/     # 기술 구현 상세 (어떻게 구현했는가)
+├── decisions/          # 기술 선택 근거 (왜 이걸 선택했는가)
+├── troubles/           # 트러블슈팅 / 회고 기록
+└── refactoring/        # 리팩토링 기록
+```
+
+---
+
+## Features (기능 사양)
+
+| 문서 | 설명 |
+|------|------|
+| [waiting-list.ko.md](./features/waiting-list.ko.md) | 대기열 등록·관리·실시간 알림 기능 |
+
+---
+
+## Implementation (구현 상세)
+
+| 문서 | 설명 |
+|------|------|
+| [architecture.ko.md](./implementation/architecture.ko.md) | 서버 전체 아키텍처 및 레이어 구조 |
+| [background.ko.md](./implementation/background.ko.md) | 프로젝트 배경 및 설계 의도 |
+| [sse.ko.md](./implementation/sse.ko.md) | SSE Broker 구현 (실시간 Push) |
+| [idempotency.ko.md](./implementation/idempotency.ko.md) | 멱등성 처리 (중복 등록 방지) |
+| [atomic-counter.ko.md](./implementation/atomic-counter.ko.md) | 대기 순번 Atomic 발급 로직 |
+
+---
+
+## Decisions (기술 결정)
+
+| 문서 | 결정 내용 |
+|------|----------|
+| [ADR-001-use-sse.ko.md](./decisions/ADR-001-use-sse.ko.md) | WebSocket 대신 SSE를 선택한 이유 |
+
+---
+
+## Troubles (트러블슈팅 / 회고)
+
+| 문서 | 설명 |
+|------|------|
+| [001-lessons-learned.ko.md](./troubles/001-lessons-learned.ko.md) | Goroutine 리크, Rate Limiter 조정 등 개발 과정 회고 |
+
+---
+
+## Refactoring (리팩토링)
+
+*기록 예정*
