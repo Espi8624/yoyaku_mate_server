@@ -14,6 +14,7 @@ import (
 const (
 	DatabaseName          = "project_rusui"
 	CollectionWaitingList = "waiting_list"
+	CollectionErrorLogs   = "error_logs"
 )
 
 var MongoClient *mongo.Client
@@ -103,6 +104,31 @@ func EnsureIndexes() error {
 		return err
 	}
 	log.Println("Created compound index: idx_store_reg_time on waiting_list")
+
+	errorLogsCollection := GetCollection(DatabaseName, CollectionErrorLogs)
+	if errorLogsCollection != nil {
+		ttlIndexModel := mongo.IndexModel{
+			Keys: bson.D{{Key: "timestamp", Value: 1}},
+			Options: options.Index().SetExpireAfterSeconds(604800).SetName("idx_error_logs_ttl"),
+		}
+		_, err := errorLogsCollection.Indexes().CreateOne(ctx, ttlIndexModel)
+		if err != nil {
+			log.Printf("Failed to create TTL index for error_logs: %v", err)
+		} else {
+			log.Println("Created TTL index: idx_error_logs_ttl on error_logs (7 days)")
+		}
+
+		typeIndexModel := mongo.IndexModel{
+			Keys: bson.D{{Key: "error_type", Value: 1}},
+			Options: options.Index().SetName("idx_error_type"),
+		}
+		_, err = errorLogsCollection.Indexes().CreateOne(ctx, typeIndexModel)
+		if err != nil {
+			log.Printf("Failed to create error_type index: %v", err)
+		} else {
+			log.Println("Created index: idx_error_type on error_logs")
+		}
+	}
 
 	return nil
 }

@@ -18,6 +18,8 @@ docs/
 | 문서 | 설명 |
 |------|------|
 | [waiting-list.ko.md](./features/waiting-list.ko.md) | 대기열 등록·관리·실시간 알림 기능 |
+| [error-dashboard.ko.md](./features/error-dashboard.ko.md) | 에러 메트릭·로그의 실시간 수집 및 모니터링 대시보드 |
+
 
 ---
 
@@ -33,11 +35,9 @@ docs/
 
 ---
 
-## Decisions (기술 결정)
-
-| 문서 | 결정 내용 |
-|------|----------|
 | [ADR-001-use-sse.ko.md](./decisions/ADR-001-use-sse.ko.md) | WebSocket 대신 SSE를 선택한 이유 |
+| [ADR-002-use-polling-for-error-dashboard.ko.md](./decisions/ADR-002-use-polling-for-error-dashboard.ko.md) | 에러 대시보드 내 HTTP 폴링 방식 채택 이유 |
+
 
 ---
 
