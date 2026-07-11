@@ -8,6 +8,7 @@ import (
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/db"
 	handlers "yoyaku_mate_server/handlers"
+	"yoyaku_mate_server/metrics"
 
 	"github.com/didip/tollbooth/v7"
 	"github.com/gorilla/mux"
@@ -78,7 +79,7 @@ func main() {
 		AllowCredentials: true,
 	})
 
-	handler := c.Handler(r)
+	handler := metrics.ErrorCaptureMiddleware(c.Handler(r))
 
 	// Rate Limiting Middleware (5 requests per second per IP)
 	// Burst of 10 to allow parallel requests (like images/css or multiple API calls)

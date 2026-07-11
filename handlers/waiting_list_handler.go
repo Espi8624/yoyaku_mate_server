@@ -10,6 +10,7 @@ import (
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/events"
+	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 )
@@ -558,6 +559,15 @@ func HandleWaitingListStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-notify:
+			// - クライアントとのSSE接続切断（ブラウザ離脱など）を検知し、エラートラッカーに収集を要求する
+			metrics.GetTracker().RecordError(models.ErrorLog{
+				Timestamp: time.Now().UTC(),
+				ErrorType: "SSE_DISCONNECT",
+				Message:   "SSE Client Disconnected",
+				Path:      r.URL.Path,
+				Method:    r.Method,
+				ClientIP:  r.RemoteAddr,
+			})
 			return
 		case msg := <-clientChan:
 			fmt.Fprintf(w, "data: %s\n\n", msg)
@@ -635,6 +645,15 @@ func HandleWaitingItemStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-notify:
+			// - 個別待機顧客のSSEリアルタイム接続が終了した際、エラートラッカーに収集を要求する
+			metrics.GetTracker().RecordError(models.ErrorLog{
+				Timestamp: time.Now().UTC(),
+				ErrorType: "SSE_DISCONNECT",
+				Message:   "SSE User Disconnected",
+				Path:      r.URL.Path,
+				Method:    r.Method,
+				ClientIP:  r.RemoteAddr,
+			})
 			return
 		case msg := <-clientChan:
 			fmt.Fprintf(w, "data: %s\n\n", msg)
