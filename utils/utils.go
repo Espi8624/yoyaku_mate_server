@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 )
 
 // GenerateRandomString generates a random string of specified length
@@ -41,6 +42,13 @@ func RespondWithError(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// エラーメッセージにデータベース関連のキーワードが含まれている場合、ヘッダーに識別用のエラータイプを設定
+	lowerMsg := strings.ToLower(message)
+	if strings.Contains(lowerMsg, "database") || strings.Contains(lowerMsg, "mongo") || strings.Contains(lowerMsg, "query") {
+		w.Header().Set("X-Error-Type", "DATABASE_ERROR")
+	}
+
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "error",

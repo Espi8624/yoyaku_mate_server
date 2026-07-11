@@ -13,6 +13,7 @@
 
 # Build output binary
 yoyaku_mate_server
+tmp_server
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
