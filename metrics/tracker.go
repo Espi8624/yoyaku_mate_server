@@ -102,3 +102,76 @@ func (t *ErrorTracker) GetMetrics() models.ErrorMetrics {
 		CountSSE: atomic.LoadInt64(&t.CountSSE),
 	}
 }
+
+var (
+	requestTracker *RequestTracker
+	reqOnce        sync.Once
+)
+
+// - サーバー内部で発生した全HTTPリクエスト情報をバッファリングし、非同期でバッチ保存するための構造体
+type RequestTracker struct {
+	logBuffer []models.RequestLog
+	mu        sync.Mutex
+}
+
+// - RequestTrackerのシングルトンインスタンスを返却し、初回呼び出し時にバックグラウンドバッチ保存ワーカーを実行
+func GetRequestTracker() *RequestTracker {
+	reqOnce.Do(func() {
+		requestTracker = &RequestTracker{
+			logBuffer: make([]models.RequestLog, 0, 100),
+		}
+		go requestTracker.startBatchWorker()
+	})
+	return requestTracker
+}
+
+// - リクエストログオブジェクトをバッファに追加し、メモリオーバーフロー防止のため最大1,000件までバッファリング
+func (t *RequestTracker) RecordRequest(reqLog models.RequestLog) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(t.logBuffer) < 1000 {
+		t.logBuffer = append(t.logBuffer, reqLog)
+	}
+}
+
+// - 5秒周期でメモリバッファに蓄積されたリクエストログをMongoDBへ一括保存(Flush)するバックグラウンドワーカー
+func (t *RequestTracker) startBatchWorker() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		t.flush()
+	}
+}
+
+// - メモリバッファの内容をMongoDBへバルクインサートし、完了後にバッファを初期화
+func (t *RequestTracker) flush() {
+	t.mu.Lock()
+	if len(t.logBuffer) == 0 {
+		t.mu.Unlock()
+		return
+	}
+
+	logsToInsert := make([]interface{}, len(t.logBuffer))
+	for i, logItem := range t.logBuffer {
+		logsToInsert[i] = logItem
+	}
+	t.logBuffer = make([]models.RequestLog, 0, 100)
+	t.mu.Unlock()
+
+	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
+	if collection == nil {
+		log.Println("Failed to get MongoDB request_logs collection")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := collection.InsertMany(ctx, logsToInsert)
+	if err != nil {
+		log.Printf("Failed to bulk insert request logs: %v", err)
+	}
+}
+

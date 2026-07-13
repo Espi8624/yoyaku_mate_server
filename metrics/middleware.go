@@ -26,13 +26,35 @@ func (rw *responseWriterWrapper) Flush() {
 	}
 }
 
-// - すべてのAPIリクエストのレスポンスを監視し、400 Bad Requestまたは500 Internal Server Errorの発生を自動で検知するミドルウェア
-func ErrorCaptureMiddleware(next http.Handler) http.Handler {
+// - すべてのAPIリクエストの応答時間を測定し、詳細リクエストログとエラーログを収集してトラッカーへ伝達するミドルウェア
+func MetricsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		rw := &responseWriterWrapper{w, http.StatusOK}
 		
 		next.ServeHTTP(rw, r)
 
+		duration := time.Since(start).Milliseconds()
+
+		clientIP := r.Header.Get("X-Forwarded-For")
+		if clientIP == "" {
+			clientIP = r.RemoteAddr
+		} else {
+			ips := strings.Split(clientIP, ",")
+			clientIP = strings.TrimSpace(ips[0])
+		}
+
+		// - リクエストトラッカーにすべてのAPIリクエストデータを記録
+		GetRequestTracker().RecordRequest(models.RequestLog{
+			Timestamp:    time.Now().UTC(),
+			Path:         r.URL.Path,
+			Method:       r.Method,
+			StatusCode:   rw.statusCode,
+			ResponseTime: duration,
+			ClientIP:     clientIP,
+		})
+
+		// - エラー応答(4xx/5xx)の発生時、既存のエラートラッカーにも記録
 		if rw.statusCode >= 400 {
 			var errType string
 			customErrType := rw.Header().Get("X-Error-Type")
@@ -42,14 +64,6 @@ func ErrorCaptureMiddleware(next http.Handler) http.Handler {
 				errType = "500_INTERNAL_ERROR"
 			} else {
 				errType = "400_BAD_REQUEST"
-			}
-
-			clientIP := r.Header.Get("X-Forwarded-For")
-			if clientIP == "" {
-				clientIP = r.RemoteAddr
-			} else {
-				ips := strings.Split(clientIP, ",")
-				clientIP = strings.TrimSpace(ips[0])
 			}
 
 			GetTracker().RecordError(models.ErrorLog{

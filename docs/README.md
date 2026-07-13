@@ -19,6 +19,7 @@ docs/
 |------|------|
 | [waiting-list.md](./features/waiting-list.md) | 待機列の登録・管理・リアルタイム通知機能 |
 | [error-dashboard.md](./features/error-dashboard.md) | エラーメトリクス・ログのリアルタイム収集および監視ダッシュボード |
+| [request-counter.md](./features/request-counter.md) | リクエストメトリクス・ログのリアルタイム収集および監視ダッシュボード |
 
 
 ---
@@ -35,8 +36,13 @@ docs/
 
 ---
 
+## Decisions (技術決定)
+
+| ドキュメント | 決定内容 |
+|------|----------|
 | [ADR-001-use-sse.md](./decisions/ADR-001-use-sse.md) | WebSocketの代わりにSSEを選択した理由 |
 | [ADR-002-use-polling-for-error-dashboard.md](./decisions/ADR-002-use-polling-for-error-dashboard.md) | エラーダッシュボードにおけるHTTPポーリング採用の理由 |
+| [ADR-003-request-counter-architecture.md](./decisions/ADR-003-request-counter-architecture.md) | 独自メトリクス収集およびリクエストカウンターアーキテクチャの採用 |
 
 
 ---
