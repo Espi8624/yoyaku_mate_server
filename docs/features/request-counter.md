@@ -14,7 +14,7 @@ flowchart TD
     
     subgraph GoServer ["Go API Server (yoyaku_mate_server)"]
         Middleware[MetricsMiddleware] -->|2. リクエスト委譲 / ビジネス処理| Router[Business Router]
-        Middleware -->|3. 測定結果ログの伝達 (Latency/IP)| Tracker[RequestTracker]
+        Middleware -->|3. 測定結果ログの伝達 Latency/IP| Tracker[RequestTracker]
         
         subgraph Tracker ["RequestTracker (In-Memory Buffer)"]
             Buffer[(Buffer Slice - Max 1000)]
