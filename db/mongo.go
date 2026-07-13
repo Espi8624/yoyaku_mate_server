@@ -15,6 +15,7 @@ const (
 	DatabaseName          = "project_rusui"
 	CollectionWaitingList = "waiting_list"
 	CollectionErrorLogs   = "error_logs"
+	CollectionRequestLogs = "request_logs"
 )
 
 var MongoClient *mongo.Client
@@ -127,6 +128,34 @@ func EnsureIndexes() error {
 			log.Printf("Failed to create error_type index: %v", err)
 		} else {
 			log.Println("Created index: idx_error_type on error_logs")
+		}
+	}
+
+	requestLogsCollection := GetCollection(DatabaseName, CollectionRequestLogs)
+	if requestLogsCollection != nil {
+		// - ディスク容量不足の防止およびMongoDB Atlasストレージコスト最小化のため、3日間(259,200秒)のTTLを適用
+		// - 3日以上経過した古いリクエストログデータはバックグラウンドで自動的に永久削除される
+		ttlIndexModel := mongo.IndexModel{
+			Keys: bson.D{{Key: "timestamp", Value: 1}},
+			Options: options.Index().SetExpireAfterSeconds(259200).SetName("idx_request_logs_ttl"), // 3일
+		}
+		_, err := requestLogsCollection.Indexes().CreateOne(ctx, ttlIndexModel)
+		if err != nil {
+			log.Printf("Failed to create TTL index for request_logs: %v", err)
+		} else {
+			log.Println("Created TTL index: idx_request_logs_ttl on request_logs (3 days)")
+		}
+
+		// - 最近のリクエストログ照会および24時間統計/Aggregationクエリの性能最適化のためのtimestamp降順インデックス
+		timeIndexModel := mongo.IndexModel{
+			Keys: bson.D{{Key: "timestamp", Value: -1}},
+			Options: options.Index().SetName("idx_request_logs_timestamp"),
+		}
+		_, err = requestLogsCollection.Indexes().CreateOne(ctx, timeIndexModel)
+		if err != nil {
+			log.Printf("Failed to create timestamp index for request_logs: %v", err)
+		} else {
+			log.Println("Created index: idx_request_logs_timestamp on request_logs")
 		}
 	}
 
