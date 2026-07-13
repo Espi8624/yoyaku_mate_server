@@ -56,7 +56,7 @@ flyctl deploy
 handlers/   → HTTPパース、認証、ビジネスルールの検証
 data/       → MongoDBクエリ (データアクセス層)
 events/     → SSE Broker (インメモリpub/sub)
-metrics/    → エラーメトリクスの収集、インメモリバッファリング、非同期バッチ保存
+metrics/    → エラーおよびAPIリクエストメトリクスの収集、インメモリバッファリング、非同期バッチ保存
 auth/       → Firebaseトークン/セッション検証
 models/     → Go構造体 ↔ BSON/JSON
 utils/      → 共通ユーティリティ (HMAC、JSONレスポンスなど)
@@ -66,14 +66,14 @@ utils/      → 共通ユーティリティ (HMAC、JSONレスポンスなど)
 graph TD
     Client["Web / App (React, Flutter)"] -->|"REST API / SSE"| Router["Gorilla Mux Router"]
     Router --> Middleware["Rate Limiter (tollbooth)"]
-    Middleware --> ErrorCapture["Error Capture Middleware"]
-    ErrorCapture --> Auth["Firebase Admin Auth"]
-    ErrorCapture --> Handlers["Route Handlers"]
+    Middleware --> Metrics["Metrics Middleware"]
+    Metrics --> Auth["Firebase Admin Auth"]
+    Metrics --> Handlers["Route Handlers"]
     Handlers --> Broker["SSE Event Broker"]
     Handlers --> DB["MongoDB Atlas"]
     Handlers --> Storage["Cloudflare R2"]
     
-    ErrorCapture -.->|非同期ロギング| Tracker["Error Tracker (In-memory)"]
+    Metrics -.->|非同期ロギング| Tracker["Error & Request Tracker (In-memory)"]
     Broker -.->|切断検知| Tracker
     Tracker -->|5秒間隔一括保存| DB
 ```

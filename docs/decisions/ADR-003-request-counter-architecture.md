@@ -1,59 +1,59 @@
-# ADR-003: Adopting Custom Metrics Collection and Request Counter Architecture
+# ADR-003: 独自メトリクス収集およびリクエストカウンターアーキテクチャの採用
 
-> Date: 2026-07-13  
-> Status: Proposed
+> 作成日: 2026-07-13  
+> 状態: 提案中 (Proposed)
 
-## Context
+## コンテキスト
 
-We need to implement a 'Request Counter' feature in the administrator back-office (`yoyaku_mate_admin`) of the queue management system (Rusui) to provide real-time request metrics (total requests over the last 24 hours, success rate, peak TPS) and a real-time API request log list.  
-To implement this, we had to decide whether to introduce a commercial APM (Datadog, New Relic), directly build an open-source monitoring infrastructure like Prometheus+Grafana (self-hosting), build a custom monitoring engine from scratch, or build a custom lightweight monitoring module using the existing Go backend and MongoDB.
-
----
-
-## Decision: Adopting Custom Collection using In-Memory Buffer (Batch Worker) and MongoDB TTL
-
-To ensure cost efficiency for the early-stage service and to achieve dashboard integration within the single admin system, we will use a **custom metrics collection approach using Go in-memory buffering for async batch loading and MongoDB TTL (Time-To-Live) collections**, rather than integrating a separate external monitoring system.
+待機列管理システム(Rusui)の管理者バックオフィス(`yoyaku_mate_admin`)にリアルタイムのリクエスト統計(過去24時間の要求数、成功率、Peak TPS)およびリアルタイムのAPI要求ログ一覧を提供するための「リクエストカウンター」機能の開発が必要です。  
+これを実装するために、商用APM(Datadog、New Relic)を導入するか、Prometheus+Grafanaのような専門的な監視インフラを直接構築(セルフホスティング)するか、あるいは監視エンジン自体を一から独自に開発するか、もしくは既存のGoバックエンドとMongoDBを活用して独自の軽量監視機能を実装するかについての意思決定が必要でした。
 
 ---
 
-## Comparison and Trade-offs by Architecture
+## 決定: インメモリバッファ(バッチワーカー)およびMongoDB TTLを活用した独自収集方式の採用
 
-### 1. Commercial APM Tools (Datadog, New Relic, etc.)
-- **Pros**: Provides advanced visualization dashboards and real-time bottleneck monitoring simply by adding libraries, without separate development.
-- **Cons**: High licensing and maintenance costs, which pose a significant financial burden for an early-stage startup. License costs scale proportionally with traffic volume, making costs uncontrollable.
-
-### 2. Dedicated Open-Source Monitoring Solutions (Prometheus + Grafana) Self-Hosting
-- **Pros**: Optimized for time-series data storage (TSDB), consuming the least server/DB resources when collecting large-scale traffic. Free software license.
-- **Cons (Server Costs & Overhead)**:
-  - **Increased Infrastructure Maintenance Costs**: We are currently using `fly.io`, and running this setup requires spinning up at least two additional container instances (one for Prometheus and one for Grafana), which immediately increases our hosting costs.
-  - Requires separate web access and login credentials for the Grafana dashboard, reducing admin integration.
-  - Only aggregates numerical metrics, so it cannot retrieve raw log details for specific requests (e.g., failed log details from a specific IP).
-
-### 3. Developing a Professional Monitoring Engine from Scratch (Go + Custom TSDB)
-- **Pros**: Allows building a fully customized independent collection system tailored 100% to our service.
-- **Cons (Infrastructure & Opportunity Costs)**:
-  - A clear case of **over-engineering** that deviates significantly from the core business domain (queue and reservation management).
-  - Optimization and maintenance of the custom monitoring engine demand extra CPU/memory resources and separate monitoring daemons, leading to wasted server resources and **increased indirect server costs**.
-
-### 4. Custom Lightweight Monitoring (In-Memory Buffer + MongoDB) - **[CHOSEN]**
-- **Pros**:
-  - **Zero Server Costs**: No need to spin up additional servers or purchase commercial library licenses. It shares the existing infrastructure (Go API server + MongoDB Atlas free/basic tier), resulting in zero additional cost.
-  - **Admin Integration**: Can be seamlessly rendered inside the existing React admin web dashboard.
-  - **Raw Logs Provided**: Enables fast debugging by allowing administrators to directly query raw log details such as API request duration and Client IP.
-  - **Minimal Application Impact**: Isolates the overhead on the API request processing flow by performing bulk insertions via a 5-second background Goroutine batch worker.
-- **Cons (Potential Risk)**:
-  - **Increased Storage Server Costs Under Heavy Traffic**: Since all API request logs are written to MongoDB, disk space usage may accumulate under heavy traffic, potentially raising MongoDB Atlas storage costs.
-  - **Mitigation**: Configured a **3-day (259,200 seconds) TTL index** on the `request_logs` collection so that old data is automatically deleted, capping disk space usage and preventing storage cost increases.
+初期サービスにおける費用対効果(Cost Efficiency)と管理者システムの単一統合性(Single Dashboard Integration)を確保するため、外部の独立した監視システムを連携する代わりに、**Goのインメモリバッファリングに基づく非同期バッチ書き込みおよびMongoDB TTL(Time-To-Live)コレクションを利用した独自の軽量メトリクス収集方式**を採用します。
 
 ---
 
-## Consequences
+## アーキテクチャ別の比較およびトレードオフ (Trade-off Analysis)
 
-- **Short-Term Consequences**: We can quickly implement straightforward API monitoring and debugging without additional infrastructure costs.
-- **Long-Term Consequences**: In the future, if the number of registered stores and user traffic surges (exceeding thousands of requests per second), we may need to migrate metric data to a time-series DB (like Prometheus) or a separate APM tool to alleviate MongoDB write load. The current structure serves as a practical, transitionary architecture for this stage.
+### 1. 商用APMツール (Datadog, New Relic など) の導入
+- **メリット**: 別途開発することなくライブラリの追加だけで高度なビジュアルダッシュボードやボトルネックのリアルタイム監視を利用可能。
+- **デメリット**: 導入および維持コストがスタートアップの規模において非常に高価。トラフィックの流入量に比例してライセンス費用が大きく跳ね上がるため、コスト管理が困難。
+
+### 2. オープンソース監視ソリューション (Prometheus + Grafana) の直接構築 (セルフホスティング)
+- **メリット**: 時系列データの保存に特化(TSDB)しており、大規模トラフィック収集時のサーバー/DBリソース占有が最も少ない。オープンソースであるためソフトウェアライセンスの費用が不要。
+- **デメリット (サーバーコストおよびオーバーヘッド)**:
+  - **インフラ維持コストの増加**: 現在 `fly.io` のホスティングサービスを使用していますが、これを稼働させるには最低2つの追加コンテナインスタンス(Prometheus用およびGrafana用)を立ち上げる必要があり、ホスティング費用が即座に増加する。
+  - Grafanaダッシュボード用の別Webアクセスおよびログイン管理が必要となり、管理者画面との統合性が低下する。
+  - 数値指標(Metric)のみを累積するため、個々のリクエストの詳細情報(例: 特定IPからの失敗ログの内訳など)を照会できない。
+
+### 3. 専門的な監視エンジン自体を一から独自に開発 (Go + 専用TSDBの構築)
+- **メリット**: 自社サービスに100%最適化された独立した収集システムを保有できる。
+- **デメリット (インフラおよび機会費用)**:
+  - 本来のビジネスドメイン(待機列/予約管理)の開発範囲を大きく逸脱した**過剰エンジニアリング(Over-engineering)**である。
+  - 監視エンジンの最適化やストレージの維持管理に必要なコンピューティングリソースの消費、および個別監視デーモンの起動に伴い、サーバーリソースの無駄遣いおよび**間接的なサーバーコスト**が増加する。
+
+### 4. 独自の軽量監視 (インメモリバッファ + MongoDB) - **[採用]**
+- **メリット**:
+  - **サーバーコスト0円**: 追加のサーバー起動や有料ライセンスの購入を必要とせず、既存のインフラ(Go APIサーバー + MongoDB Atlasのフリー/基本ティア)をそのまま共有するため、追加コストが一切発生しない。
+  - **管理者画面との統合性**: 既存のReact管理者Webシステム内部のダッシュボード画面に有機的に統合してレンダリング可能。
+  - **生ログの提供**: 特徴的なAPI要求の応答速度やクライアントIP情報を生ログ形式で直接照会でき、迅速なデバッグを支援。
+  - **アプリケーションへの影響最小化**: 5秒周期のバックグラウンドGoroutine(Bulk Insert)処理を通じて、本番API要求の処理フローに与える負荷を隔離。
+- **デメリット (潜在的リスク)**:
+  - **大容量トラフィック時のストレージコスト上昇**: すべてのAPIリクエストログをMongoDBに蓄積するため、トラフィックが多い場合にディスク使用量が累積し、MongoDB Atlasのストレージ追加費用が発生する可能性がある。
+  - **相殺措置**: `request_logs` コレクションに **3日間(259,200秒)のTTLインデックス**を指定して古いデータが自動的に削除されるように設定し、ディスク占有容量を一定レベル以下に制限することで、ストレージコスト上昇のリスクを根本から遮断。
 
 ---
 
-## Related Documents
+## 影響 (Consequences)
 
-- [Request Dashboard UI Specification (Admin UI)](../features/request-counter.ko.md)
+- **短期的影響**: インフラコストを追加することなく、シンプルで直感的なAPI監視およびデバッグ環境を迅速に構築できます。
+- **長期的影響**: 将来的に加盟店舗数が急増し、ユーザートラフィックが爆発的に増加した場合(秒間数千リクエストの突破時)、MongoDBへの書き込み負荷を軽減するために、メトリクスデータを時系列DB(Prometheusなど)や別のAPMツールへと移行する必要が生じる可能性があります。現在の構成は、過渡期のアーキテクチャとして最も実用的な代替案です。
+
+---
+
+## 関連ドキュメント
+
+- [リクエストダッシュボード機能仕様書 (Admin UI)](../features/request-counter.md)
