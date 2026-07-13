@@ -13,8 +13,8 @@ flowchart TD
     Client[Client App / Web] -->|1. HTTP Request| GoServer[Go API Server]
     
     subgraph GoServer ["Go API Server (yoyaku_mate_server)"]
-        Middleware[MetricsMiddleware] -->|2. 応答時間測定およびIP抽出| Router[Business Router]
-        Middleware -->|3. ログ伝達| Tracker[RequestTracker]
+        Middleware[MetricsMiddleware] -->|2. リクエスト委譲 / Next Handler 呼び出し| Router[Business Router]
+        Middleware -->|3. 測定結果ログの伝達| Tracker[RequestTracker]
         
         subgraph Tracker ["RequestTracker (In-Memory Buffer)"]
             Buffer[(Buffer Slice - Max 1000)]
