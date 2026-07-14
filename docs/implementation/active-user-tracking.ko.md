@@ -27,7 +27,7 @@ flowchart TD
         BatchWorker[Background Batch Worker] -->|3. 5초 주기로 Cleanup & Flush| Tracker
     end
     
-    BatchWorker -->|4. 5초 초과 세션 제거| activeUsers
+    BatchWorker -->|4. 5분 초과 세션 제거| activeUsers
     BatchWorker -->|5. 고유 접속 IP Bulk Upsert| MongoDB[(MongoDB Atlas)]
     
     subgraph MongoDB ["MongoDB Atlas"]
