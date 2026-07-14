@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
@@ -204,3 +205,65 @@ func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	utils.RespondWithJSON(w, logs, http.StatusOK)
 }
+
+// - リアルタイム同時接続者数およびDAU/MAU統計を集計して返却するハンドラー
+func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. リアルタイム同時接続者数 (インメモリから即座に取得)
+	currentActive := metrics.GetRequestTracker().GetActiveUsersCount()
+
+	dauCollection := db.GetCollection(db.DatabaseName, db.CollectionDailyActiveUsers)
+	if dauCollection == nil {
+		// DB接続失敗時もエラーを返却せずダッシュボードのクラッシュを防ぐためにフォールバック値を提供
+		log.Println("DB connection failure in GetActiveUserMetricsHandler")
+		utils.RespondWithJSON(w, models.ActiveUserMetrics{
+			CurrentActiveUsers: currentActive,
+			DailyActiveUsers:   currentActive,
+			MonthlyActiveUsers: currentActive,
+		}, http.StatusOK)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 2. 1日アクティブユーザー数 (DAU) - 本日の日付文字列を基準にユニークIP数を集計
+	todayStr := time.Now().Format("2006-01-02")
+	dauCount, err := dauCollection.CountDocuments(ctx, bson.M{"date": todayStr})
+	if err != nil {
+		log.Printf("Failed to count DAU: %v", err)
+		dauCount = currentActive // Fallback
+	}
+
+	// 3. 月間アクティブユーザー数 (MAU) - 直近30日以内のユニークIP数を集計
+	thirtyDaysAgo := time.Now().Add(-30 * 24 * time.Hour)
+	
+	// 重複なくユニークなclient_ipの数をカウント
+	distinctIPs, err := dauCollection.Distinct(ctx, "client_ip", bson.M{
+		"timestamp": bson.M{"$gte": thirtyDaysAgo},
+	})
+	
+	var mauCount int64
+	if err != nil {
+		log.Printf("Failed to count MAU: %v", err)
+		mauCount = dauCount // Fallback to DAU
+	} else {
+		mauCount = int64(len(distinctIPs))
+	}
+
+	// もしMAUやDAUがリアルタイム同時接続者数より少ない場合は補正処理 (即時フォールバック)
+	if dauCount < currentActive {
+		dauCount = currentActive
+	}
+	if mauCount < dauCount {
+		mauCount = dauCount
+	}
+
+	metricsData := models.ActiveUserMetrics{
+		CurrentActiveUsers: currentActive,
+		DailyActiveUsers:   dauCount,
+		MonthlyActiveUsers: mauCount,
+	}
+
+	utils.RespondWithJSON(w, metricsData, http.StatusOK)
+}
+
