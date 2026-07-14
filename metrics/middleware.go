@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -38,10 +39,20 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 
 		clientIP := r.Header.Get("X-Forwarded-For")
 		if clientIP == "" {
-			clientIP = r.RemoteAddr
+			ip, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err == nil {
+				clientIP = ip
+			} else {
+				clientIP = r.RemoteAddr
+			}
 		} else {
 			ips := strings.Split(clientIP, ",")
 			clientIP = strings.TrimSpace(ips[0])
+		}
+
+		// Normalize IPv6 loopback to IPv4 loopback for local dev consistency
+		if clientIP == "::1" {
+			clientIP = "127.0.0.1"
 		}
 
 		// - リクエストトラッカーにすべてのAPIリクエストデータを記録

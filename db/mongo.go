@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	DatabaseName          = "project_rusui"
-	CollectionWaitingList = "waiting_list"
-	CollectionErrorLogs   = "error_logs"
-	CollectionRequestLogs = "request_logs"
+	DatabaseName              = "project_rusui"
+	CollectionWaitingList     = "waiting_list"
+	CollectionErrorLogs       = "error_logs"
+	CollectionRequestLogs     = "request_logs"
+	CollectionDailyActiveUsers = "daily_active_users"
 )
 
 var MongoClient *mongo.Client
@@ -137,7 +138,7 @@ func EnsureIndexes() error {
 		// - 3日以上経過した古いリクエストログデータはバックグラウンドで自動的に永久削除される
 		ttlIndexModel := mongo.IndexModel{
 			Keys: bson.D{{Key: "timestamp", Value: 1}},
-			Options: options.Index().SetExpireAfterSeconds(259200).SetName("idx_request_logs_ttl"), // 3일
+			Options: options.Index().SetExpireAfterSeconds(259200).SetName("idx_request_logs_ttl"), // 3日
 		}
 		_, err := requestLogsCollection.Indexes().CreateOne(ctx, ttlIndexModel)
 		if err != nil {
@@ -159,5 +160,36 @@ func EnsureIndexes() error {
 		}
 	}
 
+	dauCollection := GetCollection(DatabaseName, CollectionDailyActiveUsers)
+	if dauCollection != nil {
+		// 31日 TTL インデックス (2,678,400秒)
+		ttlIndexModel := mongo.IndexModel{
+			Keys: bson.D{{Key: "timestamp", Value: 1}},
+			Options: options.Index().SetExpireAfterSeconds(2678400).SetName("idx_dau_ttl"),
+		}
+		_, err := dauCollection.Indexes().CreateOne(ctx, ttlIndexModel)
+		if err != nil {
+			log.Printf("Failed to create TTL index for daily_active_users: %v", err)
+		} else {
+			log.Println("Created TTL index: idx_dau_ttl on daily_active_users (31 days)")
+		}
+
+		// date + client_ip 複合ユニークインデックス
+		compoundIndexModel := mongo.IndexModel{
+			Keys: bson.D{
+				{Key: "date", Value: 1},
+				{Key: "client_ip", Value: 1},
+			},
+			Options: options.Index().SetUnique(true).SetName("idx_date_ip"),
+		}
+		_, err = dauCollection.Indexes().CreateOne(ctx, compoundIndexModel)
+		if err != nil {
+			log.Printf("Failed to create compound unique index for daily_active_users: %v", err)
+		} else {
+			log.Println("Created unique index: idx_date_ip on daily_active_users")
+		}
+	}
+
 	return nil
 }
+
