@@ -1,116 +1,35 @@
-# エラーダッシュボード機能 (Error Dashboard)
+# 機能仕様書: エラーダッシュボード (Error Dashboard)
 
-> 最終更新: 2026-07-11
+本文書は、`yoyaku_mate_admin` 本社管理者ウェブに実装されたリアルタイムエラー監視およびシステム状態モニタリング機能の仕様を説明します。
 
-## 概要
-
-アプリケーションの安定性と保守性を高めるため、サーバー内で発生する各種エラー（HTTP 4xx/5xx、データベースエラー、リアルタイムストリーミング切断など）をリアルタイムで収集・追跡し、管理者ダッシュボードに可視化する機能です。  
-メインAPI of 処理速度に影響を与えないよう、**「インメモリバッファリング ➡️ 非同期バッチ書き込み」**方式を採用しています。
+> 最終更新: 2026-07-14  
+> 関連文書: [ADR-002: エラーダッシュボード内HTTPポーリング方式採用](../decisions/ADR-002-use-polling-for-error-dashboard.md), [実装詳細書: エラーダッシュボード](../implementation/error-dashboard.md)
 
 ---
 
-## 主要概念
+## 1. 概要 (Overview)
 
-| 概念 | 説明 |
-|------|------|
-| `ErrorCaptureMiddleware` | HTTPリクエストを傍受し、4xx/5xxレスポンスを検知する共通ミドルウェア |
-| `ErrorTracker` | 発生したエラーをメモリ上に集計・一時保存するシングルトン管理クラス |
-| `logBuffer` | エラーが発生した際、メインスレッドをブロックせずに一旦蓄積するインメモリ領域（最大1,000件） |
-| `Batch Worker` | 5秒周期で起動し、メモリ内のバッファをクリアしてMongoDBに一括保存（Bulk Insert）するバックグラウンド処理 |
-| `TTL Index` | 7日間（604,800秒）が経過したエラーログをMongoDBが自動でバックグラウンド削除するライフサイクル管理 |
+本社管理者がプラットフォーム全体におけるシステムの安定性および障害状態を即座に認知できるよう、サーバーの内部エラー統計とエラー発生履歴をリアルタイムに監視および追跡する画面です。
 
 ---
 
-## 収集対象エラーと状態定義
+## 2. 画面構成および主要指標 (UI Metrics)
 
-収集されるエラーは以下の4つのカテゴリーに分類され、[ErrorCountPage.jsx](../../yoyaku_mate_admin/src/pages/ErrorCountPage.jsx)の上部カードに集計されて表示されます。
+管理者バックオフィスの専用ダッシュボードとして表示され、5秒周期で自動更新（HTTP Polling）されます。レスポンシブWebデザインに対応しています。
 
-| エラータイプ (`error_type`) | 収集の契機 | 主要収集データ |
-|---------------------------|------------|----------------|
-| `500_INTERNAL_ERROR`      | APIハンドラーの内部処理失敗、または想定外のPanic発生時 | メッセージ、APIパス、メソッド、クライアントIP |
-| `400_BAD_REQUEST`         | クライアントから不正なパラメータの送信、存在しないAPIへのアクセス時 | メッセージ、APIパス、メソッド、クライアントIP |
-| `DATABASE_ERROR`          | MongoDBクエリの実行エラー、コネクション切断発生時 | データベースエラー詳細ログ |
-| `SSE_DISCONNECT`          | 待機列通知ストリーム接続中に、クライアントが離脱（切断）した時 | 接続されていたAPIパス、RemoteAddr |
+### 2.1 上部エラーメトリクスサマリーカード (Metrics Cards)
+計4つのエラーカテゴリに対する累積集計値を横並びのグリッドで表示します。
+* **500 ERRORS**: Go内部のパニック、コンパイルランタイムエラーなど、500系のサーバー内部失敗回数。
+* **400 ERRORS**: 不正なリクエスト引数の送信、存在しない404パスの呼び出しなど、400系の失敗回数。
+* **DB ERRORS**: MongoDBの接続喪失、クエリ構文の例外など、データベース領域でのエラー発生回数。
+* **SSE DISCONNECTS**: 待機列のリアルタイム中継中にブラウザタブの切断などで強制的に消失したSSE接続回数。
 
----
-
-## データフロー
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as ユーザー / 管理者
-    participant Router as Gorilla Mux / Middleware
-    participant Tracker as ErrorTracker (In-Memory)
-    participant Worker as Batch Worker (Goroutine)
-    database DB as MongoDB Atlas
-
-    Client->>Router: 1. APIリクエスト送信 (または接続切断)
-    Router-->>Client: 2. API処理およびレスポンス返却 (400/500エラー発生)
-    
-    note over Router, Tracker: メインスレッドの処理速度を守るため、非同期で転送
-    Router->>Tracker: 3. RecordError(models.ErrorLog) 呼び出し
-    Tracker->>Tracker: 4. インメモリ logBuffer に一時保存 (ロック時間は最小限)
-
-    loop 5秒周期 (Ticker)
-        Worker->>Tracker: 5. バッファデータの抽出・クリア
-        Worker->>DB: 6. InsertMany() による一括非同期書き込み (Bulk Write)
-    end
-
-    Note over DB: 7. TTLインデックスにより7日経過後に自動削除
-```
-
----
-
-## データベース設計
-
-### 1. `error_logs` コレクション構造 (BSON)
-
-```json
-{
-  "_id": "ObjectId",
-  "timestamp": "ISODate (UTC)",
-  "error_type": "string (500_INTERNAL_ERROR / 400_BAD_REQUEST / DATABASE_ERROR / SSE_DISCONNECT)",
-  "message": "string (エラー原因の要約)",
-  "path": "string (APIエンドポイントパス)",
-  "method": "string (GET / POST / PATCH / DELETE)",
-  "client_ip": "string (IPv4 / IPv6 / X-Forwarded-Forの最初の値)"
-}
-```
-
-### 2. パフォーマンス最適化のためのインデックス設定
-
-書き込み・読み込み時のデータベース負荷を極限まで低減させるため、起動時に自動的に以下のインデックスを作成します。
-
-* **`idx_error_logs_ttl`**
-  - キー: `{"timestamp": 1}`
-  - オプション: `ExpireAfterSeconds: 604800` (7日間)
-  - 効果: コレクションの肥大化と追加のストレージコスト発生を自動的に防ぎます。
-* **`idx_error_type`**
-  - キー: `{"error_type": 1}`
-  - 効果: 管理者ダッシュボード起動時に、エラータイプ別の集計（Count）をインデックススキャンのみで高速に処理します。
-
----
-
-## ダッシュボード提供API
-
-管理者ダッシュボード向けに以下のREST APIを分離して提供します。
-
-1. **エラーメトリクス統計 API**
-   - パス: `/api/admin/metrics/errors`
-   - 方式: `GET`
-   - 説明: エラータイプごとの累積件数をMongoDBのカウントクエリから高速に取得します。
-2. **詳細エラーログリスト API**
-   - パス: `/api/admin/metrics/error-logs`
-   - 方式: `GET`
-   - 説明: 直近に発生した詳細ログ50件を最新順にソートして返却します。
-
----
-
-## 技術決定 (ADR)
-
-本機能の実装にあたって、リアルタイム待機列管理（SSE採用）との性能要件の違いを比較し、あえてポーリング方式を採用した背景については、以下の技術決定書（ADR）を参照してください。
-
-* [ADR-002: エラーダッシュボードにおけるHTTPポーリングの採用](../decisions/ADR-002-use-polling-for-error-dashboard.md)
-
-
+### 2.2 下部最新エラーログテーブル (Latest Logs Table)
+直近でバックエンドのDBに蓄積されたエラーログデータを最大50件、最新の順序で表示します。
+* **グリッド列**:
+  * **日時**: エラー発生時刻（ユーザーのローカルデバイス時刻に合わせて自動変換されます）。
+  * **タイプ**: エラーの大分類識別コード（例: `400_BAD_REQUEST`, `500_INTERNAL_ERROR`, `DATABASE_ERROR`, `SSE_DISCONNECT`）。
+  * **APIパス**: 呼び出しを誘発したAPIメソッドおよびパス（例: `GET /api/admin/metrics`）。
+  * **メッセージ概要**: 発生したエラーの要約メッセージ（指定の長さを超える場合は省略記号が適用されます）。
+* **詳細ポップアップモーダル**:
+  * テーブルの行をクリックすると、問題解決を支援するエラーの詳細スタックトレースなどを、個別のレイヤーモーダルウィンドウとしてポップアップ表示します。
