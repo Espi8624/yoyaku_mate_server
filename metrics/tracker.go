@@ -8,6 +8,9 @@ import (
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 var (
@@ -15,7 +18,7 @@ var (
 	once    sync.Once
 )
 
-// - サーバー内で発生したエラーのカウントを一時的に集計し、詳細ログをメモリにバッファリングして非同期でバッチ保存するための構造체
+// - サーバー内で発生したエラーのカウントを一時的に集計し、詳細ログをメモリにバッファリングして非同期でバッチ保存するための構造体
 type ErrorTracker struct {
 	Count500 int64
 	Count400 int64
@@ -110,19 +113,46 @@ var (
 
 // - サーバー内部で発生した全HTTPリクエスト情報をバッファリングし、非同期でバッチ保存するための構造体
 type RequestTracker struct {
-	logBuffer []models.RequestLog
-	mu        sync.Mutex
+	logBuffer   []models.RequestLog
+	activeUsers map[string]time.Time // key: ClientIP, value: last request time
+	mu          sync.Mutex
 }
 
 // - RequestTrackerのシングルトンインスタンスを返却し、初回呼び出し時にバックグラウンドバッチ保存ワーカーを実行
 func GetRequestTracker() *RequestTracker {
 	reqOnce.Do(func() {
 		requestTracker = &RequestTracker{
-			logBuffer: make([]models.RequestLog, 0, 100),
+			logBuffer:   make([]models.RequestLog, 0, 100),
+			activeUsers: make(map[string]time.Time),
 		}
 		go requestTracker.startBatchWorker()
 	})
 	return requestTracker
+}
+
+// - 5分スライディングウィンドウの外部からリアルタイムの同時接続者数を安全に取得するメソッド
+func (t *RequestTracker) GetActiveUsersCount() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := time.Now()
+	var count int64
+	for _, lastActive := range t.activeUsers {
+		if now.Sub(lastActive) <= 5*time.Minute {
+			count++
+		}
+	}
+	return count
+}
+
+// - 古い(5分超過)セッションデータをメモリからクリア (ロックを獲得した状態で呼び出すこと)
+func (t *RequestTracker) cleanupActiveUsers() {
+	now := time.Now()
+	for ip, lastActive := range t.activeUsers {
+		if now.Sub(lastActive) > 5*time.Minute {
+			delete(t.activeUsers, ip)
+		}
+	}
 }
 
 // - リクエストログオブジェクトをバッファに追加し、メモリオーバーフロー防止のため最大1,000件までバッファリング
@@ -132,6 +162,11 @@ func (t *RequestTracker) RecordRequest(reqLog models.RequestLog) {
 
 	if len(t.logBuffer) < 1000 {
 		t.logBuffer = append(t.logBuffer, reqLog)
+	}
+
+	// リアルタイム接続情報の更新
+	if reqLog.ClientIP != "" {
+		t.activeUsers[reqLog.ClientIP] = time.Now()
 	}
 }
 
@@ -145,19 +180,31 @@ func (t *RequestTracker) startBatchWorker() {
 	}
 }
 
-// - メモリバッファの内容をMongoDBへバルクインサートし、完了後にバッファを初期화
+// - メモリバッファの内容をMongoDBへバルクインサートし、完了後にバッファを初期化
 func (t *RequestTracker) flush() {
 	t.mu.Lock()
 	if len(t.logBuffer) == 0 {
+		t.cleanupActiveUsers()
 		t.mu.Unlock()
 		return
 	}
 
+	// バルクインサート用のログコピーおよび重複のない日別接続IPの抽出
+	type dailyKey struct {
+		Date     string
+		ClientIP string
+	}
+	uniqueActive := make(map[dailyKey]time.Time)
 	logsToInsert := make([]interface{}, len(t.logBuffer))
 	for i, logItem := range t.logBuffer {
 		logsToInsert[i] = logItem
+		if logItem.ClientIP != "" && logItem.ClientIP != "127.0.0.1" {
+			dateStr := logItem.Timestamp.Format("2006-01-02")
+			uniqueActive[dailyKey{Date: dateStr, ClientIP: logItem.ClientIP}] = logItem.Timestamp
+		}
 	}
 	t.logBuffer = make([]models.RequestLog, 0, 100)
+	t.cleanupActiveUsers()
 	t.mu.Unlock()
 
 	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
@@ -169,9 +216,36 @@ func (t *RequestTracker) flush() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// 1. 全てのリクエストログをバルクインサート
 	_, err := collection.InsertMany(ctx, logsToInsert)
 	if err != nil {
 		log.Printf("Failed to bulk insert request logs: %v", err)
+	}
+
+	// 2. ユニークな接続ユーザー情報をdaily_active_usersコレクションにバルクアップサート
+	if len(uniqueActive) > 0 {
+		var writes []mongo.WriteModel
+		for key, timestamp := range uniqueActive {
+			filter := bson.M{"date": key.Date, "client_ip": key.ClientIP}
+			update := bson.M{
+				"$set": bson.M{
+					"timestamp": timestamp,
+				},
+			}
+			model := mongo.NewUpdateOneModel().
+				SetFilter(filter).
+				SetUpdate(update).
+				SetUpsert(true)
+			writes = append(writes, model)
+		}
+
+		dauCollection := db.GetCollection(db.DatabaseName, db.CollectionDailyActiveUsers)
+		if dauCollection != nil {
+			_, err := dauCollection.BulkWrite(ctx, writes)
+			if err != nil {
+				log.Printf("Failed to bulk write daily active users: %v", err)
+			}
+		}
 	}
 }
 
