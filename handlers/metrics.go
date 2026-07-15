@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -267,3 +268,36 @@ func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, metricsData, http.StatusOK)
 }
 
+// GetSSEMetricsHandler は2つのSSEブローカーのリアルタイム接続状況を取得して返します
+// DBへのアクセスを伴わずインメモリ参照のみ行うため、応答速度が非常に高速です
+func GetSSEMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	// 店舗待ちリストブローカーの統計取得
+	storeStats := events.GetBroker().GetStats()
+	// 個別待ち顧客ブローカーの統計取得
+	userStats := events.GetWaitingUserBroker().GetStats()
+
+	totalConnections := storeStats.TotalConnections + userStats.TotalConnections
+
+	// 接続数に基づくヘルス状態の判定
+	health := "IDLE"
+	if totalConnections > 0 {
+		health = "HEALTHY"
+	}
+
+	result := models.SSEMetrics{
+		StoreBroker: models.SSEBrokerStats{
+			ActiveKeys:       storeStats.ActiveKeys,
+			TotalConnections: storeStats.TotalConnections,
+			AvgUptimeSeconds: storeStats.AvgUptimeSeconds,
+		},
+		WaitingUserBroker: models.SSEBrokerStats{
+			ActiveKeys:       userStats.ActiveKeys,
+			TotalConnections: userStats.TotalConnections,
+			AvgUptimeSeconds: userStats.AvgUptimeSeconds,
+		},
+		TotalConnections: totalConnections,
+		Health:           health,
+	}
+
+	utils.RespondWithJSON(w, result, http.StatusOK)
+}
