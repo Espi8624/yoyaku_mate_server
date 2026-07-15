@@ -43,14 +43,16 @@
 ```go
 // events/broker.go
 type Broker struct {
-    Clients map[string]map[chan string]bool
-    Mutex   sync.RWMutex
+    Clients     map[string]map[chan string]bool
+    connectedAt map[chan string]time.Time        // 각 채널의 연결 시각 (좀비 감지 및 평균 유지 시간 계산용)
+    Mutex       sync.RWMutex
 }
 ```
 
-- **싱글톤 패턴**: `sync.Once`로 인스턴스 1개만 유지
-- **RWMutex**: 읽기(Broadcast)는 병렬 허용, 쓰기(Add/Remove)는 직렬화
+- **싱글톤 패턴**: `sync.Once`로 인스턴스 1개만 유지하며, 초기화 시 `startHeartbeat()` 백그라운드 고루틴을 실행
+- **RWMutex**: 읽기(Broadcast, GetStats)는 병렬 허용, 쓰기(Add/Remove, pingAndClean)는 직렬화
 - **채널 버퍼**: `make(chan string, 10)` — 슬로우 클라이언트로 인한 블로킹 방지
+- **Heartbeat & 좀비 제거**: 30초 주기로 전송을 시도하여 블로킹 상태인 좀비 채널을 감지 및 자동 `close` 정리
 
 ---
 
@@ -80,7 +82,16 @@ go func() {
 for {
     select {
     case <-r.Context().Done():
-        return  // 클라이언트 연결 종료
+        // 클라이언트 연결 종료 → SSE_DISCONNECT 에러 로그 기록
+        metrics.GetTracker().RecordError(models.ErrorLog{
+            Timestamp: time.Now().UTC(),
+            ErrorType: "SSE_DISCONNECT",
+            Message:   "SSE Client Disconnected",
+            Path:      r.URL.Path,
+            Method:    r.Method,
+            ClientIP:  r.RemoteAddr,
+        })
+        return
     case msg := <-clientChan:
         fmt.Fprintf(w, "data: %s\n\n", msg)
         w.(http.Flusher).Flush()

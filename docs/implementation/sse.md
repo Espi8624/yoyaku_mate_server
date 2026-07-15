@@ -43,14 +43,16 @@
 ```go
 // events/broker.go
 type Broker struct {
-    Clients map[string]map[chan string]bool
-    Mutex   sync.RWMutex
+    Clients     map[string]map[chan string]bool
+    connectedAt map[chan string]time.Time        // 各チャネルの接続時刻を記録（ゾンビ接続検知および平均維持時間の計算用）
+    Mutex       sync.RWMutex
 }
 ```
 
-- **シングルトンパターン**: `sync.Once` によりインスタンスを1つのみ維持
-- **RWMutex**: 読み取り(Broadcast)は並行処理を許可、書き込み(Add/Remove)は排他制御
+- **シングルトンパターン**: `sync.Once` によりインスタンスを1つのみ維持し、初期化時に `startHeartbeat()` バックグラウンドゴルーチンを実行
+- **RWMutex**: 読み取り(Broadcast、GetStats)は並行処理を許可、書き込み(Add/Remove、pingAndClean)は排他制御
 - **チャネルバッファ**: `make(chan string, 10)` — スロークライアントによるブロックを防止
+- **Heartbeat & ゾンビクリーンアップ**: 30秒周期で送信を試み、ブロックされたチャネル（ゾンビ接続）を検知して自動で `close` クリーンアップ
 
 ---
 
@@ -80,7 +82,16 @@ go func() {
 for {
     select {
     case <-r.Context().Done():
-        return  // クライアント接続終了
+        // クライアント接続終了 → SSE_DISCONNECT エラーログを記録
+        metrics.GetTracker().RecordError(models.ErrorLog{
+            Timestamp: time.Now().UTC(),
+            ErrorType: "SSE_DISCONNECT",
+            Message:   "SSE Client Disconnected",
+            Path:      r.URL.Path,
+            Method:    r.Method,
+            ClientIP:  r.RemoteAddr,
+        })
+        return
     case msg := <-clientChan:
         fmt.Fprintf(w, "data: %s\n\n", msg)
         w.(http.Flusher).Flush()
