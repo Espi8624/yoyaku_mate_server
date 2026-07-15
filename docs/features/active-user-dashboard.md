@@ -46,3 +46,11 @@
   * 本日最もトラフィックが集中したピーク時間と最大同時接続者数を表示することで、サーバーのスケーリング計画の策定を支援します。
 * **機器およびプラットフォーム別の接続比率 (Web vs App)**
   * アクティブユーザーのプラットフォーム分布（Web / Android App / iOS App）をドーナツチャート形式で可視化し、フロントエンド最適化の優先順位付けに活用します。
+
+---
+
+## 関連ドキュメント
+- [実装詳細書: アクティブユーザートラッキング](../implementation/active-user-tracking.md)
+- [ADR-004: インメモリのスライディングウィンドウおよび日別アクティブユーザーコレクションを活用した接続者トラッキング](../decisions/ADR-004-active-user-tracking.md)
+- [トラブルシューティング: 002-active-user-ip-port-issue](../troubles/002-active-user-ip-port-issue.md)
+

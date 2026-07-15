@@ -100,3 +100,9 @@ flowchart TD
     }
   ]
   ```
+
+---
+
+## 関連ドキュメント
+- [機能仕様書: リクエストカウンター](../features/request-counter.md)
+- [ADR-003: 独自メトリクス収集およびリクエストカウンターアーキテクチャの採用](../decisions/ADR-003-request-counter-architecture.md)

@@ -83,3 +83,11 @@ flowchart TD
   }
   ```
 * **例外およびフォールバック**: DB照会エラーなどの例外発生時、API全体の500エラー障害を防止するため、エラーログを出力した上で、`current_active_users` の値を活用して論理的に計算されたフォールバック値を正常応答（200 OK）として返却します。
+
+---
+
+## 関連ドキュメント
+- [機能仕様書: アクティブユーザーダッシュボード](../features/active-user-dashboard.md)
+- [ADR-004: インメモリのスライディングウィンドウおよび日別アクティブユーザーコレクションを活用した接続者トラッキング](../decisions/ADR-004-active-user-tracking.md)
+- [トラブルシューティング: 002-active-user-ip-port-issue](../troubles/002-active-user-ip-port-issue.md)
+

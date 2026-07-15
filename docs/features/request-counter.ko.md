@@ -33,3 +33,9 @@
 
 ## 3. 향후 고도화 계획
 * **차트 라이브러리 도입**: 추후 React 어드민(`rusui-admin`)에 `Recharts` 라이브러리를 추가 설치하여, 시간에 따른 TPS 트렌드 선 그래프(Line Chart) 및 상태 코드별 성공/실패 비율 도넛 차트(Donut Chart) 시각화 피쳐 개발 예정.
+
+---
+
+## 관련 문서
+- [구현 상세서: 리퀘스트 카운터](../implementation/request-counter.ko.md)
+- [ADR-003: 자체 메트릭 수집 및 리퀘스트 카운터 아키텍처 채택](../decisions/ADR-003-request-counter-architecture.ko.md)
