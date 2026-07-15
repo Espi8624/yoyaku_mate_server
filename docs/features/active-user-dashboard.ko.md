@@ -46,3 +46,11 @@
   * 오늘 가장 트래픽이 몰렸던 피크 시간과 최대 동시 접속자 수를 보여줌으로써 서버 스케일링 계획 수립을 돕습니다.
 * **기기 및 플랫폼별 접속 비율 (Web vs App)**
   * 활성 사용자의 플랫폼 분포(Web / Android App / iOS App)를 도넛 차트 형태로 시각화하여 프론트엔드 최적화 우선순위에 활용합니다.
+
+---
+
+## 관련 문서
+- [구현 상세서: 활성 사용자 트래킹](../implementation/active-user-tracking.ko.md)
+- [ADR-004: 인메모리 슬라이딩 윈도우 및 일별 활성 사용자 컬렉션을 활용한 접속자 트래킹](../decisions/ADR-004-active-user-tracking.ko.md)
+- [트러블슈팅: 002-active-user-ip-port-issue](../troubles/002-active-user-ip-port-issue.ko.md)
+

@@ -66,4 +66,6 @@ if clientIP == "::1" {
 ---
 
 ## 관련 문서
-- [활성 사용자 트래킹 구현 상세서](../implementation/active-user-tracking.ko.md)
+- [기능 사양서: 활성 사용자 대시보드](../features/active-user-dashboard.ko.md)
+- [구현 상세서: 활성 사용자 트래킹](../implementation/active-user-tracking.ko.md)
+- [ADR-004: 인메모리 슬라이딩 윈도우 및 일별 활성 사용자 컬렉션을 활용한 접속자 트래킹](../decisions/ADR-004-active-user-tracking.ko.md)

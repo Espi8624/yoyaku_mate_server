@@ -33,3 +33,9 @@
 
 ## 3. 今後の高度化計画
 * **チャートライブラリの導入**: 今後 React 管理者ウェブ（`rusui-admin`）に `Recharts` ライブラリを追加インストールし、時間に応じたTPSトレンド折れ線グラフ（Line Chart）およびステータスコード別成功/失敗比率のドーナツチャート（Donut Chart）の可視化機能を開発予定。
+
+---
+
+## 関連ドキュメント
+- [実装詳細書: リクエストカウンター](../implementation/request-counter.md)
+- [ADR-003: 独自メトリクス収集およびリクエストカウンターアーキテクチャの採用](../decisions/ADR-003-request-counter-architecture.md)

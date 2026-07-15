@@ -100,3 +100,9 @@ flowchart TD
     }
   ]
   ```
+
+---
+
+## 관련 문서
+- [기능 사양서: 리퀘스트 카운터](../features/request-counter.ko.md)
+- [ADR-003: 자체 메트릭 수집 및 리퀘스트 카운터 아키텍처 채택](../decisions/ADR-003-request-counter-architecture.ko.md)

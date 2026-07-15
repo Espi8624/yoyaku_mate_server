@@ -62,6 +62,6 @@
 ---
 
 ## 관련 문서
-
-- [활성 사용자 대시보드 UI 및 명세서](../features/active-user-dashboard.ko.md)
-- [리퀘스트 대시보드 사양서](../features/request-counter.ko.md)
+- [기능 사양서: 활성 사용자 대시보드](../features/active-user-dashboard.ko.md)
+- [구현 상세서: 활성 사용자 트래킹](../implementation/active-user-tracking.ko.md)
+- [트러블슈팅: 002-active-user-ip-port-issue](../troubles/002-active-user-ip-port-issue.ko.md)

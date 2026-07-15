@@ -20,6 +20,7 @@ docs/
 | [waiting-list.md](./features/waiting-list.md) | 待機列の登録・管理・リアルタイム通知機能 |
 | [error-dashboard.md](./features/error-dashboard.md) | エラーメトリクス・ログのリアルタイム収集および監視ダッシュボード |
 | [request-counter.md](./features/request-counter.md) | リクエストメトリクス・ログのリアルタイム収集および監視ダッシュボード |
+| [active-user-dashboard.md](./features/active-user-dashboard.md) | アクティブユーザー(同時接続者/DAU/MAU)収集および監視ダッシュボード |
 
 
 ---
@@ -33,6 +34,9 @@ docs/
 | [sse.md](./implementation/sse.md) | SSE Brokerの実装 (リアルタイムPush) |
 | [idempotency.md](./implementation/idempotency.md) | 冪等性処理 (重複登録の防止) |
 | [atomic-counter.md](./implementation/atomic-counter.md) | 待機順番号のAtomic発番ロジック |
+| [error-dashboard.md](./implementation/error-dashboard.md) | エラーダッシュボードのバックエンドパイプラインおよびバッファリング実装詳細 |
+| [request-counter.md](./implementation/request-counter.md) | リクエストカウンターのバックエンドパイプラインおよびバッファリング実装詳細 |
+| [active-user-tracking.md](./implementation/active-user-tracking.md) | アクティブユーザートラッキングおよびリアルタイム/統計収集実装詳細 |
 
 ---
 
@@ -43,6 +47,7 @@ docs/
 | [ADR-001-use-sse.md](./decisions/ADR-001-use-sse.md) | WebSocketの代わりにSSEを選択した理由 |
 | [ADR-002-use-polling-for-error-dashboard.md](./decisions/ADR-002-use-polling-for-error-dashboard.md) | エラーダッシュボードにおけるHTTPポーリング採用の理由 |
 | [ADR-003-request-counter-architecture.md](./decisions/ADR-003-request-counter-architecture.md) | 独自メトリクス収集およびリクエストカウンターアーキテクチャの採用 |
+| [ADR-004-active-user-tracking.md](./decisions/ADR-004-active-user-tracking.md) | インメモリのスライディングウィンドウおよび日別アクティブユーザーコレクションを活用した接続者トラッキングの採用理由 |
 
 
 ---
@@ -52,6 +57,7 @@ docs/
 | ドキュメント | 説明 |
 |------|------|
 | [001-lessons-learned.md](./troubles/001-lessons-learned.md) | Goroutineリーク、Rate Limiter調整など開発プロセスの振り返り |
+| [002-active-user-ip-port-issue.md](./troubles/002-active-user-ip-port-issue.md) | リアルタイム接続者のエフェメラルポートおよびIPv6重複カウント防止解決プロセス |
 
 ---
 

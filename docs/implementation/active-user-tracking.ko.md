@@ -83,3 +83,11 @@ flowchart TD
   }
   ```
 * **예외 및 폴백**: DB 조회 에러 등 예외 발생 시, API 전체 500 장애를 차단하기 위해 오류 로그만 출력하고 `current_active_users` 값을 활용하여 논리적으로 계산된 폴백 값을 정상 응답(200)으로 제공합니다.
+
+---
+
+## 관련 문서
+- [기능 사양서: 활성 사용자 대시보드](../features/active-user-dashboard.ko.md)
+- [ADR-004: 인메모리 슬라이딩 윈도우 및 일별 활성 사용자 컬렉션을 활용한 접속자 트래킹](../decisions/ADR-004-active-user-tracking.ko.md)
+- [트러블슈팅: 002-active-user-ip-port-issue](../troubles/002-active-user-ip-port-issue.ko.md)
+

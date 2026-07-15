@@ -65,5 +65,7 @@ if clientIP == "::1" {
 
 ---
 
-## 関連文書
+## 関連ドキュメント
+- [機能仕様書: アクティブユーザーダッシュボード](../features/active-user-dashboard.md)
 - [実装詳細書: アクティブユーザートラッキング](../implementation/active-user-tracking.md)
+- [ADR-004: インメモリのスライディングウィンドウおよび日別アクティブユーザーコレクションを活用した接続者トラッキング](../decisions/ADR-004-active-user-tracking.md)
