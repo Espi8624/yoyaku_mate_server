@@ -22,6 +22,7 @@ docs/
 | [request-counter.md](./features/request-counter.md) | リクエストメトリクス・ログのリアルタイム収集および監視ダッシュボード |
 | [active-user-dashboard.md](./features/active-user-dashboard.md) | アクティブユーザー(同時接続者/DAU/MAU)収集および監視ダッシュボード |
 | [sse-monitoring.md](./features/sse-monitoring.md) | SSEステータス（接続数、維持時間）およびゾンビ接続監視モニタリング |
+| [response-time-dashboard.md](./features/response-time-dashboard.md) | APIレイテンシ(avg/P95/P99)およびエンドポイント別応答時間監視ダッシュボード |
 
 
 ---
@@ -39,6 +40,7 @@ docs/
 | [request-counter.md](./implementation/request-counter.md) | リクエストカウンターのバックエンドパイプラインおよびバッファリング実装詳細 |
 | [active-user-tracking.md](./implementation/active-user-tracking.md) | アクティブユーザートラッキングおよびリアルタイム/統計収集実装詳細 |
 | [sse-monitoring.md](./implementation/sse-monitoring.md) | SSEブローカーのステータス収集およびHeartbeatによるゾンビ接続の自動クリア実装詳細 |
+| [response-time-dashboard.md](./implementation/response-time-dashboard.md) | Response Time集計ハンドラー、MongoDB $percentile Aggregation、モニタリング汚染防止フィルターの実装詳細 |
 
 ---
 

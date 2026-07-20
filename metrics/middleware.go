@@ -28,8 +28,15 @@ func (rw *responseWriterWrapper) Flush() {
 }
 
 // - すべてのAPIリクエストの応答時間を測定し、詳細リクエストログとエラーログを収集してトラッカーへ伝達するミドルウェア
+// - /api/admin/metrics 配下はモニタリング用ポーリングのため、ログ記録対象から除外する
 func MetricsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// - 管理ダッシュボードのポーリングリクエスト自体が統計を汚染しないよう除外
+		if strings.HasPrefix(r.URL.Path, "/api/admin/metrics") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		start := time.Now()
 		rw := &responseWriterWrapper{w, http.StatusOK}
 		
