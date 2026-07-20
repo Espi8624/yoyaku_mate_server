@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"log"
+	"math"
 	"net/http"
 	"time"
 	"yoyaku_mate_server/db"
@@ -300,4 +301,211 @@ func GetSSEMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, result, http.StatusOK)
+}
+
+// - クエリパラメータ ?range=5m|1h|24h を受け取り、指定期間内の
+// - 全体サマリー(avg/p95/p99/error_rate)と遅いエンドポイント上位10件を集計して返すハンドラー
+// - MongoDB 7.0以上の $percentile 演算子を使用
+func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
+	if collection == nil {
+		utils.RespondWithError(w, "Database connection error", http.StatusInternalServerError)
+		return
+	}
+
+	// - クエリパラメータからtime range取得 (デフォルト: 1h)
+	rangeParam := r.URL.Query().Get("range")
+	var since time.Time
+	switch rangeParam {
+	case "5m":
+		since = time.Now().UTC().Add(-5 * time.Minute)
+	case "24h":
+		since = time.Now().UTC().Add(-24 * time.Hour)
+	default: // "1h" or anything else
+		since = time.Now().UTC().Add(-1 * time.Hour)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	matchStage := bson.D{{Key: "$match", Value: bson.D{
+		{Key: "timestamp", Value: bson.D{{Key: "$gte", Value: since}}},
+	}}}
+
+	// --- 1. エンドポイント別集計 (上位10件) ---
+	endpointPipeline := mongo.Pipeline{
+		matchStage,
+		// - path+methodごとにグループ化し、avg/p95/p99/件数/エラー件数を集計
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: bson.D{
+				{Key: "path", Value: "$path"},
+				{Key: "method", Value: "$method"},
+			}},
+			{Key: "avg_ms", Value: bson.D{{Key: "$avg", Value: "$response_time"}}},
+			{Key: "p95_ms", Value: bson.D{
+				{Key: "$percentile", Value: bson.D{
+					{Key: "input", Value: "$response_time"},
+					{Key: "p", Value: bson.A{0.95}},
+					{Key: "method", Value: "approximate"},
+				}},
+			}},
+			{Key: "p99_ms", Value: bson.D{
+				{Key: "$percentile", Value: bson.D{
+					{Key: "input", Value: "$response_time"},
+					{Key: "p", Value: bson.A{0.99}},
+					{Key: "method", Value: "approximate"},
+				}},
+			}},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "error_count", Value: bson.D{
+				{Key: "$sum", Value: bson.D{
+					{Key: "$cond", Value: bson.A{
+						bson.D{{Key: "$gte", Value: bson.A{"$status_code", 400}}},
+						1, 0,
+					}},
+				}},
+			}},
+		}}},
+		// - avg_msの降順で上位10件に絞り込む
+		{{Key: "$sort", Value: bson.D{{Key: "avg_ms", Value: -1}}}},
+		{{Key: "$limit", Value: 10}},
+	}
+
+	endpointCursor, err := collection.Aggregate(ctx, endpointPipeline)
+	if err != nil {
+		log.Printf("Endpoint latency aggregation error: %v", err)
+		utils.RespondWithError(w, "Failed to aggregate endpoint latency", http.StatusInternalServerError)
+		return
+	}
+	defer endpointCursor.Close(ctx)
+
+	var rawEndpoints []bson.M
+	if err := endpointCursor.All(ctx, &rawEndpoints); err != nil {
+		log.Printf("Endpoint cursor decode error: %v", err)
+		utils.RespondWithError(w, "Failed to decode endpoint latency", http.StatusInternalServerError)
+		return
+	}
+
+	// - bson.Mから型安全なEndpointLatencyスライスへ変換
+	endpoints := make([]models.EndpointLatency, 0, len(rawEndpoints))
+	for _, raw := range rawEndpoints {
+		ep := models.EndpointLatency{}
+		if id, ok := raw["_id"].(bson.M); ok {
+			ep.Path, _ = id["path"].(string)
+			ep.Method, _ = id["method"].(string)
+		}
+		ep.AvgMs = math.Round(toFloat64(raw["avg_ms"])*10) / 10
+		// - $percentileはスライスで返すため最初の要素を取得
+		if arr, ok := raw["p95_ms"].(bson.A); ok && len(arr) > 0 {
+			ep.P95Ms = math.Round(toFloat64(arr[0])*10) / 10
+		}
+		if arr, ok := raw["p99_ms"].(bson.A); ok && len(arr) > 0 {
+			ep.P99Ms = math.Round(toFloat64(arr[0])*10) / 10
+		}
+		ep.Count = toInt64(raw["count"])
+		errorCount := toInt64(raw["error_count"])
+		if ep.Count > 0 {
+			ep.ErrorPct = math.Round(float64(errorCount)/float64(ep.Count)*100*10) / 10
+		}
+		endpoints = append(endpoints, ep)
+	}
+
+	// --- 2. 全体サマリー集計 ---
+	summaryPipeline := mongo.Pipeline{
+		matchStage,
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "avg_ms", Value: bson.D{{Key: "$avg", Value: "$response_time"}}},
+			{Key: "p95_ms", Value: bson.D{
+				{Key: "$percentile", Value: bson.D{
+					{Key: "input", Value: "$response_time"},
+					{Key: "p", Value: bson.A{0.95}},
+					{Key: "method", Value: "approximate"},
+				}},
+			}},
+			{Key: "p99_ms", Value: bson.D{
+				{Key: "$percentile", Value: bson.D{
+					{Key: "input", Value: "$response_time"},
+					{Key: "p", Value: bson.A{0.99}},
+					{Key: "method", Value: "approximate"},
+				}},
+			}},
+			{Key: "total", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "error_count", Value: bson.D{
+				{Key: "$sum", Value: bson.D{
+					{Key: "$cond", Value: bson.A{
+						bson.D{{Key: "$gte", Value: bson.A{"$status_code", 400}}},
+						1, 0,
+					}},
+				}},
+			}},
+		}}},
+	}
+
+	summaryCursor, err := collection.Aggregate(ctx, summaryPipeline)
+	if err != nil {
+		log.Printf("Summary latency aggregation error: %v", err)
+		utils.RespondWithError(w, "Failed to aggregate summary", http.StatusInternalServerError)
+		return
+	}
+	defer summaryCursor.Close(ctx)
+
+	var summaryRaw []bson.M
+	if err := summaryCursor.All(ctx, &summaryRaw); err != nil {
+		log.Printf("Summary cursor decode error: %v", err)
+		utils.RespondWithError(w, "Failed to decode summary", http.StatusInternalServerError)
+		return
+	}
+
+	summary := models.ResponseTimeSummary{}
+	if len(summaryRaw) > 0 {
+		raw := summaryRaw[0]
+		summary.AvgMs = math.Round(toFloat64(raw["avg_ms"])*10) / 10
+		if arr, ok := raw["p95_ms"].(bson.A); ok && len(arr) > 0 {
+			summary.P95Ms = math.Round(toFloat64(arr[0])*10) / 10
+		}
+		if arr, ok := raw["p99_ms"].(bson.A); ok && len(arr) > 0 {
+			summary.P99Ms = math.Round(toFloat64(arr[0])*10) / 10
+		}
+		total := toInt64(raw["total"])
+		errorCount := toInt64(raw["error_count"])
+		if total > 0 {
+			summary.ErrorRatePct = math.Round(float64(errorCount)/float64(total)*100*10) / 10
+		}
+	}
+
+	result := models.ResponseTimeMetrics{
+		Summary:   summary,
+		Endpoints: endpoints,
+	}
+
+	utils.RespondWithJSON(w, result, http.StatusOK)
+}
+
+// - interface{}から float64へ安全に型変換するヘルパー
+func toFloat64(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case float32:
+		return float64(val)
+	case int32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	}
+	return 0
+}
+
+// - interface{}から int64へ安全に型変換するヘルパー
+func toInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int32:
+		return int64(val)
+	case int64:
+		return val
+	case float64:
+		return int64(val)
+	}
+	return 0
 }

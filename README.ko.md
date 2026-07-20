@@ -56,7 +56,7 @@ flyctl deploy
 handlers/   → HTTP 파싱, 인증, 비즈니스 룰 검증
 data/       → MongoDB 쿼리 (데이터 접근 계층)
 events/     → SSE Broker (in-memory pub/sub) 및 Heartbeat 좀비 연결 제거
-metrics/    → 에러, API 리퀘스트, 활성 사용자(Concurrent/DAU/MAU) 수집, 인메모리 버퍼링, 비동기 배치 저장
+metrics/    → 에러, API 리퀘스트, 응답시간(Response Time), 활성 사용자(Concurrent/DAU/MAU) 수집, 인메모리 버퍼링, 비동기 배치 저장
 auth/       → Firebase 토큰 / 세션 검증
 models/     → Go 구조체 ↔ BSON/JSON
 utils/      → 공통 유틸 (HMAC, JSON 응답 등)
