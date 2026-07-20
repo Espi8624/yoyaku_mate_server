@@ -16,8 +16,8 @@ sequenceDiagram
     autonumber
     actor Client as ユーザー / 管理者
     participant Router as Gorilla Mux / Middleware
-    participant Tracker as ErrorTracker (In-Memory)
-    participant Worker as Batch Worker (Goroutine)
+    participant Tracker as "ErrorTracker (In-Memory)"
+    participant Worker as "Batch Worker (Goroutine)"
     database DB as MongoDB Atlas
 
     Client->>Router: 1. APIリクエスト送信 (または接続強制終了)
