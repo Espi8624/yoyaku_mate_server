@@ -17,7 +17,7 @@ sequenceDiagram
     participant Tracker as "RequestTracker (In-Memory)"
     participant Worker as "Batch Worker (Goroutine)"
     participant Handler as GetResponseTimeMetricsHandler
-    database DB as "MongoDB Atlas (request_logs)"
+    participant DB as "MongoDB Atlas (request_logs)"
     actor Admin as 管理者ブラウザ
 
     Client->>Middleware: 1. APIリクエスト

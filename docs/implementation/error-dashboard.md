@@ -18,7 +18,7 @@ sequenceDiagram
     participant Router as Gorilla Mux / Middleware
     participant Tracker as "ErrorTracker (In-Memory)"
     participant Worker as "Batch Worker (Goroutine)"
-    database DB as MongoDB Atlas
+    participant DB as MongoDB Atlas
 
     Client->>Router: 1. APIリクエスト送信 (または接続強制終了)
     Router-->>Client: 2. API処理およびレスポンス返却 (400/500エラー発生)
