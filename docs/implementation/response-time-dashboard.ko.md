@@ -14,10 +14,10 @@ sequenceDiagram
     autonumber
     actor Client as 사용자 / 앱
     participant Middleware as MetricsMiddleware
-    participant Tracker as RequestTracker (In-Memory)
-    participant Worker as Batch Worker (Goroutine)
+    participant Tracker as "RequestTracker (In-Memory)"
+    participant Worker as "Batch Worker (Goroutine)"
     participant Handler as GetResponseTimeMetricsHandler
-    database DB as MongoDB Atlas (request_logs)
+    participant DB as "MongoDB Atlas (request_logs)"
     actor Admin as 관리자 브라우저
 
     Client->>Middleware: 1. API 요청
