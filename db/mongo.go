@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	DatabaseName              = "project_rusui"
-	CollectionWaitingList     = "waiting_list"
-	CollectionErrorLogs       = "error_logs"
-	CollectionRequestLogs     = "request_logs"
+	DatabaseName               = "project_rusui"
+	CollectionWaitingList      = "waiting_list"
+	CollectionErrorLogs        = "error_logs"
+	CollectionRequestLogs      = "request_logs"
 	CollectionDailyActiveUsers = "daily_active_users"
+	CollectionAuditLogs        = "audit_logs"
 )
 
 var MongoClient *mongo.Client
@@ -187,6 +188,33 @@ func EnsureIndexes() error {
 			log.Printf("Failed to create compound unique index for daily_active_users: %v", err)
 		} else {
 			log.Println("Created unique index: idx_date_ip on daily_active_users")
+		}
+	}
+
+	auditLogsCollection := GetCollection(DatabaseName, CollectionAuditLogs)
+	if auditLogsCollection != nil {
+		// - ディスク容量節約のため90日間（7,776,000秒）TTLインデックスを適用
+		auditTTLIndexModel := mongo.IndexModel{
+			Keys:    bson.D{{Key: "timestamp", Value: 1}},
+			Options: options.Index().SetExpireAfterSeconds(7776000).SetName("idx_audit_logs_ttl"),
+		}
+		_, err := auditLogsCollection.Indexes().CreateOne(ctx, auditTTLIndexModel)
+		if err != nil {
+			log.Printf("Failed to create TTL index for audit_logs: %v", err)
+		} else {
+			log.Println("Created TTL index: idx_audit_logs_ttl on audit_logs (90 days)")
+		}
+
+		// - 最新順の取得検索最適化インデックス
+		timeIndexModel := mongo.IndexModel{
+			Keys:    bson.D{{Key: "timestamp", Value: -1}},
+			Options: options.Index().SetName("idx_audit_logs_timestamp"),
+		}
+		_, err = auditLogsCollection.Indexes().CreateOne(ctx, timeIndexModel)
+		if err != nil {
+			log.Printf("Failed to create timestamp index for audit_logs: %v", err)
+		} else {
+			log.Println("Created index: idx_audit_logs_timestamp on audit_logs")
 		}
 	}
 

@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
@@ -43,11 +45,17 @@ func UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := fmt.Sprintf("STORE_%s", payload.Status)
+
 	err := data.UpdateLicenseStatus(storeId, payload.Status, payload.Comment)
 	if err != nil {
+		metrics.SetAuditContext(r, action, fmt.Sprintf("Store ID: %s", storeId), payload.Comment)
 		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// - 監査イベントコンテキストの注入
+	metrics.SetAuditContext(r, action, fmt.Sprintf("Store ID: %s", storeId), payload.Comment)
 
 	utils.RespondWithJSON(w, map[string]string{"message": "Store status updated successfully"}, http.StatusOK)
 }

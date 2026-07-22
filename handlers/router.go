@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 
+	"yoyaku_mate_server/metrics"
+
 	"github.com/gorilla/mux"
 )
 
@@ -55,6 +57,8 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 
 	// Admin endpoints
 	adminApi := api.PathPrefix("/admin").Subrouter()
+	// - Admin 전용 감사 로그 미들웨어 등록 (MetricsMiddleware와 독립적으로 적용)
+	adminApi.Use(metrics.AuditMiddleware)
 
 	adminApi.HandleFunc("/stores", GetStoresHandler)
 	adminApi.HandleFunc("/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
@@ -66,6 +70,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	adminApi.HandleFunc("/metrics/active-users", GetActiveUserMetricsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/sse-status", GetSSEMetricsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/response-time", GetResponseTimeMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/audit-logs", GetAuditLogsHandler).Methods("GET", "OPTIONS")
 
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", GetStoreStaffHandler).Methods("GET", "OPTIONS")

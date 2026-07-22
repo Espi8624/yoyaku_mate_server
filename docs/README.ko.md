@@ -23,6 +23,7 @@ docs/
 | [active-user-dashboard.ko.md](./features/active-user-dashboard.ko.md) | 활성 사용자(동시 접속자/DAU/MAU) 수집 및 모니터링 대시보드 |
 | [sse-monitoring.ko.md](./features/sse-monitoring.ko.md) | SSE 상태(연결 수, 유지 시간) 및 좀비 연결 감시 모니터링 |
 | [response-time-dashboard.ko.md](./features/response-time-dashboard.ko.md) | API 레이턴시(avg/P95/P99) 및 엔드포인트별 응답시간 모니터링 대시보드 |
+| [audit-log.ko.md](./features/audit-log.ko.md) | 관리자 행위 감사 로그 자동 기록 및 이력 관리 |
 
 ---
 
@@ -40,6 +41,7 @@ docs/
 | [active-user-tracking.ko.md](./implementation/active-user-tracking.ko.md) | 활성 사용자 트래킹 및 실시간/통계 수집 구현 상세 |
 | [sse-monitoring.ko.md](./implementation/sse-monitoring.ko.md) | SSE 브로커 상태 수집 및 Heartbeat 좀비 연결 자동 제거 구현 상세 |
 | [response-time-dashboard.ko.md](./implementation/response-time-dashboard.ko.md) | Response Time 집계 핸들러, MongoDB $percentile Aggregation, 모니터링 오염 방지 필터 구현 상세 |
+| [audit-log.ko.md](./implementation/audit-log.ko.md) | 감사 로그 Pointer 기반 Context 공유, AuditMiddleware, AuditTracker 배치 저장 구현 상세 |
 
 ---
 
