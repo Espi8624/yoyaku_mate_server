@@ -249,3 +249,78 @@ func (t *RequestTracker) flush() {
 	}
 }
 
+
+// =====================================================================
+// AuditTracker — 管理者操作の監査ログバッファおよび非同期保存
+// =====================================================================
+
+var (
+	auditTracker *AuditTracker
+	auditOnce    sync.Once
+)
+
+// - 管理者操作の監査ログをメモリ内にバッファリングし、非同期でMongoDBに一括保存する構造体
+type AuditTracker struct {
+	logBuffer []models.AuditLog
+	mu        sync.Mutex
+}
+
+// - AuditTracker のシングルトンインスタンスを返し、初回呼び出し時に5秒周期のバッチワーカーを開始
+func GetAuditTracker() *AuditTracker {
+	auditOnce.Do(func() {
+		auditTracker = &AuditTracker{
+			logBuffer: make([]models.AuditLog, 0, 100),
+		}
+		go auditTracker.startBatchWorker()
+	})
+	return auditTracker
+}
+
+// - 監査ログオブジェクトをメモリバッファに追加（メモリオーバーフロー防止のため最大1,000件制限）
+func (t *AuditTracker) RecordAudit(auditLog models.AuditLog) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(t.logBuffer) < 1000 {
+		t.logBuffer = append(t.logBuffer, auditLog)
+	}
+}
+
+// - 5秒周期でメモリバッファに蓄積された監査ログをMongoDBに一括保存するバッチワーカー
+func (t *AuditTracker) startBatchWorker() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		t.flush()
+	}
+}
+
+// - メモリバッファの内容をMongoDBの audit_logs コレクションに BulkInsert 後、バッファを初期化
+func (t *AuditTracker) flush() {
+	t.mu.Lock()
+	if len(t.logBuffer) == 0 {
+		t.mu.Unlock()
+		return
+	}
+
+	logsToInsert := make([]interface{}, len(t.logBuffer))
+	for i, logItem := range t.logBuffer {
+		logsToInsert[i] = logItem
+	}
+	t.logBuffer = make([]models.AuditLog, 0, 100)
+	t.mu.Unlock()
+
+	collection := db.GetCollection(db.DatabaseName, db.CollectionAuditLogs)
+	if collection == nil {
+		log.Println("Failed to get MongoDB audit_logs collection")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := collection.InsertMany(ctx, logsToInsert); err != nil {
+		log.Printf("Failed to bulk insert audit logs: %v", err)
+	}
+}
