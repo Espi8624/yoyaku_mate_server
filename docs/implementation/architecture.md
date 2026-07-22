@@ -123,6 +123,7 @@ Request
 | `/api/admin/metrics/requests` | APIリクエスト統計および詳細ログ一覧の取得 |
 | `/api/admin/metrics/active-users` | リアルタイム同時接続者数およびDAU/MAUの要約メトリクスの取得 |
 | `/api/admin/metrics/sse-status` | SSEブローカーの接続状況および平均接続時間の取得 (インメモリ) |
+| `/api/admin/metrics/audit-logs` | 管理者操作の監査ログ一覧の取得 |
 | `/api/stores/{storeId}/staff` | スタッフ管理 |
 | `/api/statistics` | 待機統計 |
 | `/api/public/ai-chat` | AIチャット (公開) |
@@ -136,6 +137,7 @@ Request
 - [リクエストカウンター実装詳細](./request-counter.md)
 - [アクティブユーザートラッキング実装詳細](./active-user-tracking.md)
 - [SSEステータス監視実装詳細](./sse-monitoring.md)
+- [監査ログ実装詳細](./audit-log.md)
 - [SSE実装詳細](./sse.md)
 - [冪等性実装詳細](./idempotency.md)
 - [Atomic Counter発番詳細](./atomic-counter.md)

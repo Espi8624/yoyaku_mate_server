@@ -509,3 +509,38 @@ func toInt64(v interface{}) int64 {
 	}
 	return 0
 }
+
+// - MongoDBの audit_logs コレクションから最新順で最大100件の監査ログを取得して返却
+func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
+	collection := db.GetCollection(db.DatabaseName, db.CollectionAuditLogs)
+	if collection == nil {
+		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	findOptions := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
+		SetLimit(100)
+
+	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch audit logs", http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var logs []models.AuditLog
+	if err = cursor.All(ctx, &logs); err != nil {
+		utils.RespondWithError(w, "Failed to decode audit logs", http.StatusInternalServerError)
+		return
+	}
+
+	if logs == nil {
+		logs = []models.AuditLog{}
+	}
+
+	utils.RespondWithJSON(w, logs, http.StatusOK)
+}
