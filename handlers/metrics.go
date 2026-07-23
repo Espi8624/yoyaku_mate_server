@@ -15,6 +15,10 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 // - MongoDBからエラー発生タイプ別の合計数をリアルタイムでカウントする
@@ -543,4 +547,36 @@ func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, logs, http.StatusOK)
+}
+
+// GetSystemMetricsHandler はリアルタイムのハードウェアリソース使用状況（CPU、Memory、Disk）を取得します
+func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. CPU Usage
+	cpuPercents, err := cpu.Percent(0, false) // 0 means do not block/wait
+	var cpuUsage float64
+	if err == nil && len(cpuPercents) > 0 {
+		cpuUsage = math.Round(cpuPercents[0]*10) / 10
+	}
+
+	// 2. Memory Usage
+	var memUsage float64
+	vMem, err := mem.VirtualMemory()
+	if err == nil {
+		memUsage = math.Round(vMem.UsedPercent*10) / 10
+	}
+
+	// 3. Disk Space Usage
+	var diskUsage float64
+	dUsage, err := disk.Usage("/")
+	if err == nil {
+		diskUsage = math.Round(dUsage.UsedPercent*10) / 10
+	}
+
+	metricsData := models.SystemMetrics{
+		CPUUsage:    cpuUsage,
+		MemoryUsage: memUsage,
+		DiskSpace:   diskUsage,
+	}
+
+	utils.RespondWithJSON(w, metricsData, http.StatusOK)
 }
