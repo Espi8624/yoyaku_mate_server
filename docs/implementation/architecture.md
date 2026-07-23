@@ -29,7 +29,7 @@ yoyaku_mate_server/
 │   ├── waiting_list_handler.go
 │   ├── sign_up_handler.go
 │   ├── statistics_handler.go
-│   ├── metrics.go       # メトリクスダッシュボードクエリAPIハンドラー (エラー、リクエスト、同時接続、SSEステータス)
+│   ├── metrics.go       # メトリクスダッシュボード参照APIハンドラ（エラー、リクエスト、同時接続、SSE、システムリソース）
 │   └── ...
 │
 ├── data/                # データアクセス層 (MongoDBクエリ)
