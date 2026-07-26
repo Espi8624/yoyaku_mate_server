@@ -72,6 +72,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	adminApi.HandleFunc("/metrics/response-time", GetResponseTimeMetricsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/audit-logs", GetAuditLogsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/system", GetSystemMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/db", GetDBMetricsHandler).Methods("GET", "OPTIONS")
 
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", GetStoreStaffHandler).Methods("GET", "OPTIONS")
