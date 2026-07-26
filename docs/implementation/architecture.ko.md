@@ -29,7 +29,7 @@ yoyaku_mate_server/
 │   ├── waiting_list_handler.go
 │   ├── sign_up_handler.go
 │   ├── statistics_handler.go
-│   ├── metrics.go       # 메트릭 대시보드 조회 API 핸들러 (에러, 리퀘스트, 동시접속, SSE, 시스템 리소스)
+│   ├── metrics.go       # 메트릭 대시보드 조회 API 핸들러 (에러, 리퀘스트, 동시접속, SSE, 시스템 리소스, DB 메트릭스)
 │   └── ...
 │
 ├── data/                # 데이터 접근 계층 (MongoDB 쿼리)
@@ -123,6 +123,8 @@ Request
 | `/api/admin/metrics/requests` | API 리퀘스트 통계 및 상세 로그 목록 조회 |
 | `/api/admin/metrics/active-users` | 실시간 동시 접속자 수 및 DAU/MAU 요약 메트릭 조회 |
 | `/api/admin/metrics/sse-status` | SSE 브로커 연결 현황 및 평균 연결 시간 조회 (인메모리) |
+| `/api/admin/metrics/system` | 실시간 서버 시스템 리소스(CPU/Memory/Disk) 모니터링 |
+| `/api/admin/metrics/db` | DB 메트릭스 (커넥션, 용량, 슬로우 쿼리) |
 | `/api/admin/metrics/audit-logs` | 관리자 작업 감사 로그 목록 조회 |
 | `/api/stores/{storeId}/staff` | 스태프 관리 |
 | `/api/statistics` | 대기 통계 |
@@ -137,6 +139,8 @@ Request
 - [리퀘스트 카운터 구현 상세](./request-counter.ko.md)
 - [활성 사용자 트래킹 구현 상세](./active-user-tracking.ko.md)
 - [SSE 상태 모니터링 구현 상세](./sse-monitoring.ko.md)
+- [시스템 메트릭스 구현 상세](./system-metrics-dashboard.ko.md)
+- [DB 메트릭스 구현 상세](./db-metrics.ko.md)
 - [감사 로그 구현 상세](./audit-log.ko.md)
 - [SSE 구현 상세](./sse.ko.md)
 - [멱등성 구현 상세](./idempotency.ko.md)

@@ -580,3 +580,58 @@ func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	utils.RespondWithJSON(w, metricsData, http.StatusOK)
 }
+
+// GetDBMetricsHandler は MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
+func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	if db.MongoClient == nil {
+		utils.RespondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var metricsData models.DBMetrics
+
+	// 1. Database Size (dbStats)
+	var dbStats bson.M
+	if err := db.MongoClient.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
+		if dataSize, ok := dbStats["dataSize"]; ok {
+			sizeBytes := toFloat64(dataSize)
+			// Convert bytes to MB and round to 2 decimal places
+			metricsData.DatabaseSizeMB = math.Round((sizeBytes/(1024*1024))*100) / 100
+		}
+	} else {
+		log.Printf("Failed to get dbStats: %v", err)
+	}
+
+	// 2. Active Connections (serverStatus) - 権限がない場合があるため、失敗時は静かにスキップ
+	var serverStatus bson.M
+	if err := db.MongoClient.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
+		if conns, ok := serverStatus["connections"].(bson.M); ok {
+			if current, ok := conns["current"]; ok {
+				metricsData.ActiveConnections = toInt64(current)
+			}
+		}
+	} else {
+		log.Printf("Failed to get serverStatus (may require clusterMonitor role): %v", err)
+	}
+
+	// 3. Slow Queries (24H) - RequestLogsコレクションで応答時間200ms以上をカウント（DB負荷を減らすためのApplication Log基盤）
+	reqLogCollection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
+	if reqLogCollection != nil {
+		yesterday := time.Now().UTC().Add(-24 * time.Hour)
+		slowCount, err := reqLogCollection.CountDocuments(ctx, bson.M{
+			"timestamp":     bson.M{"$gte": yesterday},
+			"response_time": bson.M{"$gte": 200},
+		})
+		if err == nil {
+			metricsData.SlowQueries24h = slowCount
+		} else {
+			log.Printf("Failed to count slow queries: %v", err)
+		}
+	}
+
+	utils.RespondWithJSON(w, metricsData, http.StatusOK)
+}
+
