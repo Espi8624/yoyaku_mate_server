@@ -29,7 +29,7 @@ yoyaku_mate_server/
 │   ├── waiting_list_handler.go
 │   ├── sign_up_handler.go
 │   ├── statistics_handler.go
-│   ├── metrics.go       # メトリクスダッシュボード参照APIハンドラ（エラー、リクエスト、同時接続、SSE、システムリソース）
+│   ├── metrics.go       # メトリクスダッシュボード照会 API ハンドラー (エラー、リクエスト、同時接続、SSE、システムリソース、DBメトリクス)）
 │   └── ...
 │
 ├── data/                # データアクセス層 (MongoDBクエリ)
@@ -122,8 +122,10 @@ Request
 | `/api/admin/metrics/errors` | エラーメトリクスの要約および最近の詳細ログ一覧の取得 |
 | `/api/admin/metrics/requests` | APIリクエスト統計および詳細ログ一覧の取得 |
 | `/api/admin/metrics/active-users` | リアルタイム同時接続者数およびDAU/MAUの要約メトリクスの取得 |
-| `/api/admin/metrics/sse-status` | SSEブローカーの接続状況および平均接続時間の取得 (インメモリ) |
-| `/api/admin/metrics/audit-logs` | 管理者操作の監査ログ一覧の取得 |
+| `/api/admin/metrics/sse-status` | SSE ブローカー接続状況および平均接続時間の照会 (インメモリ) |
+| `/api/admin/metrics/system` | リアルタイムシステムリソース (CPU/Memory/Disk) の監視 |
+| `/api/admin/metrics/db` | DB メトリクス (コネクション、容量、スロークエリ) |
+| `/api/admin/metrics/audit-logs` | 管理者作業の監査ログ一覧の照会 |
 | `/api/stores/{storeId}/staff` | スタッフ管理 |
 | `/api/statistics` | 待機統計 |
 | `/api/public/ai-chat` | AIチャット (公開) |
@@ -135,9 +137,11 @@ Request
 - [待機列機能仕様](../features/waiting-list.md)
 - [エラーダッシュボード実装詳細](./error-dashboard.md)
 - [リクエストカウンター実装詳細](./request-counter.md)
-- [アクティブユーザートラッキング実装詳細](./active-user-tracking.md)
-- [SSEステータス監視実装詳細](./sse-monitoring.md)
-- [監査ログ実装詳細](./audit-log.md)
+- [アクティブユーザートラッキングの実装詳細](./active-user-tracking.md)
+- [SSE 状態モニタリングの実装詳細](./sse-monitoring.md)
+- [システムメトリクスの実装詳細](./system-metrics-dashboard.md)
+- [DBメトリクスの実装詳細](./db-metrics.md)
+- [監査ログの実装詳細](./audit-log.md)
 - [SSE実装詳細](./sse.md)
 - [冪等性実装詳細](./idempotency.md)
 - [Atomic Counter発番詳細](./atomic-counter.md)
