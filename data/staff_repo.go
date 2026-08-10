@@ -12,25 +12,17 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// CreateStoreStaffInfo 新しい店舗スタッフ情報を作成
-func CreateStoreStaffInfo(info models.StoreStaffInfo) error {
-	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	info.CreatedAt = time.Now()
-	info.UpdatedAt = time.Now()
-
-	_, err := collection.InsertOne(ctx, info)
-	if err != nil {
-		log.Printf("Failed to create store_staff_info: %v", err)
-		return err
-	}
-	return nil
+type StaffRepository interface {
+	CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error)
+	CreateStoreStaffInfo(staffInfo models.StoreStaffInfo) error
+	GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error)
+	UpdateStoreStaffStatus(staffID, status string) error
+	UpdateStoreStaffPermissions(staffID string, permissions []string) error
 }
 
-// CheckStoreStaffExists ユーザーが既に店舗に所属しているかを確認
-func CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error) {
+type MongoStaffRepo struct{}
+
+func (r *MongoStaffRepo) CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -49,36 +41,27 @@ func CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, err
 	return count > 0, nil
 }
 
-// CheckStaffApprovalStatus は、指定されたユーザーが指定された店舗でAPPROVED状態かどうかを確認
-func CheckStaffApprovalStatus(userID primitive.ObjectID, storeID string) (bool, error) {
-	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var staffInfo models.StoreStaffInfo
-	err := collection.FindOne(ctx, bson.M{
-		"user_id":  userID,
-		"store_id": storeID,
-	}).Decode(&staffInfo)
-
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return false, nil // スタッフ情報が存在しない
-		}
-		return false, err
-	}
-
-	// APPROVED状態のみtrueを返す
-	return staffInfo.Status == models.StaffStatusApproved, nil
-}
-
-// GetStoreStaffByStoreID 店舗の全スタッフ情報をユーザー詳細とともに取得
-func GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
+func (r *MongoStaffRepo) CreateStoreStaffInfo(info models.StoreStaffInfo) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// UserInfoとJoinするための集計パイプライン
+	info.CreatedAt = time.Now()
+	info.UpdatedAt = time.Now()
+
+	_, err := collection.InsertOne(ctx, info)
+	if err != nil {
+		log.Printf("Failed to create store_staff_info: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (r *MongoStaffRepo) GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: bson.M{"store_id": storeID}}},
 		{{Key: "$lookup", Value: bson.M{
@@ -118,8 +101,7 @@ func GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error) {
 	return results, nil
 }
 
-// UpdateStoreStaffStatus スタッフのステータスを更新
-func UpdateStoreStaffStatus(staffID string, status string) error {
+func (r *MongoStaffRepo) UpdateStoreStaffStatus(staffID string, status string) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -145,8 +127,7 @@ func UpdateStoreStaffStatus(staffID string, status string) error {
 	return nil
 }
 
-// UpdateStoreStaffPermissions スタッフの権限を更新
-func UpdateStoreStaffPermissions(staffID string, permissions []string) error {
+func (r *MongoStaffRepo) UpdateStoreStaffPermissions(staffID string, permissions []string) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -170,4 +151,27 @@ func UpdateStoreStaffPermissions(staffID string, permissions []string) error {
 	}
 
 	return nil
+}
+
+// CheckStaffApprovalStatus は、指定されたユーザーが指定された店舗でAPPROVED状態かどうかを確認 (Not in interface but used by user_permission.go logic)
+func CheckStaffApprovalStatus(userID primitive.ObjectID, storeID string) (bool, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var staffInfo models.StoreStaffInfo
+	err := collection.FindOne(ctx, bson.M{
+		"user_id":  userID,
+		"store_id": storeID,
+	}).Decode(&staffInfo)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return false, nil // スタッフ情報が存在しない
+		}
+		return false, err
+	}
+
+	// APPROVED状態のみtrueを返す
+	return staffInfo.Status == models.StaffStatusApproved, nil
 }

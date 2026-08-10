@@ -1,22 +1,47 @@
 package handlers
 
 import (
-	"context"
-	"log"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
-	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
-
-	"encoding/json"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// GET /api/provider_user?user_id=xxx
-func UserHandler(w http.ResponseWriter, r *http.Request) {
+// UserInfoRepository ユーザー情報の取得と更新を抽象化するインターフェース
+type UserInfoRepository interface {
+	GetUserData(userID primitive.ObjectID) (*models.User, error)
+	UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) (*models.User, error)
+	GetUserDataByFirebaseUID(uid string) (*models.User, error)
+}
+
+// UserInfoHandler ユーザー情報関連のHTTPリクエストを処理するハンドラ
+type UserInfoHandler struct {
+	userRepo UserInfoRepository
+	authSvc  AuthService
+}
+
+func NewUserInfoHandler(userRepo UserInfoRepository, authSvc AuthService) *UserInfoHandler {
+	return &UserInfoHandler{
+		userRepo: userRepo,
+		authSvc:  authSvc,
+	}
+}
+
+// HandleUser GET /api/provider_user?user_id=xxx
+// HandleUser PUT /api/provider_user?user_id=xxx
+// - RequireAuthMiddlewareを通過後に呼び出される
+func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
+	// - ミドルウェアで格納された認証済みユーザーを取得
+	authUser, ok := GetUserFromContext(r.Context())
+	if !ok {
+		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		userID := r.URL.Query().Get("user_id")
@@ -25,19 +50,26 @@ func UserHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 文字列を ObjectId に変換
+		// - 文字列をObjectIdに変換
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
 			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
 
-		user, err := data.GetUserData(objectID)
+		// - 本人の情報のみ取得可能
+		if objectID != authUser.ID {
+			utils.RespondWithError(w, "Forbidden: cannot access other user's data", http.StatusForbidden)
+			return
+		}
+
+		user, err := h.userRepo.GetUserData(objectID)
 		if err != nil {
 			utils.RespondWithError(w, "User not found", http.StatusNotFound)
 			return
 		}
 		utils.RespondWithJSON(w, user, http.StatusOK)
+
 	case http.MethodPut:
 		userID := r.URL.Query().Get("user_id")
 		if userID == "" {
@@ -49,96 +81,48 @@ func UserHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
+
+		// - 本人の情報のみ更新可能（他ユーザーの更新を防止）
+		if objectID != authUser.ID {
+			utils.RespondWithError(w, "Forbidden: cannot modify other user's data", http.StatusForbidden)
+			return
+		}
+
 		var update map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		updatedUser, err := data.UpdateUserData(objectID, update)
+		updatedUser, err := h.userRepo.UpdateUserData(objectID, update)
 		if err != nil {
 			utils.RespondWithError(w, "Failed to update user info", http.StatusInternalServerError)
 			return
 		}
-		// REST 標準: PUT レスポンスに更新後のリソースを返却
+		// - REST標準: PUTレスポンスに更新後のリソースを返却
 		utils.RespondWithJSON(w, updatedUser, http.StatusOK)
+
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) {
-	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	// 認証情報取得と検証
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		utils.RespondWithError(w, "Unauthorized: Authorization header not found", http.StatusUnauthorized)
-		return
-	}
-
-	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	if idToken == authHeader {
-		utils.RespondWithError(w, "Unauthorized: Invalid token format", http.StatusUnauthorized)
-		return
-	}
-
-	firebaseUID, err := auth.VerifyIDToken(context.Background(), idToken)
-	if err != nil {
-		utils.RespondWithError(w, "Unauthorized: Invalid ID token", http.StatusUnauthorized)
-		return
-	}
-
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
-		return
-	}
-	file, header, err := r.FormFile("userImage")
-	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'userImage'", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
-	if err != nil {
-		log.Printf("Error uploading user to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
-		return
-	}
-
-	// DBアップデート
-	updatedUser, err := data.UpdateUserImageURL(firebaseUID, fileURL)
-	if err != nil {
-		log.Printf("Error updating user image URL in DB: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	utils.RespondWithJSON(w, updatedUser, http.StatusOK)
-}
-
-// GET /api/provider_user/firebase_uid?uid=xxxx
-// This acts as a "Secondary Login" or "Session Start" endpoint.
-func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
-	// 1. Verify Authentication
+// UserByFirebaseUIDHandler GET /api/provider_user/firebase_uid?uid=xxxx
+// - セカンダリログインまたはセッション開始エンドポイントとして機能する
+func (h *UserInfoHandler) UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
+	// - 1. 認証チェック
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
-	// 2. Validate Request UID
+	// - 2. リクエストUIDの検証
 	uid := r.URL.Query().Get("uid")
 	if uid == "" {
 		utils.RespondWithError(w, "Missing uid parameter", http.StatusBadRequest)
@@ -149,22 +133,22 @@ func UserByFirebaseUIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Check Intent (Regenerate Token?)
+	// - 3. トークン再生成の意図確認
 	regenerateToken := r.URL.Query().Get("regenerate_token") == "true"
 
-	// 4. Get User Data First
-	user, err := data.GetUserDataByFirebaseUID(uid)
+	// - 4. ユーザー情報取得
+	user, err := h.userRepo.GetUserDataByFirebaseUID(uid)
 	if err != nil {
 		utils.RespondWithError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
 	if regenerateToken {
-		// Generate New Login Token (Session ID)
+		// - 新しいログイントークン（セッションID）を生成
 		newLoginToken := utils.GenerateRandomString(32)
 
-		// Update User in DB with new token
-		_, err = data.UpdateUserData(user.ID, map[string]interface{}{
+		// - DBのユーザー情報を新しいトークンで更新
+		_, err = h.userRepo.UpdateUserData(user.ID, map[string]interface{}{
 			"login_token": newLoginToken,
 			"updated_at":  time.Now(),
 		})

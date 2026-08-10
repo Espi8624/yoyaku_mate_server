@@ -5,20 +5,42 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/data"
-	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
 	"github.com/gorilla/mux"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+// StaffRepository スタッフ管理の操作を抽象化するインターフェース
+type StaffRepository interface {
+	CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error)
+	CreateStoreStaffInfo(staffInfo models.StoreStaffInfo) error
+	GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error)
+	UpdateStoreStaffStatus(staffID, status string) error
+	UpdateStoreStaffPermissions(staffID string, permissions []string) error
+}
+
+// StoreStaffHandler スタッフ管理関連のHTTPリクエストを処理するハンドラ
+type StoreStaffHandler struct {
+	staffRepo StaffRepository
+	userRepo  UserRepository // UserRepository for getting user and checking permissions
+	storeRepo StoreInfoRepository // StoreRepository for checking store existence
+	authSvc   AuthService
+}
+
+func NewStoreStaffHandler(staffRepo StaffRepository, userRepo UserRepository, storeRepo StoreInfoRepository, authSvc AuthService) *StoreStaffHandler {
+	return &StoreStaffHandler{
+		staffRepo: staffRepo,
+		userRepo:  userRepo,
+		storeRepo: storeRepo,
+		authSvc:   authSvc,
+	}
+}
+
 // JoinStoreHandler スタッフが店舗に参加するためのリクエストを処理
-func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreStaffHandler) JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -31,7 +53,7 @@ func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
 		return
@@ -51,9 +73,7 @@ func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. FirebaseUIDによるユーザー検索
-	userCollection := db.GetCollection(data.DatabaseName, data.CollectionUserInfo)
-	var user models.User
-	err = userCollection.FindOne(r.Context(), bson.M{"firebase_uid": firebaseUID}).Decode(&user)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			utils.RespondWithError(w, "User not found", http.StatusNotFound)
@@ -64,19 +84,18 @@ func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. 店舗が存在するか確認
-	storeCollection := db.GetCollection(data.DatabaseName, data.CollectionStoreInfo)
-	count, err := storeCollection.CountDocuments(r.Context(), bson.M{"store_id": req.StoreID})
+	_, err = h.storeRepo.GetStoreData(req.StoreID)
 	if err != nil {
-		utils.RespondWithError(w, "Database error checking store", http.StatusInternalServerError)
-		return
-	}
-	if count == 0 {
-		utils.RespondWithError(w, "Store not found", http.StatusNotFound)
+		if err == mongo.ErrNoDocuments {
+			utils.RespondWithError(w, "Store not found", http.StatusNotFound)
+		} else {
+			utils.RespondWithError(w, "Database error checking store", http.StatusInternalServerError)
+		}
 		return
 	}
 
 	// 5. 既に参加済みまたは申請中か確認
-	exists, err := data.CheckStoreStaffExists(user.ID, req.StoreID)
+	exists, err := h.staffRepo.CheckStoreStaffExists(user.ID, req.StoreID)
 	if err != nil {
 		utils.RespondWithError(w, "Database error checking staff info", http.StatusInternalServerError)
 		return
@@ -97,7 +116,7 @@ func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	if err := data.CreateStoreStaffInfo(newStaffInfo); err != nil {
+	if err := h.staffRepo.CreateStoreStaffInfo(newStaffInfo); err != nil {
 		utils.RespondWithError(w, "Failed to create staff info", http.StatusInternalServerError)
 		return
 	}
@@ -106,7 +125,7 @@ func JoinStoreHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetStoreStaffHandler 店舗の全スタッフを取得するリクエストを処理
-func GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreStaffHandler) GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	storeID := vars["storeId"]
 
@@ -122,20 +141,20 @@ func GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, "manager", "")
+	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -146,7 +165,7 @@ func GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. スタッフリストの取得
-	staffList, err := data.GetStoreStaffByStoreID(storeID)
+	staffList, err := h.staffRepo.GetStoreStaffByStoreID(storeID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
 		return
@@ -156,7 +175,7 @@ func GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateStoreStaffStatusHandler スタッフのステータスを更新するリクエストを処理
-func UpdateStoreStaffStatusHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreStaffHandler) UpdateStoreStaffStatusHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	storeID := vars["storeId"]
 	staffID := vars["staffId"]
@@ -173,20 +192,20 @@ func UpdateStoreStaffStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, "manager", "")
+	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -217,7 +236,7 @@ func UpdateStoreStaffStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. ステータスの更新
-	if err := data.UpdateStoreStaffStatus(staffID, req.Status); err != nil {
+	if err := h.staffRepo.UpdateStoreStaffStatus(staffID, req.Status); err != nil {
 		utils.RespondWithError(w, "Failed to update staff status", http.StatusInternalServerError)
 		return
 	}
@@ -226,7 +245,7 @@ func UpdateStoreStaffStatusHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateStoreStaffPermissionsHandler スタッフの権限を更新するリクエストを処理
-func UpdateStoreStaffPermissionsHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreStaffHandler) UpdateStoreStaffPermissionsHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	storeID := vars["storeId"]
 	staffID := vars["staffId"]
@@ -243,20 +262,20 @@ func UpdateStoreStaffPermissionsHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	// ユーザーがこの店舗のマネージャーかどうか確認 (権限更新はマネージャーのみ可能)
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, "manager", "")
+	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -276,7 +295,7 @@ func UpdateStoreStaffPermissionsHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 3. 権限の更新
-	if err := data.UpdateStoreStaffPermissions(staffID, req.Permissions); err != nil {
+	if err := h.staffRepo.UpdateStoreStaffPermissions(staffID, req.Permissions); err != nil {
 		utils.RespondWithError(w, "Failed to update staff permissions", http.StatusInternalServerError)
 		return
 	}

@@ -27,9 +27,34 @@ type StoreAIContextResponse struct {
 	AIAdditionalInfo        string                          `json:"ai_additional_info"`          // AIへの追加情報
 }
 
-// StoreAIContextHandler AIチャットボット用リアルタイム店舗情報提供ハンドラ
+// AIContextStoreRepository AIコンテキスト構成に必要な店舗基本情報と設定情報を取得するためのインターフェース
+type AIContextStoreRepository interface {
+	GetStoreData(storeID string) (*models.Store, error)
+	GetSettings(storeID string) (*models.StoreSetting, error)
+}
+
+// AIContextWaitingListRepository AIコンテキスト構成に必要なリアルタイムの順番待ちリストを取得するためのインターフェース
+type AIContextWaitingListRepository interface {
+	GetWaitingList(storeID string) ([]models.WaitingList, error)
+}
+
+type StoreAIContextHandler struct {
+	storeRepo       AIContextStoreRepository
+	waitingListRepo AIContextWaitingListRepository
+	menuRepo        data.MenuRepository
+}
+
+func NewStoreAIContextHandler(storeRepo AIContextStoreRepository, waitingListRepo AIContextWaitingListRepository, menuRepo data.MenuRepository) *StoreAIContextHandler {
+	return &StoreAIContextHandler{
+		storeRepo:       storeRepo,
+		waitingListRepo: waitingListRepo,
+		menuRepo:        menuRepo,
+	}
+}
+
+// HandleGet AIチャットボット用リアルタイム店舗情報提供ハンドラ
 // GET /api/public/store_ai_context?store_id=xxx
-func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreAIContextHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -42,14 +67,14 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. 店舗基本情報取得
-	store, err := data.GetStoreData(storeID)
+	store, err := h.storeRepo.GetStoreData(storeID)
 	if err != nil {
 		utils.RespondWithError(w, "Store not found", http.StatusNotFound)
 		return
 	}
 
 	// 2. 店舗設定情報取得 (最大待機人数、組あたりの待機時間、営業時間、定休日)
-	settings, err := data.GetStoreSettingsData(storeID)
+	settings, err := h.storeRepo.GetSettings(storeID)
 	minutesPerTeam := 10 // デフォルト値
 	maxCapacity := 0     // 0なら無制限
 	formattedHours := ""
@@ -86,7 +111,7 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 	// 3. 現在の待機リストを取得して待機組数を計算
 	// 効率のためにCountDocumentsクエリを使用することもできますが、
 	// 既存ロジックとの一貫性のためにGetWaitingListDataを使用してフィルタリングします（データ量が多くないと仮定）
-	waitingList, err := data.GetWaitingListData(storeID)
+	waitingList, err := h.waitingListRepo.GetWaitingList(storeID)
 	currentWaitCount := 0
 	if err == nil {
 		for _, item := range waitingList {
@@ -97,7 +122,7 @@ func StoreAIContextHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. メニューリスト取得 (品切れ情報をリアルタイムに反映するため)
-	menuList, err := data.GetMenuListData(storeID)
+	menuList, err := h.menuRepo.GetMenuListData(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch menu list for AI context: %v", err)
 		menuList = []models.MenuList{} // エラー時は空リスト

@@ -69,5 +69,6 @@ docs/
 
 ## Refactoring (리팩토링)
 
-*기록 예정*
-
+| 문서 | 설명 |
+|------|------|
+| [001-di-repository-pattern.ko.md](./refactoring/001-di-repository-pattern.ko.md) | 핸들러 및 미들웨어 의존성 주입(DI) 및 리포지토리 패턴 적용 |

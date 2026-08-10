@@ -3,11 +3,24 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/models"
 )
 
+// LicenseCallStoreRepository 特定の店舗の営業許可証(ライセンス)情報を単一取得するためのインターフェース
+type LicenseCallStoreRepository interface {
+	GetLicense(storeID string) (*models.StoreLicense, error)
+}
+
+type StoreLicenseCallHandler struct {
+	repo LicenseCallStoreRepository
+}
+
+func NewStoreLicenseCallHandler(repo LicenseCallStoreRepository) *StoreLicenseCallHandler {
+	return &StoreLicenseCallHandler{repo: repo}
+}
+
 // 店舗認証情報返却
-func GetStoreLicenseHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreLicenseCallHandler) GetStoreLicenseHandler(w http.ResponseWriter, r *http.Request) {
 	// URL Queryパラメーターから値取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -16,7 +29,7 @@ func GetStoreLicenseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// DB照会呼出
-	license, err := data.GetStoreLicenseByStoreID(storeID)
+	license, err := h.repo.GetLicense(storeID)
 	if err != nil {
 		if err.Error() == "mongo: no documents in result" {
 			http.Error(w, "Store license not found", http.StatusNotFound)
