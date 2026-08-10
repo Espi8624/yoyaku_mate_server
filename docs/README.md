@@ -70,4 +70,6 @@ docs/
 
 ## Refactoring (リファクタリング)
 
-*記録予定*
+| ドキュメント | 説明 |
+|------|------|
+| [001-di-repository-pattern.md](./refactoring/001-di-repository-pattern.md) | ハンドラーおよびミドルウェアの依存性注入(DI)・リポジトリパターンの適用 |

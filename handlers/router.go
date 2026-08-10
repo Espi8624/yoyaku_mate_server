@@ -8,47 +8,73 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
+func RegisterRoutes(
+	r *mux.Router,
+	userRepo MiddlewareUserRepository,
+	uploadHandler *UploadHandler,
+	waitingHandler *WaitingListHandler,
+	menuHandler *MenuListHandler,
+	userInfoHandler *UserInfoHandler,
+	storeInfoHandler *StoreInfoHandler,
+	storeSettingsHandler *StoreSettingsHandler,
+	storeStaffHandler *StoreStaffHandler,
+	storeListHandler *StoreListHandler,
+	storeAiContextHandler *StoreAIContextHandler,
+	adminHandler *StoreInfoAdminHandler,
+	storeLicenseCallHandler *StoreLicenseCallHandler,
+	statisticsHandler *StatisticsHandler,
+) {
 	// ローカルファイルアップロードの静的ファイルサービングを設定
 	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 
-	api.HandleFunc("/waiting-list", WaitingListHandler)
-	api.HandleFunc("/waiting-list/poll", HandleWaitingListPolling)
-	api.HandleFunc("/waiting-list/stream", HandleWaitingListStream)
-	api.HandleFunc("/waiting-list/stream-user", HandleWaitingItemStream)
-	api.HandleFunc("/statistics", StatisticsHandler)
+	api.HandleFunc("/waiting-list", waitingHandler.Handle)
+	api.HandleFunc("/waiting-list/poll", waitingHandler.HandlePolling)
+	api.HandleFunc("/waiting-list/stream", waitingHandler.HandleStream)
+	api.HandleFunc("/waiting-list/stream-user", waitingHandler.HandleWaitingItemStream)
+	api.HandleFunc("/statistics", statisticsHandler.HandleGet)
 
-	api.HandleFunc("/public/store_ai_context", StoreAIContextHandler)
+	api.HandleFunc("/public/store_ai_context", storeAiContextHandler.HandleGet)
 	api.HandleFunc("/public/ai-chat", AIChatHandler).Methods("POST", "OPTIONS")
 
-	api.HandleFunc("/menu-list", MenuListHandler).Methods("GET", "POST", "OPTIONS", "PATCH")
-	api.HandleFunc("/menu-list/bulk-save", HandleBulkSaveMenuList)
+	api.HandleFunc("/menu-list", menuHandler.Handle).Methods("GET", "POST", "OPTIONS", "PATCH")
+	api.HandleFunc("/menu-list/bulk-save", menuHandler.HandleBulkSaveMenuList)
 	api.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
 
-	api.HandleFunc("/store_settings", StoreSettingsHandler)
+	// - 店舗設定の取得 (公開、GETのみ許可)
+	api.HandleFunc("/store_settings", storeSettingsHandler.GetStoreSettingsHandler).Methods("GET", "OPTIONS")
 	// ProviderMenu endpoints
-	api.HandleFunc("/provider_menu", MenuListHandler).Methods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+	api.HandleFunc("/provider_menu", menuHandler.Handle).Methods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
 	api.HandleFunc("/provider_menu/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_menu/category/bulk-update", HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_menu/category/bulk-delete", HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/provider_menu/all/bulk-delete", HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/provider_user", UserHandler)
+	api.HandleFunc("/provider_menu/category/bulk-update", menuHandler.HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
+	api.HandleFunc("/provider_menu/category/bulk-delete", menuHandler.HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/provider_menu/all/bulk-delete", menuHandler.HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
 	api.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_store", StoreHandler)
+	// - 店舗情報の取得 (公開、GETのみ許可)
+	api.HandleFunc("/provider_store", storeInfoHandler.GetStoreHandler).Methods("GET", "OPTIONS")
 	api.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_store/license", GetStoreLicenseHandler)
+	api.HandleFunc("/provider_store/license", storeLicenseCallHandler.GetStoreLicenseHandler)
+	api.HandleFunc("/provider_user/firebase_uid", userInfoHandler.UserByFirebaseUIDHandler)
 
-	api.HandleFunc("/provider_user/firebase_uid", UserByFirebaseUIDHandler)
+	// - 認証が必要なルートグループ (RequireAuthMiddlewareを適用)
+	authApi := api.PathPrefix("").Subrouter()
+	authApi.Use(RequireAuthMiddleware(userRepo))
+
+	// - ユーザー情報 (個人情報保護: GET/PUT ともに認証が必要)
+	authApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "OPTIONS")
+	// - 店舗情報の更新 (認証が必要、GETは公開ルートで処理)
+	authApi.HandleFunc("/provider_store", storeInfoHandler.UpdateStoreHandler).Methods("PUT", "OPTIONS")
+	// - 店舗設定の更新 (認証が必要、GETは公開ルートで処理)
+	authApi.HandleFunc("/store_settings", storeSettingsHandler.UpdateStoreSettingsHandler).Methods("PUT", "OPTIONS")
 
 	// Auth endpoints
-	api.HandleFunc("/provider_stores/store-list", GetMyStoresHandler)
+	api.HandleFunc("/provider_stores/store-list", storeListHandler.GetMyStoresHandler)
 
 	api.HandleFunc("/auth/signup", SignUpHandler)
 	api.HandleFunc("/stores/add", AddNewStoreHandler)
-	api.HandleFunc("/stores/join", JoinStoreHandler)
+	api.HandleFunc("/stores/join", storeStaffHandler.JoinStoreHandler)
 	api.HandleFunc("/auth/check-store", StoreExistsHandler)
 	api.HandleFunc("/auth/check-email", EmailCheckHandler)
 	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
@@ -60,8 +86,8 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	// Admin専用監査ログミドルウェア（MetricsMiddlewareと独立して適用）
 	adminApi.Use(metrics.AuditMiddleware)
 
-	adminApi.HandleFunc("/stores", GetStoresHandler)
-	adminApi.HandleFunc("/stores/{storeId}/status", UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
+	adminApi.HandleFunc("/stores", adminHandler.GetStoresHandler)
+	adminApi.HandleFunc("/stores/{storeId}/status", adminHandler.UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
 	adminApi.HandleFunc("/license-image-url", uploadHandler.GetLicenseImageURLHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/errors", GetErrorMetricsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/error-logs", GetErrorLogsHandler).Methods("GET", "OPTIONS")
@@ -75,7 +101,7 @@ func RegisterRoutes(r *mux.Router, uploadHandler *UploadHandler) {
 	adminApi.HandleFunc("/metrics/db", GetDBMetricsHandler).Methods("GET", "OPTIONS")
 
 	// Staff Management endpoints
-	api.HandleFunc("/stores/{storeId}/staff", GetStoreStaffHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/{staffId}", UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/{staffId}", storeStaffHandler.UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", storeStaffHandler.UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
 }

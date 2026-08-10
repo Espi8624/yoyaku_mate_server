@@ -4,38 +4,43 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
-	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// 店舗情報に対する GET および PUT リクエストを処理
-// GET /api/provider_store?store_id=xxx または ?user_id=xxx
-// PUT /api/provider_store?store_id=xxx
-func StoreHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		handleGetStore(w, r)
-	case http.MethodPut:
-		handleUpdateStore(w, r)
-	default:
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+// StoreInfoRepository 店舗情報の取得と更新を抽象化するインターフェース
+type StoreInfoRepository interface {
+	GetStoreData(storeID string) (*models.Store, error)
+	GetStoreDataByUserID(userID primitive.ObjectID) (*models.Store, error)
+	UpdateStoreData(storeID string, update map[string]interface{}) (*models.Store, error)
+}
+
+// StoreInfoHandler 店舗情報関連のHTTPリクエストを処理するハンドラ
+type StoreInfoHandler struct {
+	storeRepo StoreInfoRepository
+	userRepo  UserRepository // UserRepository for permission check
+}
+
+func NewStoreInfoHandler(storeRepo StoreInfoRepository, userRepo UserRepository) *StoreInfoHandler {
+	return &StoreInfoHandler{
+		storeRepo: storeRepo,
+		userRepo:  userRepo,
 	}
 }
 
-// 店舗情報の取得(GET)を処理
-func handleGetStore(w http.ResponseWriter, r *http.Request) {
+// GetStoreHandler 店舗情報の取得 (GET) - 公開エンドポイント、認証不要
+// GET /api/provider_store?store_id=xxx または ?user_id=xxx
+func (h *StoreInfoHandler) GetStoreHandler(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	userID := r.URL.Query().Get("user_id")
 
 	if storeID != "" {
-		// store_id で照会
-		store, err := data.GetStoreData(storeID)
+		// - store_id で照会
+		store, err := h.storeRepo.GetStoreData(storeID)
 		if err != nil {
-			// data 関数が mongo.ErrNoDocuments を返却したら 404, その他は 500
 			if err == mongo.ErrNoDocuments {
 				utils.RespondWithError(w, "Store not found by store_id", http.StatusNotFound)
 			} else {
@@ -43,22 +48,20 @@ func handleGetStore(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		// 成功時、Status 200 ＆ データ を 'data' キーでラップして返却
 		utils.RespondWithJSON(w, store, http.StatusOK)
 		return
 	}
 
 	if userID != "" {
-		// user_id で照会
+		// - user_id で照会
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
 			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
 
-		store, err := data.GetStoreDataByUserID(objectID)
+		store, err := h.storeRepo.GetStoreDataByUserID(objectID)
 		if err != nil {
-			// data 関数が mongo.ErrNoDocuments を返却したら 404, その他は 500
 			if err == mongo.ErrNoDocuments {
 				utils.RespondWithError(w, "Store not found for the given user_id", http.StatusNotFound)
 			} else {
@@ -66,8 +69,6 @@ func handleGetStore(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-
-		// 成功時、Status 200 ＆ データ を 'data' キーでラップして返却
 		utils.RespondWithJSON(w, store, http.StatusOK)
 		return
 	}
@@ -75,12 +76,34 @@ func handleGetStore(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithError(w, "Missing required query parameter: store_id or user_id", http.StatusBadRequest)
 }
 
-// 店舗情報修正(PUT) ロジックを処理
+// UpdateStoreHandler 店舗情報の更新 (PUT) - 認証が必要なエンドポイント
 // PUT /api/provider_store?store_id=xxx
-func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
+// - RequireAuthMiddlewareを通過後に呼び出される
+// - マネージャーまたは承認済みスタッフのみ更新可能
+func (h *StoreInfoHandler) UpdateStoreHandler(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// - ミドルウェアで格納された認証済みユーザーを取得
+	authUser, ok := GetUserFromContext(r.Context())
+	if !ok {
+		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// - 権限チェック: マネージャーまたは承認済みスタッフのみ更新可能
+	hasPermission, err := h.userRepo.CheckStorePermission(authUser.ID, storeID, authUser.Role, "")
+	if err != nil {
+		log.Printf("Failed to check user permission: %v", err)
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasPermission {
+		log.Printf("User %s does not have permission for store %s", authUser.ID.Hex(), storeID)
+		utils.RespondWithError(w, "この店舗の情報を修正する権限がありません。", http.StatusForbidden)
 		return
 	}
 
@@ -90,54 +113,12 @@ func handleUpdateStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedStore, err := data.UpdateStoreData(storeID, update)
+	updatedStore, err := h.storeRepo.UpdateStoreData(storeID, update)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to update store info", http.StatusInternalServerError)
 		return
 	}
 
-	// REST 標準: PUT レスポンスに更新後のリソースを返却 (200 OK)
-	utils.RespondWithJSON(w, updatedStore, http.StatusOK)
-}
-
-func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {
-	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	// storeId取得
-	vars := mux.Vars(r)
-	storeId := vars["storeId"]
-
-	// 'logoImage'ファイルをマルチパートフォームから取得
-	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB limit
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
-		return
-	}
-	file, header, err := r.FormFile("storeImage")
-	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'storeImage'", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
-	if err != nil {
-		log.Printf("Error uploading logo to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
-		return
-	}
-
-	// DBの店舗情報をアップデート
-	updatedStore, err := data.UpdateStoreImageURL(storeId, fileURL)
-	if err != nil {
-		log.Printf("Error updating store image URL in DB: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+	// - REST標準: PUTレスポンスに更新後のリソースを返却 (200 OK)
 	utils.RespondWithJSON(w, updatedStore, http.StatusOK)
 }

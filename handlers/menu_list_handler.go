@@ -8,31 +8,60 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/utils"
-
-	"github.com/gorilla/mux"
 )
 
-// MenuListHandler メニューリストリクエストを処理
-func MenuListHandler(w http.ResponseWriter, r *http.Request) {
+// ==========================================================
+// MenuListHandler 構造体 & コンストラクタ
+// ==========================================================
+
+// MenuListHandler メニューリスト関連のHTTPリクエストを処理するハンドラ
+type MenuListHandler struct {
+	menuRepo data.MenuRepository
+	userRepo UserRepository
+	authSvc  AuthService
+}
+
+// NewMenuListHandler MenuListHandlerのコンストラクタ
+func NewMenuListHandler(
+	menuRepo data.MenuRepository,
+	userRepo UserRepository,
+	authSvc AuthService,
+) *MenuListHandler {
+	return &MenuListHandler{
+		menuRepo: menuRepo,
+		userRepo: userRepo,
+		authSvc:  authSvc,
+	}
+}
+
+// ==========================================================
+// 公開ハンドラメソッド
+// ==========================================================
+
+// Handle メニューリストリクエストを処理するメインハンドラ
+func (h *MenuListHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		handleGetMenuList(w, r)
+		h.handleGetMenuList(w, r)
 	case http.MethodPost:
-		HandleBulkSaveMenuList(w, r)
+		h.HandleBulkSaveMenuList(w, r)
 	case http.MethodPatch:
-		handleUpdateSingleMenu(w, r)
+		h.handleUpdateSingleMenu(w, r)
 	case http.MethodDelete:
-		handleDeleteSingleMenu(w, r)
+		h.handleDeleteSingleMenu(w, r)
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
+// ==========================================================
+// プライベートハンドラメソッド
+// ==========================================================
+
 // handleGetMenuList メニューリストの取得を処理
-func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	// storeID をクエリパラメータから取得
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
@@ -41,7 +70,7 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// データ取得
-	menuListItems, err := data.GetMenuListData(storeID)
+	menuListItems, err := h.menuRepo.GetMenuListData(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch menu list: %v", err)
 		utils.RespondWithError(w, "Failed to fetch menu list", http.StatusInternalServerError)
@@ -75,24 +104,24 @@ func handleGetMenuList(w http.ResponseWriter, r *http.Request) {
 }
 
 // verifyMenuEditPermission 権限チェック用ヘルパー
-func verifyMenuEditPermission(r *http.Request, storeID string) error {
+func (h *MenuListHandler) verifyMenuEditPermission(r *http.Request, storeID string) error {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return fmt.Errorf("Authorization header is required")
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
 		return fmt.Errorf("Invalid or expired token")
 	}
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		return fmt.Errorf("User not found")
 	}
 
 	// 権限チェック: マネージャーまたは「menu_edit」権限を持つスタッフ
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "menu_edit")
+	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, user.Role, "menu_edit")
 	if err != nil {
 		return err
 	}
@@ -103,7 +132,7 @@ func verifyMenuEditPermission(r *http.Request, storeID string) error {
 }
 
 // handleUpdateSingleMenu 単一メニューの更新を処理
-func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 	var menuData map[string]interface{}
 
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -124,12 +153,12 @@ func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
-	updatedMenu, err := data.UpdateSingleMenu(menuData)
+	updatedMenu, err := h.menuRepo.UpdateSingleMenu(menuData)
 	if err != nil {
 		log.Printf("Failed to update menu: %v", err)
 		utils.RespondWithError(w, "Failed to update menu", http.StatusInternalServerError)
@@ -157,7 +186,7 @@ func handleUpdateSingleMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeleteSingleMenu 単一メニューの削除を処理
-func handleDeleteSingleMenu(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) handleDeleteSingleMenu(w http.ResponseWriter, r *http.Request) {
 	menuID := r.URL.Query().Get("id")
 	storeID := r.URL.Query().Get("store_id")
 
@@ -172,13 +201,13 @@ func handleDeleteSingleMenu(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 権限チェック
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
 	// 削除実行
-	if err := data.DeleteSingleMenu(menuID); err != nil {
+	if err := h.menuRepo.DeleteSingleMenu(menuID); err != nil {
 		log.Printf("Failed to delete menu: %v", err)
 		utils.RespondWithError(w, "Failed to delete menu", http.StatusInternalServerError)
 		return
@@ -188,14 +217,14 @@ func handleDeleteSingleMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBulkSaveMenuList メニューリストの一括保存を処理
-func HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
 		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
@@ -208,7 +237,7 @@ func HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	insertedItems, err := data.InsertMenuListData(storeID, menuData)
+	insertedItems, err := h.menuRepo.InsertMenuListData(storeID, menuData)
 	if err != nil {
 		log.Printf("Failed to insert menu items: %v", err)
 		utils.RespondWithError(w, "Failed to insert menu items", http.StatusInternalServerError)
@@ -240,7 +269,7 @@ func HandleBulkSaveMenuList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBulkUpdateCategory カテゴリー名の一括変更を処理
-func HandleBulkUpdateCategory(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) HandleBulkUpdateCategory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -252,7 +281,7 @@ func HandleBulkUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
@@ -274,7 +303,7 @@ func HandleBulkUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modifiedCount, err := data.BulkUpdateMenuCategory(storeID, reqBody.OldCategory, reqBody.NewCategory)
+	modifiedCount, err := h.menuRepo.BulkUpdateMenuCategory(storeID, reqBody.OldCategory, reqBody.NewCategory)
 	if err != nil {
 		log.Printf("Failed to bulk update categories: %v", err)
 		utils.RespondWithError(w, "Failed to bulk update categories", http.StatusInternalServerError)
@@ -288,7 +317,7 @@ func HandleBulkUpdateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBulkDeleteCategory カテゴリーの全メニュ一括削除 (disable)
-func HandleBulkDeleteCategory(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) HandleBulkDeleteCategory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -300,7 +329,7 @@ func HandleBulkDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
@@ -321,7 +350,7 @@ func HandleBulkDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modifiedCount, err := data.BulkDeleteMenuCategory(storeID, reqBody.Category)
+	modifiedCount, err := h.menuRepo.BulkDeleteMenuCategory(storeID, reqBody.Category)
 	if err != nil {
 		log.Printf("Failed to bulk delete category menus: %v", err)
 		utils.RespondWithError(w, "Failed to bulk delete category menus", http.StatusInternalServerError)
@@ -335,7 +364,7 @@ func HandleBulkDeleteCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBulkDeleteAllMenus ストアの全メニュ一括削除 (disable)
-func HandleBulkDeleteAllMenus(w http.ResponseWriter, r *http.Request) {
+func (h *MenuListHandler) HandleBulkDeleteAllMenus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -347,12 +376,12 @@ func HandleBulkDeleteAllMenus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := verifyMenuEditPermission(r, storeID); err != nil {
+	if err := h.verifyMenuEditPermission(r, storeID); err != nil {
 		utils.RespondWithError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
-	modifiedCount, err := data.BulkDeleteAllMenus(storeID)
+	modifiedCount, err := h.menuRepo.BulkDeleteAllMenus(storeID)
 	if err != nil {
 		log.Printf("Failed to bulk delete all menus: %v", err)
 		utils.RespondWithError(w, "Failed to bulk delete all menus", http.StatusInternalServerError)
@@ -363,47 +392,4 @@ func HandleBulkDeleteAllMenus(w http.ResponseWriter, r *http.Request) {
 		"success":        true,
 		"modified_count": modifiedCount,
 	}, http.StatusOK)
-}
-
-func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) {
-	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	// menuId取得
-	vars := mux.Vars(r)
-	menuId := vars["menuId"]
-
-	// 'menuImage'ファイルをマルチパートフォームから取得
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
-		return
-	}
-
-	file, header, err := r.FormFile("menuImage")
-	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'menuImage'", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
-	if err != nil {
-		log.Printf("Error uploading file to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
-		return
-	}
-
-	// DBのメニュー情報をアップデート
-	updatedMenu, err := data.UpdateMenuImageURL(menuId, fileURL)
-	if err != nil {
-		log.Printf("Error updating menu image URL in database: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	utils.RespondWithJSON(w, updatedMenu, http.StatusOK)
 }
