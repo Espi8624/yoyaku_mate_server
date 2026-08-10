@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
@@ -19,10 +18,24 @@ type updateStatusPayload struct {
 	Comment string `json:"comment"`
 }
 
-func GetStoresHandler(w http.ResponseWriter, r *http.Request) {
+// AdminStoreRepository 管理者ページで店舗一覧を取得し、営業許可証のステータスを更新するためのインターフェース
+type AdminStoreRepository interface {
+	GetStoresByStatus(status string) ([]models.StoreWithLicense, error)
+	UpdateLicenseStatus(storeId, status, comment string) error
+}
+
+type StoreInfoAdminHandler struct {
+	repo AdminStoreRepository
+}
+
+func NewStoreInfoAdminHandler(repo AdminStoreRepository) *StoreInfoAdminHandler {
+	return &StoreInfoAdminHandler{repo: repo}
+}
+
+func (h *StoreInfoAdminHandler) GetStoresHandler(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 
-	stores, err := data.GetStoresByStatus(status)
+	stores, err := h.repo.GetStoresByStatus(status)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to retrieve stores", http.StatusInternalServerError)
 		return
@@ -35,7 +48,7 @@ func GetStoresHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, stores, http.StatusOK)
 }
 
-func UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
+func (h *StoreInfoAdminHandler) UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	storeId := vars["storeId"]
 
@@ -47,7 +60,7 @@ func UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	action := fmt.Sprintf("STORE_%s", payload.Status)
 
-	err := data.UpdateLicenseStatus(storeId, payload.Status, payload.Comment)
+	err := h.repo.UpdateLicenseStatus(storeId, payload.Status, payload.Comment)
 	if err != nil {
 		metrics.SetAuditContext(r, action, fmt.Sprintf("Store ID: %s", storeId), payload.Comment)
 		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)

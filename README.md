@@ -53,8 +53,8 @@ flyctl deploy
 ## Architecture
 
 ```
-handlers/   → HTTPパース、認証、ビジネスルールの検証
-data/       → MongoDBクエリ (データアクセス層)
+handlers/   → HTTPパース、認証、ビジネスルールの検証 (Repository Pattern & DI)
+data/       → MongoDBクエリ (データアクセス層 - Repositoryの実装)
 events/     → SSE Broker (インメモリpub/sub) および Heartbeatによるゾンビ接続の自動クリア
 metrics/    → エラー、APIリクエスト、アクティブユーザー(同時接続者/DAU/MAU)、監査ログ(Audit Log)、システムリソース、DBメトリクスの収集、インメモリバッファリング、非同期バッチ保存
 auth/       → Firebaseトークン/セッション検証

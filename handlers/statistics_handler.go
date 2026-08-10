@@ -7,17 +7,37 @@ import (
 	"time"
 
 	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// StatisticsHandler は店舗の統計情報を取得するリクエストを処理します
-func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
+// StatsUserRepository 統計データの閲覧権限を確認するため、ユーザー情報とアクセス権限を検証するインターフェース
+type StatsUserRepository interface {
+	GetByFirebaseUID(uid string) (*models.User, error)
+	CheckStorePermission(userID primitive.ObjectID, storeID, role, permission string) (bool, error)
+}
+
+// StatsStoreRepository 統計の基準タイムゾーン設定を確認するため、店舗基本情報を取得するインターフェース
+type StatsStoreRepository interface {
+	GetStoreData(storeID string) (*models.Store, error)
+}
+
+type StatisticsHandler struct {
+	userRepo  StatsUserRepository
+	storeRepo StatsStoreRepository
+}
+
+func NewStatisticsHandler(userRepo StatsUserRepository, storeRepo StatsStoreRepository) *StatisticsHandler {
+	return &StatisticsHandler{userRepo: userRepo, storeRepo: storeRepo}
+}
+
+// HandleGet は店舗の統計情報を取得するリクエストを処理します
+func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -43,13 +63,13 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := data.GetUserByFirebaseUID(firebaseUID)
+	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
-	hasPermission, err := data.CheckUserStorePermission(user.ID, storeID, user.Role, "")
+	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, user.Role, "")
 	if err != nil || !hasPermission {
 		utils.RespondWithError(w, "Permission denied", http.StatusForbidden)
 		return
@@ -65,7 +85,7 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 	startDateStr := r.URL.Query().Get("start_date")
 	endDateStr := r.URL.Query().Get("end_date")
 
-	stats, err := CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr)
+	stats, err := h.CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr)
 	if err != nil {
 		log.Printf("Failed to calculate statistics for store %s: %v", storeID, err)
 		utils.RespondWithError(w, "Failed to calculate statistics", http.StatusInternalServerError)
@@ -75,9 +95,9 @@ func StatisticsHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, stats, http.StatusOK)
 }
 
-func CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr string) (*models.StatisticsResponse, error) {
+func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr string) (*models.StatisticsResponse, error) {
 	// 店舗情報の取得（タイムゾーン確認のため）
-	store, err := data.GetStoreData(storeID)
+	store, err := h.storeRepo.GetStoreData(storeID)
 	locationName := "Asia/Tokyo"
 	if err == nil && store != nil && store.Timezone != "" {
 		locationName = store.Timezone

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/events"
 	handlers "yoyaku_mate_server/handlers"
 	"yoyaku_mate_server/metrics"
 
@@ -55,9 +57,18 @@ func main() {
 			log.Printf("Warning: Could not initialize R2 client: %v", r2Err)
 		}
 	}
+	menuRepo := &data.MongoMenuRepo{}
+	userRepo := &data.MongoUserRepo{}
+	storeRepo := &data.MongoStoreRepo{}
+	staffRepo := &data.MongoStaffRepo{}
+	authSvc := &auth.FirebaseAuthService{}
 
 	uploadHandler := handlers.NewUploadHandler(
 		storageClient,
+		menuRepo,
+		userRepo,
+		storeRepo,
+		authSvc,
 		cfg.R2.AssetsBucketName,
 		cfg.R2.AssetsPublicDomain,
 		cfg.R2.BizBucketName,
@@ -68,8 +79,50 @@ func main() {
 	r := mux.NewRouter()
 	r.Use(mux.CORSMethodMiddleware(r))
 
+	// Initialize DI handlers
+	waitingHandler := handlers.NewWaitingListHandler(
+		&data.MongoWaitingListRepo{},
+		storeRepo,
+		userRepo,
+		authSvc,
+		events.GetBroker(),
+		events.GetWaitingUserBroker(),
+		metrics.GetTracker(),
+	)
+
+	menuHandler := handlers.NewMenuListHandler(
+		menuRepo,
+		userRepo,
+		authSvc,
+	)
+
+	userInfoHandler := handlers.NewUserInfoHandler(userRepo, authSvc)
+	storeInfoHandler := handlers.NewStoreInfoHandler(storeRepo, userRepo)
+	storeSettingsHandler := handlers.NewStoreSettingsHandler(storeRepo, userRepo)
+	storeStaffHandler := handlers.NewStoreStaffHandler(staffRepo, userRepo, storeRepo, authSvc)
+	storeListHandler := handlers.NewStoreListHandler(storeRepo, authSvc)
+	storeAiContextHandler := handlers.NewStoreAIContextHandler(storeRepo, &data.MongoWaitingListRepo{}, menuRepo)
+	adminHandler := handlers.NewStoreInfoAdminHandler(storeRepo)
+	storeLicenseCallHandler := handlers.NewStoreLicenseCallHandler(storeRepo)
+	statisticsHandler := handlers.NewStatisticsHandler(userRepo, storeRepo)
+
 	// Register routes
-	handlers.RegisterRoutes(r, uploadHandler)
+	handlers.RegisterRoutes(
+		r,
+		userRepo,
+		uploadHandler,
+		waitingHandler,
+		menuHandler,
+		userInfoHandler,
+		storeInfoHandler,
+		storeSettingsHandler,
+		storeStaffHandler,
+		storeListHandler,
+		storeAiContextHandler,
+		adminHandler,
+		storeLicenseCallHandler,
+		statisticsHandler,
+	)
 
 	// Configure CORS
 	c := cors.New(cors.Options{

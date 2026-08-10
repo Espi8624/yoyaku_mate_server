@@ -32,10 +32,10 @@ yoyaku_mate_server/
 │   ├── metrics.go       # メトリクスダッシュボード照会 API ハンドラー (エラー、リクエスト、同時接続、SSE、システムリソース、DBメトリクス)）
 │   └── ...
 │
-├── data/                # データアクセス層 (MongoDBクエリ)
+├── data/                # データアクセス層 (MongoDBクエリ - Repositoryの実装)
 │   ├── waiting_list.go
 │   ├── counters.go      # Atomic Counter
-│   ├── store_info.go
+│   ├── store_user_repo.go # 店舗・ユーザー情報など (DI適用済み)
 │   └── ...
 │
 ├── models/              # Go構造体 (DBスキーマ / JSONシリアライズ)
@@ -62,7 +62,13 @@ yoyaku_mate_server/
 
 ---
 
-## レイヤー構造およびランタイムフロー
+## レイヤー構造および依存性の注入 (Dependency Injection)
+
+当プロジェクトは、スケーラビリティとテスト容易性を高めるため、**リポジトリパターン(Repository Pattern)**と**依存性の注入(Dependency Injection)**を採用しています。
+
+- **`main.go`**: 全てのデータベースリポジトリ(`MongoStoreRepo`, `MongoUserRepo`等)を初期化し、それぞれのハンドラー(`New...Handler()`)に注入します。
+- **`handlers/`**: 具体的なDB実装を知る必要はなく、インターフェース(`StoreRepository`, `UserRepository`等)を介してデータ層と通信します。
+- グローバル変数への依存を排除することで、クリーンなアーキテクチャを実現しています。
 
 ```
        [ Client HTTP Request / SSE Connection ]
