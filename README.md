@@ -70,7 +70,8 @@ graph TD
     Metrics --> Auth["Firebase Admin Auth"]
     Metrics --> Handlers["Route Handlers"]
     Handlers --> Broker["SSE Event Broker (with Heartbeat)"]
-    Handlers --> DB["MongoDB Atlas"]
+    Handlers --> Repositories["Data Layer (Repositories)"]
+    Repositories --> DB["MongoDB Atlas"]
     Handlers --> Storage["Cloudflare R2"]
     
     Metrics -.->|非同期ロギング| Tracker["Error, Request & Active User Tracker (In-memory)"]

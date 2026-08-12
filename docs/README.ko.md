@@ -72,3 +72,4 @@ docs/
 | 문서 | 설명 |
 |------|------|
 | [001-di-repository-pattern.ko.md](./refactoring/001-di-repository-pattern.ko.md) | 핸들러 및 미들웨어 의존성 주입(DI) 및 리포지토리 패턴 적용 |
+| [002-metrics-statistics-repository-refactoring.ko.md](./refactoring/002-metrics-statistics-repository-refactoring.ko.md) | 어드민 매트릭스 및 통계 대시보드 리팩토링 (DI 및 Repository 패턴 적용) |

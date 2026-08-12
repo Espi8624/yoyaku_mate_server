@@ -580,3 +580,161 @@ func CalculateEstimatedWaitTime(waitingCount int, minutesPerTeam int) int {
 	}
 	return waitingCount * minutesPerTeam
 }
+
+// GetStatisticsAggregation 指定された期間のウェイティング統計、ノーショー/キャンセル率、時間帯別のトレンドを集計するMongoDBの集計パイプラインを実行します。
+func (r *MongoWaitingListRepo) GetStatisticsAggregation(
+	ctx context.Context,
+	storeID string,
+	startDate, endDate, prevStartDate time.Time,
+	dateFormat, locationName string,
+) (bson.M, error) {
+	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
+
+	startFilter := prevStartDate.Format("2006-01-02T15:04:05.000")
+	endFilter := endDate.Format("2006-01-02T15:04:05.000")
+
+	matchStage := bson.D{{Key: "$match", Value: bson.D{
+		{Key: "store_id", Value: storeID},
+		{Key: "registration_time", Value: bson.D{
+			{Key: "$gte", Value: startFilter},
+			{Key: "$lt", Value: endFilter},
+		}},
+	}}}
+
+	addFieldsStage := bson.D{{Key: "$addFields", Value: bson.D{
+		{Key: "reg_date_obj", Value: bson.D{
+			{Key: "$dateFromString", Value: bson.D{
+				{Key: "dateString", Value: "$registration_time"},
+			}},
+		}},
+		{Key: "entry_date_obj", Value: bson.D{
+			{Key: "$cond", Value: bson.A{
+				bson.D{{Key: "$ne", Value: bson.A{"$entry_time", nil}}},
+				bson.D{{Key: "$dateFromString", Value: bson.D{
+					{Key: "dateString", Value: "$entry_time"},
+				}}},
+				nil,
+			}},
+		}},
+	}}}
+
+	facetStage := bson.D{{Key: "$facet", Value: bson.D{
+		{Key: "chart_data", Value: bson.A{
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$group_key"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "no_show_chart_data", Value: bson.A{
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$group_key"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "cancelled_chart_data", Value: bson.A{
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$group_key"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "stats_current", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{
+					{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")},
+					{Key: "$lt", Value: endDate.Format("2006-01-02T15:04:05.000")},
+				}},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+				{Key: "total_count", Value: bson.D{{Key: "$sum", Value: 1}}},
+				{Key: "no_show_cancel_count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "stats_prev", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{
+					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
+					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
+				}},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "wait_times_current", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
+				{Key: "status", Value: "completed"},
+				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
+			}}},
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "wait_duration", Value: bson.D{{Key: "$divide", Value: bson.A{bson.D{{Key: "$subtract", Value: bson.A{"$entry_date_obj", "$reg_date_obj"}}}, 1000}}}},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "avg_wait", Value: bson.D{{Key: "$avg", Value: "$wait_duration"}}},
+			}}},
+		}},
+		{Key: "hourly_current", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
+			}}},
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$hour"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+			}}},
+		}},
+		{Key: "hourly_prev", Value: bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "registration_time", Value: bson.D{
+					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
+					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
+				}},
+			}}},
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
+				{Key: "status", Value: 1},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$hour"},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+			}}},
+		}},
+	}}}
+
+	cursor, err := collection.Aggregate(ctx, mongo.Pipeline{matchStage, addFieldsStage, facetStage})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err = cursor.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	result := bson.M{}
+	if len(results) > 0 {
+		result = results[0]
+	}
+
+	return result, nil
+}

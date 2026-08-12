@@ -23,6 +23,7 @@ func RegisterRoutes(
 	adminHandler *StoreInfoAdminHandler,
 	storeLicenseCallHandler *StoreLicenseCallHandler,
 	statisticsHandler *StatisticsHandler,
+	adminMetricsHandler *AdminMetricsHandler,
 ) {
 	// ローカルファイルアップロードの静的ファイルサービングを設定
 	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
@@ -89,16 +90,16 @@ func RegisterRoutes(
 	adminApi.HandleFunc("/stores", adminHandler.GetStoresHandler)
 	adminApi.HandleFunc("/stores/{storeId}/status", adminHandler.UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
 	adminApi.HandleFunc("/license-image-url", uploadHandler.GetLicenseImageURLHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/errors", GetErrorMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/error-logs", GetErrorLogsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/requests", GetRequestMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/request-logs", GetRequestLogsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/active-users", GetActiveUserMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/sse-status", GetSSEMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/response-time", GetResponseTimeMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/audit-logs", GetAuditLogsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/system", GetSystemMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/db", GetDBMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/errors", adminMetricsHandler.GetErrorMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/error-logs", adminMetricsHandler.GetErrorLogsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/requests", adminMetricsHandler.GetRequestMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/request-logs", adminMetricsHandler.GetRequestLogsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/active-users", adminMetricsHandler.GetActiveUserMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/sse-status", adminMetricsHandler.GetSSEMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/response-time", adminMetricsHandler.GetResponseTimeMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/audit-logs", adminMetricsHandler.GetAuditLogsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/system", adminMetricsHandler.GetSystemMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/db", adminMetricsHandler.GetDBMetricsHandler).Methods("GET", "OPTIONS")
 
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")

@@ -104,7 +104,8 @@ func main() {
 	storeAiContextHandler := handlers.NewStoreAIContextHandler(storeRepo, &data.MongoWaitingListRepo{}, menuRepo)
 	adminHandler := handlers.NewStoreInfoAdminHandler(storeRepo)
 	storeLicenseCallHandler := handlers.NewStoreLicenseCallHandler(storeRepo)
-	statisticsHandler := handlers.NewStatisticsHandler(userRepo, storeRepo)
+	statisticsHandler := handlers.NewStatisticsHandler(userRepo, storeRepo, &data.MongoWaitingListRepo{})
+	adminMetricsHandler := handlers.NewAdminMetricsHandler(&data.MongoMetricsRepo{})
 
 	// Register routes
 	handlers.RegisterRoutes(
@@ -122,6 +123,7 @@ func main() {
 		adminHandler,
 		storeLicenseCallHandler,
 		statisticsHandler,
+		adminMetricsHandler,
 	)
 
 	// Configure CORS

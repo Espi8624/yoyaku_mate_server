@@ -73,3 +73,4 @@ docs/
 | ドキュメント | 説明 |
 |------|------|
 | [001-di-repository-pattern.md](./refactoring/001-di-repository-pattern.md) | ハンドラーおよびミドルウェアの依存性注入(DI)・リポジトリパターンの適用 |
+| [002-metrics-statistics-repository-refactoring.md](./refactoring/002-metrics-statistics-repository-refactoring.md) | 管理者メトリクスおよび統計ダッシュボードのDIとRepositoryパターンの適用 |

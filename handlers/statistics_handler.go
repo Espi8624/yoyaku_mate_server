@@ -7,13 +7,11 @@ import (
 	"time"
 
 	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // StatsUserRepository 統計データの閲覧権限を確認するため、ユーザー情報とアクセス権限を検証するインターフェース
@@ -27,13 +25,32 @@ type StatsStoreRepository interface {
 	GetStoreData(storeID string) (*models.Store, error)
 }
 
-type StatisticsHandler struct {
-	userRepo  StatsUserRepository
-	storeRepo StatsStoreRepository
+// StatsWaitingListRepository 統計データを取得するための待機リストリポジトリインターフェース
+type StatsWaitingListRepository interface {
+	GetStatisticsAggregation(
+		ctx context.Context,
+		storeID string,
+		startDate, endDate, prevStartDate time.Time,
+		dateFormat, locationName string,
+	) (bson.M, error)
 }
 
-func NewStatisticsHandler(userRepo StatsUserRepository, storeRepo StatsStoreRepository) *StatisticsHandler {
-	return &StatisticsHandler{userRepo: userRepo, storeRepo: storeRepo}
+type StatisticsHandler struct {
+	userRepo    StatsUserRepository
+	storeRepo   StatsStoreRepository
+	waitingRepo StatsWaitingListRepository
+}
+
+func NewStatisticsHandler(
+	userRepo StatsUserRepository,
+	storeRepo StatsStoreRepository,
+	waitingRepo StatsWaitingListRepository,
+) *StatisticsHandler {
+	return &StatisticsHandler{
+		userRepo:    userRepo,
+		storeRepo:   storeRepo,
+		waitingRepo: waitingRepo,
+	}
 }
 
 // HandleGet は店舗の統計情報を取得するリクエストを処理します
@@ -111,7 +128,6 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 		locationName = "Asia/Tokyo"
 	}
 
-	collection := db.GetCollection(db.DatabaseName, db.CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -200,164 +216,17 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 		}
 	}
 
-	// 1. 期間全体の統計データ (チャートデータ + 合計数)
-	// フィルタ開始日を「前期間の開始日」に設定して、両方の期間のデータを取得する
-	// フィルタ終了日を「現在の期間の終了日」に設定する
-	startFilter := prevStartDate.Format("2006-01-02T15:04:05.000")
-	endFilter := endDate.Format("2006-01-02T15:04:05.000")
-
-	matchStage := bson.D{{Key: "$match", Value: bson.D{
-		{Key: "store_id", Value: storeID},
-		{Key: "registration_time", Value: bson.D{
-			{Key: "$gte", Value: startFilter},
-			{Key: "$lt", Value: endFilter},
-		}},
-	}}}
-
-	addFieldsStage := bson.D{{Key: "$addFields", Value: bson.D{
-		{Key: "reg_date_obj", Value: bson.D{
-			{Key: "$dateFromString", Value: bson.D{
-				{Key: "dateString", Value: "$registration_time"},
-			}},
-		}},
-		{Key: "entry_date_obj", Value: bson.D{
-			{Key: "$cond", Value: bson.A{
-				bson.D{{Key: "$ne", Value: bson.A{"$entry_time", nil}}},
-				bson.D{{Key: "$dateFromString", Value: bson.D{
-					{Key: "dateString", Value: "$entry_time"},
-				}}},
-				nil,
-			}},
-		}},
-	}}}
-
-	// 詳細データ集計パイプライン
-	facetStage := bson.D{{Key: "$facet", Value: bson.D{
-		// A. チャート用データ（日別/月別グルーピング）
-		{Key: "chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "no_show_chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "cancelled_chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
-			}}},
-		}},
-
-		// B. ハイライト用集計 (期間全体)
-		// 今回（現在の期間）の統計: >= startDate AND < endDate
-		{Key: "stats_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: endDate.Format("2006-01-02T15:04:05.000")},
-				}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-				{Key: "total_count", Value: bson.D{{Key: "$sum", Value: 1}}},
-				{Key: "no_show_cancel_count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
-			}}},
-		}},
-		// 前回（前の期間）の統計: >= prevStartDate AND < startDate
-		{Key: "stats_prev", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
-				}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-
-		// C. 平均待ち時間 (現在の期間)
-		{Key: "wait_times_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
-				{Key: "status", Value: "completed"},
-				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "wait_duration", Value: bson.D{{Key: "$divide", Value: bson.A{bson.D{{Key: "$subtract", Value: bson.A{"$entry_date_obj", "$reg_date_obj"}}}, 1000}}}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "avg_wait", Value: bson.D{{Key: "$avg", Value: "$wait_duration"}}},
-			}}},
-		}},
-
-		// D. 時間帯別データ (現在 vs 前回の集計)
-		// 時間ごとの傾向を見るために、期間内の全データの時間を集計する
-		{Key: "hourly_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$hour"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "hourly_prev", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
-				}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$hour"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-	}}}
-
-	cursor, err := collection.Aggregate(ctx, mongo.Pipeline{matchStage, addFieldsStage, facetStage})
+	result, err := h.waitingRepo.GetStatisticsAggregation(
+		ctx,
+		storeID,
+		startDate,
+		endDate,
+		prevStartDate,
+		dateFormat,
+		locationName,
+	)
 	if err != nil {
 		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var results []bson.M
-	if err = cursor.All(ctx, &results); err != nil {
-		return nil, err
-	}
-
-	result := bson.M{}
-	if len(results) > 0 {
-		result = results[0]
 	}
 
 	response := &models.StatisticsResponse{}
