@@ -73,3 +73,4 @@ docs/
 | ドキュメント | 説明 |
 |------|------|
 | [001-di-repository-pattern.md](./refactoring/001-di-repository-pattern.md) | ハンドラーおよびミドルウェアの依存性注入(DI)・リポジトリパターンの適用 |
+| [002-metrics-middleware-di.md](./refactoring/002-metrics-middleware-di.md) | MetricsMiddlewareのインターフェース分離(DI)およびIP抽出ロジックの単体テスト導入 |
