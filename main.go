@@ -132,7 +132,7 @@ func main() {
 		AllowCredentials: true,
 	})
 
-	handler := metrics.MetricsMiddleware(c.Handler(r))
+	handler := metrics.MetricsMiddleware(metrics.GetRequestTracker(), metrics.GetTracker())(c.Handler(r))
 
 	// Rate Limiting Middleware (5 requests per second per IP)
 	// Burst of 10 to allow parallel requests (like images/css or multiple API calls)

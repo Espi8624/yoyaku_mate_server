@@ -72,3 +72,4 @@ docs/
 | 문서 | 설명 |
 |------|------|
 | [001-di-repository-pattern.ko.md](./refactoring/001-di-repository-pattern.ko.md) | 핸들러 및 미들웨어 의존성 주입(DI) 및 리포지토리 패턴 적용 |
+| [002-metrics-middleware-di.ko.md](./refactoring/002-metrics-middleware-di.ko.md) | MetricsMiddleware 인터페이스 분리(DI) 및 IP 추출 로직 단위 테스트 도입 |
