@@ -16,8 +16,10 @@ type StaffRepository interface {
 	CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error)
 	CreateStoreStaffInfo(staffInfo models.StoreStaffInfo) error
 	GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error)
+	GetStoreStaffByUserAndStore(userID primitive.ObjectID, storeID string) (*models.StoreStaffInfo, error)
 	UpdateStoreStaffStatus(staffID, status string) error
 	UpdateStoreStaffPermissions(staffID string, permissions []string) error
+	UpdateStoreStaffAvailability(staffID string, availability models.Availability) error
 }
 
 type MongoStaffRepo struct{}
@@ -78,10 +80,11 @@ func (r *MongoStaffRepo) GetStoreStaffByStoreID(storeID string) ([]map[string]in
 			"role":        1,
 			"status":      1,
 			"permissions": 1,
-			"created_at":  1,
-			"updated_at":  1,
-			"user_name":   "$user_details.user_name",
-			"email":       "$user_details.email",
+			"created_at":   1,
+			"updated_at":   1,
+			"availability": 1,
+			"user_name":    "$user_details.user_name",
+			"email":        "$user_details.email",
 		}}},
 	}
 
@@ -147,6 +150,56 @@ func (r *MongoStaffRepo) UpdateStoreStaffPermissions(staffID string, permissions
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	if err != nil {
 		log.Printf("Failed to update store staff permissions: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// GetStoreStaffByUserAndStore は、指定されたユーザー・店舗の組み合わせに対応する店舗スタッフ情報を1件取得
+func (r *MongoStaffRepo) GetStoreStaffByUserAndStore(userID primitive.ObjectID, storeID string) (*models.StoreStaffInfo, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var staffInfo models.StoreStaffInfo
+	err := collection.FindOne(ctx, bson.M{
+		"user_id":  userID,
+		"store_id": storeID,
+	}).Decode(&staffInfo)
+
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, err
+		}
+		log.Printf("Failed to find store staff by user and store: %v", err)
+		return nil, err
+	}
+
+	return &staffInfo, nil
+}
+
+// UpdateStoreStaffAvailability は、スタッフの勤務可能な曜日・時間帯を更新
+func (r *MongoStaffRepo) UpdateStoreStaffAvailability(staffID string, availability models.Availability) error {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(staffID)
+	if err != nil {
+		return err
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"availability": availability,
+			"updated_at":   time.Now(),
+		},
+	}
+
+	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
+	if err != nil {
+		log.Printf("Failed to update store staff availability: %v", err)
 		return err
 	}
 
