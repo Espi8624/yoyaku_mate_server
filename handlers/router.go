@@ -102,6 +102,10 @@ func RegisterRoutes(
 
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")
+	// "me" は {staffId} と経路が重なるため、必ず先に登録する
+	api.HandleFunc("/stores/{storeId}/staff/me/availability", storeStaffHandler.GetMyAvailabilityHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/me/availability", storeStaffHandler.UpdateMyAvailabilityHandler).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}", storeStaffHandler.UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", storeStaffHandler.UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/staff/{staffId}/availability", storeStaffHandler.UpdateStoreStaffAvailabilityHandler).Methods("PATCH", "OPTIONS")
 }
