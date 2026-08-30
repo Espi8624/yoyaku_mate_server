@@ -24,6 +24,7 @@ docs/
 | [sse-monitoring.md](./features/sse-monitoring.md) | SSEステータス（接続数、維持時間）およびゾンビ接続監視モニタリング |
 | [response-time-dashboard.md](./features/response-time-dashboard.md) | APIレイテンシ(avg/P95/P99)およびエンドポイント別応答時間監視ダッシュボード |
 | [audit-log.md](./features/audit-log.md) | 管理者操作の監査ログ自動記録および履歴管理 |
+| [staff-availability.md](./features/staff-availability.md) | スタッフの曜日別勤務可能時間帯の入力・照会・修正 |
 
 ---
 
@@ -42,6 +43,7 @@ docs/
 | [sse-monitoring.md](./implementation/sse-monitoring.md) | SSEブローカーのステータス収集およびHeartbeatによるゾンビ接続の自動クリア実装詳細 |
 | [response-time-dashboard.md](./implementation/response-time-dashboard.md) | Response Time集計ハンドラー、MongoDB $percentile Aggregation、モニタリング汚染防止フィルターの実装詳細 |
 | [audit-log.md](./implementation/audit-log.md) | 監査ログの Pointer ベース Context 共有、AuditMiddleware、AuditTracker バッチ保存実装詳細 |
+| [staff-availability.md](./implementation/staff-availability.md) | Availability データモデル、本人/マネージャー権限分岐、ルーティング順序の注意点実装詳細 |
 
 ---
 
