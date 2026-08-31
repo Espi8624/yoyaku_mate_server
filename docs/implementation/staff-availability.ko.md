@@ -13,7 +13,6 @@
 const (
     TimeBlockMorning   = "MORNING"
     TimeBlockAfternoon = "AFTERNOON"
-    TimeBlockEvening   = "EVENING"
 )
 
 type Availability struct {
@@ -68,7 +67,6 @@ func (h *StoreStaffHandler) authenticateAndGetOwnStaffInfo(
 var validTimeBlocks = map[string]bool{
     models.TimeBlockMorning:   true,
     models.TimeBlockAfternoon: true,
-    models.TimeBlockEvening:   true,
 }
 
 func validateAvailability(a models.Availability) bool

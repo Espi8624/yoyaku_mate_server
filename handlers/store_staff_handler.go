@@ -29,7 +29,6 @@ type StaffRepository interface {
 var validTimeBlocks = map[string]bool{
 	models.TimeBlockMorning:   true,
 	models.TimeBlockAfternoon: true,
-	models.TimeBlockEvening:   true,
 }
 
 // validateAvailability Availability内の各時間帯の値が許容値かどうかを検証
@@ -43,6 +42,46 @@ func validateAvailability(a models.Availability) bool {
 		}
 	}
 	return true
+}
+
+// legacyTimeBlockAliases 廃止された時間帯区分を、現在有効な区分にマッピングする
+// (「夜間」区分廃止時、旧夜間帯は午後に統合されたため EVENING → AFTERNOON)
+var legacyTimeBlockAliases = map[string]string{
+	"EVENING": models.TimeBlockAfternoon,
+}
+
+// normalizeLegacyTimeBlocks Availability内に残る廃止済みの値(例: 過去に保存された
+// "EVENING")を現行の値へフォールバック変換する(重複が生じた場合は除去)。
+// 未対応の値が残っていると validateAvailability に弾かれ、該当スタッフが他の曜日を
+// 更新しようとしても丸ごと拒否されてしまうため、検証前に必ず通す
+func normalizeLegacyTimeBlocks(a models.Availability) models.Availability {
+	normalizeDay := func(blocks []string) []string {
+		if blocks == nil {
+			return blocks
+		}
+		seen := make(map[string]bool, len(blocks))
+		result := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			normalized := b
+			if alias, ok := legacyTimeBlockAliases[b]; ok {
+				normalized = alias
+			}
+			if !seen[normalized] {
+				seen[normalized] = true
+				result = append(result, normalized)
+			}
+		}
+		return result
+	}
+
+	a.Monday = normalizeDay(a.Monday)
+	a.Tuesday = normalizeDay(a.Tuesday)
+	a.Wednesday = normalizeDay(a.Wednesday)
+	a.Thursday = normalizeDay(a.Thursday)
+	a.Friday = normalizeDay(a.Friday)
+	a.Saturday = normalizeDay(a.Saturday)
+	a.Sunday = normalizeDay(a.Sunday)
+	return a
 }
 
 // StoreStaffHandler スタッフ管理関連のHTTPリクエストを処理するハンドラ
@@ -147,6 +186,43 @@ func (h *StoreStaffHandler) JoinStoreHandler(w http.ResponseWriter, r *http.Requ
 	utils.RespondWithJSON(w, map[string]string{"message": "Join request sent successfully"}, http.StatusCreated)
 }
 
+// hasStaffManagementAccess マネージャー、または承認済みスタッフかどうかを確認
+// (スタッフ一覧の閲覧はマネージャーと同等の権限で運用する)
+func (h *StoreStaffHandler) hasStaffManagementAccess(userID primitive.ObjectID, storeID string) (bool, error) {
+	isManager, err := h.userRepo.CheckStorePermission(userID, storeID, "manager", "")
+	if err != nil {
+		return false, err
+	}
+	if isManager {
+		return true, nil
+	}
+	return h.userRepo.CheckStorePermission(userID, storeID, "staff", "")
+}
+
+// hasAccessToStaffTarget マネージャー、または「対象が本人自身」の承認済みスタッフかどうかを確認
+// (スタッフはステータス/権限/勤務可能時間を自分自身に対してのみ操作可能。他人の情報は変更不可)
+func (h *StoreStaffHandler) hasAccessToStaffTarget(userID primitive.ObjectID, storeID, targetStaffID string) (bool, error) {
+	isManager, err := h.userRepo.CheckStorePermission(userID, storeID, "manager", "")
+	if err != nil {
+		return false, err
+	}
+	if isManager {
+		return true, nil
+	}
+
+	ownStaffInfo, err := h.staffRepo.GetStoreStaffByUserAndStore(userID, storeID)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return false, nil
+		}
+		return false, err
+	}
+	if ownStaffInfo.Status != models.StaffStatusApproved {
+		return false, nil
+	}
+	return ownStaffInfo.ID.Hex() == targetStaffID, nil
+}
+
 // GetStoreStaffHandler 店舗の全スタッフを取得するリクエストを処理
 func (h *StoreStaffHandler) GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -176,8 +252,8 @@ func (h *StoreStaffHandler) GetStoreStaffHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャーまたは承認済みスタッフかどうか確認
+	hasPermission, err := h.hasStaffManagementAccess(user.ID, storeID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -227,8 +303,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffStatusHandler(w http.ResponseWriter,
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -297,8 +373,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffPermissionsHandler(w http.ResponseWr
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認 (権限更新はマネージャーのみ可能)
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -398,6 +474,7 @@ func (h *StoreStaffHandler) UpdateMyAvailabilityHandler(w http.ResponseWriter, r
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.Availability = normalizeLegacyTimeBlocks(req.Availability)
 	if !validateAvailability(req.Availability) {
 		utils.RespondWithError(w, "Invalid time block value", http.StatusBadRequest)
 		return
@@ -441,7 +518,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffAvailabilityHandler(w http.ResponseW
 		return
 	}
 
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -459,6 +537,7 @@ func (h *StoreStaffHandler) UpdateStoreStaffAvailabilityHandler(w http.ResponseW
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.Availability = normalizeLegacyTimeBlocks(req.Availability)
 	if !validateAvailability(req.Availability) {
 		utils.RespondWithError(w, "Invalid time block value", http.StatusBadRequest)
 		return

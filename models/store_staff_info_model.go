@@ -17,7 +17,6 @@ const (
 const (
 	TimeBlockMorning   = "MORNING"   // 午前
 	TimeBlockAfternoon = "AFTERNOON" // 午後
-	TimeBlockEvening   = "EVENING"   // 夜間
 )
 
 // Availability 曜日ごとの勤務可能時間帯リスト
