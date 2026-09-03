@@ -38,6 +38,7 @@ type StoreRepository interface {
 // UserRepository ユーザー情報の取得と権限チェックを抽象化するインターフェース
 type UserRepository interface {
 	GetByFirebaseUID(uid string) (*models.User, error)
+	GetUserData(userID primitive.ObjectID) (*models.User, error)
 	CheckStorePermission(userID primitive.ObjectID, storeID, role, permission string) (bool, error)
 }
 

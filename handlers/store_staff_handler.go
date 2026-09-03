@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -20,24 +19,28 @@ type StaffRepository interface {
 	CreateStoreStaffInfo(staffInfo models.StoreStaffInfo) error
 	GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error)
 	GetStoreStaffByUserAndStore(userID primitive.ObjectID, storeID string) (*models.StoreStaffInfo, error)
+	GetStoreStaffByID(staffID string) (*models.StoreStaffInfo, error)
 	UpdateStoreStaffStatus(staffID, status string) error
 	UpdateStoreStaffPermissions(staffID string, permissions []string) error
 	UpdateStoreStaffAvailability(staffID string, availability models.Availability) error
 }
 
-// validTimeBlocks 勤務可能時間帯として許容される値
-var validTimeBlocks = map[string]bool{
-	models.TimeBlockMorning:   true,
-	models.TimeBlockAfternoon: true,
-	models.TimeBlockEvening:   true,
-}
-
-// validateAvailability Availability内の各時間帯の値が許容値かどうかを検証
+// validateAvailability Availability内の各勤務不可時間帯が妥当かどうかを検証。
+// 終日指定(AllDay=true)なら時刻は不要、時間帯指定なら "HH:MM" 形式かつ開始<終了を要求する
+// (timeFormatPatternは shift_table_handler.go で定義)
 func validateAvailability(a models.Availability) bool {
-	days := [][]string{a.Monday, a.Tuesday, a.Wednesday, a.Thursday, a.Friday, a.Saturday, a.Sunday}
-	for _, blocks := range days {
-		for _, b := range blocks {
-			if !validTimeBlocks[b] {
+	days := [][]models.UnavailableRange{
+		a.Monday, a.Tuesday, a.Wednesday, a.Thursday, a.Friday, a.Saturday, a.Sunday,
+	}
+	for _, ranges := range days {
+		for _, r := range ranges {
+			if r.AllDay {
+				continue
+			}
+			if !timeFormatPattern.MatchString(r.StartTime) || !timeFormatPattern.MatchString(r.EndTime) {
+				return false
+			}
+			if r.StartTime >= r.EndTime {
 				return false
 			}
 		}
@@ -48,7 +51,7 @@ func validateAvailability(a models.Availability) bool {
 // StoreStaffHandler スタッフ管理関連のHTTPリクエストを処理するハンドラ
 type StoreStaffHandler struct {
 	staffRepo StaffRepository
-	userRepo  UserRepository // UserRepository for getting user and checking permissions
+	userRepo  UserRepository      // UserRepository for getting user and checking permissions
 	storeRepo StoreInfoRepository // StoreRepository for checking store existence
 	authSvc   AuthService
 }
@@ -147,6 +150,43 @@ func (h *StoreStaffHandler) JoinStoreHandler(w http.ResponseWriter, r *http.Requ
 	utils.RespondWithJSON(w, map[string]string{"message": "Join request sent successfully"}, http.StatusCreated)
 }
 
+// hasStaffManagementAccess マネージャー、または承認済みスタッフかどうかを確認
+// (スタッフ一覧の閲覧はマネージャーと同等の権限で運用する)
+func (h *StoreStaffHandler) hasStaffManagementAccess(userID primitive.ObjectID, storeID string) (bool, error) {
+	isManager, err := h.userRepo.CheckStorePermission(userID, storeID, "manager", "")
+	if err != nil {
+		return false, err
+	}
+	if isManager {
+		return true, nil
+	}
+	return h.userRepo.CheckStorePermission(userID, storeID, "staff", "")
+}
+
+// hasAccessToStaffTarget マネージャー、または「対象が本人自身」の承認済みスタッフかどうかを確認
+// (スタッフはステータス/権限/勤務可能時間を自分自身に対してのみ操作可能。他人の情報は変更不可)
+func (h *StoreStaffHandler) hasAccessToStaffTarget(userID primitive.ObjectID, storeID, targetStaffID string) (bool, error) {
+	isManager, err := h.userRepo.CheckStorePermission(userID, storeID, "manager", "")
+	if err != nil {
+		return false, err
+	}
+	if isManager {
+		return true, nil
+	}
+
+	ownStaffInfo, err := h.staffRepo.GetStoreStaffByUserAndStore(userID, storeID)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return false, nil
+		}
+		return false, err
+	}
+	if ownStaffInfo.Status != models.StaffStatusApproved {
+		return false, nil
+	}
+	return ownStaffInfo.ID.Hex() == targetStaffID, nil
+}
+
 // GetStoreStaffHandler 店舗の全スタッフを取得するリクエストを処理
 func (h *StoreStaffHandler) GetStoreStaffHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -176,8 +216,8 @@ func (h *StoreStaffHandler) GetStoreStaffHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャーまたは承認済みスタッフかどうか確認
+	hasPermission, err := h.hasStaffManagementAccess(user.ID, storeID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -227,8 +267,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffStatusHandler(w http.ResponseWriter,
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -297,8 +337,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffPermissionsHandler(w http.ResponseWr
 		return
 	}
 
-	// ユーザーがこの店舗のマネージャーかどうか確認 (権限更新はマネージャーのみ可能)
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
@@ -324,91 +364,6 @@ func (h *StoreStaffHandler) UpdateStoreStaffPermissionsHandler(w http.ResponseWr
 	}
 
 	utils.RespondWithJSON(w, map[string]string{"message": "Staff permissions updated successfully"}, http.StatusOK)
-}
-
-// authenticateAndGetOwnStaffInfo トークンを検証し、リクエストユーザー本人の店舗スタッフ情報を取得する共通処理
-func (h *StoreStaffHandler) authenticateAndGetOwnStaffInfo(r *http.Request, storeID string) (*models.StoreStaffInfo, int, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return nil, http.StatusUnauthorized, fmt.Errorf("Authorization header is required")
-	}
-	idToken := strings.TrimPrefix(authHeader, "Bearer ")
-	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
-	if err != nil {
-		return nil, http.StatusUnauthorized, fmt.Errorf("Invalid or expired token")
-	}
-
-	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
-	if err != nil || user == nil {
-		return nil, http.StatusUnauthorized, fmt.Errorf("User not found")
-	}
-
-	staffInfo, err := h.staffRepo.GetStoreStaffByUserAndStore(user.ID, storeID)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, http.StatusNotFound, fmt.Errorf("Staff info not found for this store")
-		}
-		return nil, http.StatusInternalServerError, fmt.Errorf("Database error finding staff info")
-	}
-
-	if staffInfo.Status != models.StaffStatusApproved {
-		return nil, http.StatusForbidden, fmt.Errorf("Staff is not approved for this store")
-	}
-
-	return staffInfo, http.StatusOK, nil
-}
-
-// GetMyAvailabilityHandler ログイン中のスタッフ本人の勤務可能な曜日・時間帯を取得
-func (h *StoreStaffHandler) GetMyAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	storeID := vars["storeId"]
-	if storeID == "" {
-		utils.RespondWithError(w, "store_id is required", http.StatusBadRequest)
-		return
-	}
-
-	staffInfo, statusCode, err := h.authenticateAndGetOwnStaffInfo(r, storeID)
-	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
-		return
-	}
-
-	utils.RespondWithJSON(w, staffInfo.Availability, http.StatusOK)
-}
-
-// UpdateMyAvailabilityHandler ログイン中のスタッフ本人の勤務可能な曜日・時間帯を更新
-func (h *StoreStaffHandler) UpdateMyAvailabilityHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	storeID := vars["storeId"]
-	if storeID == "" {
-		utils.RespondWithError(w, "store_id is required", http.StatusBadRequest)
-		return
-	}
-
-	staffInfo, statusCode, err := h.authenticateAndGetOwnStaffInfo(r, storeID)
-	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
-		return
-	}
-
-	var req struct {
-		Availability models.Availability `json:"availability"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	if !validateAvailability(req.Availability) {
-		utils.RespondWithError(w, "Invalid time block value", http.StatusBadRequest)
-		return
-	}
-
-	if err := h.staffRepo.UpdateStoreStaffAvailability(staffInfo.ID.Hex(), req.Availability); err != nil {
-		utils.RespondWithError(w, "Failed to update availability", http.StatusInternalServerError)
-		return
-	}
-
-	utils.RespondWithJSON(w, map[string]string{"message": "Availability updated successfully"}, http.StatusOK)
 }
 
 // UpdateStoreStaffAvailabilityHandler マネージャーが特定スタッフの勤務可能な曜日・時間帯を更新
@@ -441,7 +396,8 @@ func (h *StoreStaffHandler) UpdateStoreStaffAvailabilityHandler(w http.ResponseW
 		return
 	}
 
-	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, "manager", "")
+	// ユーザーがこの店舗のマネージャー、または対象が本人自身であるスタッフかどうか確認
+	hasPermission, err := h.hasAccessToStaffTarget(user.ID, storeID, staffID)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return

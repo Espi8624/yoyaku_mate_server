@@ -25,7 +25,6 @@ type MongoStoreRepo struct{}
 // MongoUserRepo ユーザー情報のMongoDBリポジトリ実装
 type MongoUserRepo struct{}
 
-
 // store_id で店舗情報を取得
 func (r *MongoStoreRepo) GetStoreData(storeID string) (*models.Store, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreInfo)
@@ -138,8 +137,24 @@ func (r *MongoStoreRepo) GetSettings(storeID string) (*models.StoreSetting, erro
 
 	err := collection.FindOne(ctx, filter).Decode(&storeSettings)
 	if err != nil {
-		log.Printf("Failed to fetch store settings: %v", err)
-		return nil, err
+		if err == mongo.ErrNoDocuments {
+			return nil, err
+		}
+		// required_staff_count が旧スキーマ(曜日ごとのオブジェクト)のまま残っていると、
+		// 新スキーマ(曜日ごとの配列)へのデコードがドキュメント全体で失敗してしまう。
+		// そのフィールドだけ取り除いて自動修復を試みる (値は失われるため再入力が必要になる)
+		log.Printf("Failed to decode store settings for store_id=%s, attempting to repair legacy required_staff_count: %v", storeID, err)
+		if _, repairErr := collection.UpdateOne(ctx, filter, bson.M{
+			"$unset": bson.M{"settings.required_staff_count": ""},
+		}); repairErr != nil {
+			log.Printf("Failed to repair store settings for store_id=%s: %v", storeID, repairErr)
+			return nil, err
+		}
+
+		if retryErr := collection.FindOne(ctx, filter).Decode(&storeSettings); retryErr != nil {
+			log.Printf("Failed to fetch store settings for store_id=%s after repair: %v", storeID, retryErr)
+			return nil, retryErr
+		}
 	}
 
 	return &storeSettings, nil
@@ -153,9 +168,15 @@ func (r *MongoStoreRepo) UpsertStoreSettings(storeID string, reqBody map[string]
 
 	filter := bson.M{"store_id": storeID}
 	update := bson.M{"$set": reqBody}
-	// upsert オプションを明示的に true に設定せず、UpdateOne のみ使用 (基本ライブラリスタイル)
-	_, err := collection.UpdateOne(ctx, filter, update)
-	return err
+	// upsert:true を明示。false のままだと store_id に一致するドキュメントが
+	// 存在しない場合、UpdateOne は何もマッチせず(matchedCount=0)エラーも出さずに
+	// サイレントに書き込みが失われるため、関数名の"Upsert"通りに動作するよう修正
+	_, err := collection.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+	if err != nil {
+		log.Printf("Failed to upsert store settings for store_id=%s: %v", storeID, err)
+		return err
+	}
+	return nil
 }
 
 type MinioClient struct {
@@ -379,19 +400,29 @@ func (r *MongoStoreRepo) GetStoresByFirebaseUID(firebaseUid string) ([]StoreWith
 	case "staff":
 		staffCollection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 
-		// ユーザーIDでPENDINGまたはAPPROVED状態の店舗スタッフ情報を検索
+		// ユーザーIDでPENDINGまたはAPPROVED状態の店舗スタッフ情報を検索。
+		// ここでは store_id と status しか使わないため、projectionで明示的にその2つだけ
+		// 取得する(availability等の他フィールドは、旧スキーマ(曜日ごとに文字列配列で
+		// 保存された勤務可能時間帯)のドキュメントが混在しているとデコードエラーになり、
+		// このAPI全体が失敗して店舗一覧が丸ごと表示されなくなってしまうため取得自体を避ける)
+		staffFindOptions := options.Find().
+			SetSort(bson.D{{Key: "_id", Value: 1}}).
+			SetProjection(bson.M{"store_id": 1, "status": 1})
 		cursor, err := staffCollection.Find(ctx, bson.M{
 			"user_id": user.ID,
 			"status": bson.M{
 				"$in": []string{models.StaffStatusPending, models.StaffStatusApproved, models.StaffStatusRejected},
 			},
-		}, findOptions)
+		}, staffFindOptions)
 		if err != nil {
 			return nil, err
 		}
 		defer cursor.Close(ctx)
 
-		var staffInfos []models.StoreStaffInfo
+		var staffInfos []struct {
+			StoreID string `bson:"store_id"`
+			Status  string `bson:"status"`
+		}
 		if err = cursor.All(ctx, &staffInfos); err != nil {
 			return nil, err
 		}
@@ -577,11 +608,16 @@ func (r *MongoUserRepo) CheckStorePermission(userID primitive.ObjectID, storeID 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		var staffInfo models.StoreStaffInfo
+		// ここでは permissions しか使わないため、projectionで明示的にそれだけ取得する
+		// (availabilityを含む全体をデコードすると、旧スキーマ(曜日ごとに文字列配列で
+		// 保存された勤務可能時間帯)のドキュメントでデコードエラーになってしまうため)
+		var staffInfo struct {
+			Permissions []string `bson:"permissions"`
+		}
 		err := collection.FindOne(ctx, bson.M{
 			"user_id":  userID,
 			"store_id": storeID,
-		}).Decode(&staffInfo)
+		}, options.FindOne().SetProjection(bson.M{"permissions": 1})).Decode(&staffInfo)
 
 		if err != nil {
 			return false, err

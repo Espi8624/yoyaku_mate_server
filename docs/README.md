@@ -25,6 +25,7 @@ docs/
 | [response-time-dashboard.md](./features/response-time-dashboard.md) | APIレイテンシ(avg/P95/P99)およびエンドポイント別応答時間監視ダッシュボード |
 | [audit-log.md](./features/audit-log.md) | 管理者操作の監査ログ自動記録および履歴管理 |
 | [staff-availability.md](./features/staff-availability.md) | スタッフの曜日別勤務可能時間帯の入力・照会・修正 |
+| [shift-table.md](./features/shift-table.md) | 店舗の週単位シフト表(作成・シフト追加/修正/削除・照会) |
 
 ---
 
@@ -44,6 +45,7 @@ docs/
 | [response-time-dashboard.md](./implementation/response-time-dashboard.md) | Response Time集計ハンドラー、MongoDB $percentile Aggregation、モニタリング汚染防止フィルターの実装詳細 |
 | [audit-log.md](./implementation/audit-log.md) | 監査ログの Pointer ベース Context 共有、AuditMiddleware、AuditTracker バッチ保存実装詳細 |
 | [staff-availability.md](./implementation/staff-availability.md) | Availability データモデル、本人/マネージャー権限分岐、ルーティング順序の注意点実装詳細 |
+| [shift-table.md](./implementation/shift-table.md) | ShiftTable埋め込み配列データモデル、Repository/Handler層の権限分岐、ルーティング実装詳細 |
 
 ---
 

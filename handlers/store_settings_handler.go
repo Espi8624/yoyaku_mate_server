@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // StoreSettingsRepository 店舗設定の取得と更新を抽象化するインターフェース
@@ -39,6 +41,14 @@ func (h *StoreSettingsHandler) GetStoreSettingsHandler(w http.ResponseWriter, r 
 		utils.RespondWithError(w, "Store settings not found", http.StatusNotFound)
 		return
 	}
+
+	// マネージャーの表示名を解決して埋め込む (取得できなくても致命的ではないため無視して続行)
+	if managerObjID, err := primitive.ObjectIDFromHex(settings.ManagerID); err == nil {
+		if manager, err := h.userRepo.GetUserData(managerObjID); err == nil && manager != nil {
+			settings.ManagerName = manager.UserName
+		}
+	}
+
 	utils.RespondWithJSON(w, settings, http.StatusOK)
 }
 

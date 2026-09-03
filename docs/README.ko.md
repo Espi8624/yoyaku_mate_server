@@ -25,6 +25,7 @@ docs/
 | [response-time-dashboard.ko.md](./features/response-time-dashboard.ko.md) | API 레이턴시(avg/P95/P99) 및 엔드포인트별 응답시간 모니터링 대시보드 |
 | [audit-log.ko.md](./features/audit-log.ko.md) | 관리자 행위 감사 로그 자동 기록 및 이력 관리 |
 | [staff-availability.ko.md](./features/staff-availability.ko.md) | 스태프 요일별 근무 가능 시간대 입력·조회·수정 |
+| [shift-table.ko.md](./features/shift-table.ko.md) | 매장 주 단위 시프트표(생성·시프트 추가/수정/삭제·조회) |
 
 ---
 
@@ -44,6 +45,7 @@ docs/
 | [response-time-dashboard.ko.md](./implementation/response-time-dashboard.ko.md) | Response Time 집계 핸들러, MongoDB $percentile Aggregation, 모니터링 오염 방지 필터 구현 상세 |
 | [audit-log.ko.md](./implementation/audit-log.ko.md) | 감사 로그 Pointer 기반 Context 공유, AuditMiddleware, AuditTracker 배치 저장 구현 상세 |
 | [staff-availability.ko.md](./implementation/staff-availability.ko.md) | Availability 데이터 모델, 본인/매니저 권한 분기, 라우팅 순서 주의사항 구현 상세 |
+| [shift-table.ko.md](./implementation/shift-table.ko.md) | ShiftTable 임베드 배열 데이터 모델, Repository/Handler 계층 권한 분기, 라우팅 구현 상세 |
 
 ---
 
