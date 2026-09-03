@@ -18,6 +18,7 @@ func RegisterRoutes(
 	storeInfoHandler *StoreInfoHandler,
 	storeSettingsHandler *StoreSettingsHandler,
 	storeStaffHandler *StoreStaffHandler,
+	shiftTableHandler *ShiftTableHandler,
 	storeListHandler *StoreListHandler,
 	storeAiContextHandler *StoreAIContextHandler,
 	adminHandler *StoreInfoAdminHandler,
@@ -102,10 +103,20 @@ func RegisterRoutes(
 
 	// Staff Management endpoints
 	api.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")
-	// "me" は {staffId} と経路が重なるため、必ず先に登録する
-	api.HandleFunc("/stores/{storeId}/staff/me/availability", storeStaffHandler.GetMyAvailabilityHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/me/availability", storeStaffHandler.UpdateMyAvailabilityHandler).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}", storeStaffHandler.UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", storeStaffHandler.UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/staff/{staffId}/availability", storeStaffHandler.UpdateStoreStaffAvailabilityHandler).Methods("PATCH", "OPTIONS")
+
+	// Shift Table endpoints
+	api.HandleFunc("/stores/{storeId}/shift-tables", shiftTableHandler.CreateShiftTableHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}", shiftTableHandler.GetShiftTableHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts", shiftTableHandler.AddShiftHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.UpdateShiftHandler).Methods("PATCH", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.DeleteShiftHandler).Methods("DELETE", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/auto-generate", shiftTableHandler.AutoGenerateShiftsHandler).Methods("POST", "OPTIONS")
+
+	// Shift Change Request endpoints (週間シフト表に対する修正依頼)
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.CreateShiftChangeRequestHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.GetShiftChangeRequestsHandler).Methods("GET", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/resolve", shiftTableHandler.ResolveShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
 }

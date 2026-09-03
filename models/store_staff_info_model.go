@@ -13,22 +13,24 @@ const (
 	StaffStatusRejected = "REJECTED" // 反則
 )
 
-// 勤務可能時間帯定義
-const (
-	TimeBlockMorning   = "MORNING"   // 午前
-	TimeBlockAfternoon = "AFTERNOON" // 午後
-)
+// UnavailableRange 1件の勤務不可時間帯。終日不可の場合は AllDay=true とし、
+// StartTime/EndTime は空にする
+type UnavailableRange struct {
+	AllDay    bool   `bson:"all_day" json:"all_day"`
+	StartTime string `bson:"start_time,omitempty" json:"start_time,omitempty"` // "HH:MM"
+	EndTime   string `bson:"end_time,omitempty" json:"end_time,omitempty"`     // "HH:MM"
+}
 
-// Availability 曜日ごとの勤務可能時間帯リスト
-// 各曜日のリストが空の場合、その曜日は「勤務不可」を意味する
+// Availability 曜日ごとの勤務不可時間帯リスト (1曜日に複数件持てる)
+// 各曜日のリストが空の場合、その曜日は「終日勤務可能」を意味する
 type Availability struct {
-	Monday    []string `bson:"monday,omitempty" json:"monday,omitempty"`
-	Tuesday   []string `bson:"tuesday,omitempty" json:"tuesday,omitempty"`
-	Wednesday []string `bson:"wednesday,omitempty" json:"wednesday,omitempty"`
-	Thursday  []string `bson:"thursday,omitempty" json:"thursday,omitempty"`
-	Friday    []string `bson:"friday,omitempty" json:"friday,omitempty"`
-	Saturday  []string `bson:"saturday,omitempty" json:"saturday,omitempty"`
-	Sunday    []string `bson:"sunday,omitempty" json:"sunday,omitempty"`
+	Monday    []UnavailableRange `bson:"monday,omitempty" json:"monday,omitempty"`
+	Tuesday   []UnavailableRange `bson:"tuesday,omitempty" json:"tuesday,omitempty"`
+	Wednesday []UnavailableRange `bson:"wednesday,omitempty" json:"wednesday,omitempty"`
+	Thursday  []UnavailableRange `bson:"thursday,omitempty" json:"thursday,omitempty"`
+	Friday    []UnavailableRange `bson:"friday,omitempty" json:"friday,omitempty"`
+	Saturday  []UnavailableRange `bson:"saturday,omitempty" json:"saturday,omitempty"`
+	Sunday    []UnavailableRange `bson:"sunday,omitempty" json:"sunday,omitempty"`
 }
 
 // user_info モデル

@@ -61,6 +61,8 @@ func main() {
 	userRepo := &data.MongoUserRepo{}
 	storeRepo := &data.MongoStoreRepo{}
 	staffRepo := &data.MongoStaffRepo{}
+	shiftTableRepo := &data.MongoShiftTableRepo{}
+	shiftChangeRequestRepo := &data.MongoShiftChangeRequestRepo{}
 	authSvc := &auth.FirebaseAuthService{}
 
 	uploadHandler := handlers.NewUploadHandler(
@@ -100,6 +102,7 @@ func main() {
 	storeInfoHandler := handlers.NewStoreInfoHandler(storeRepo, userRepo)
 	storeSettingsHandler := handlers.NewStoreSettingsHandler(storeRepo, userRepo)
 	storeStaffHandler := handlers.NewStoreStaffHandler(staffRepo, userRepo, storeRepo, authSvc)
+	shiftTableHandler := handlers.NewShiftTableHandler(shiftTableRepo, staffRepo, userRepo, authSvc, storeRepo, shiftChangeRequestRepo)
 	storeListHandler := handlers.NewStoreListHandler(storeRepo, authSvc)
 	storeAiContextHandler := handlers.NewStoreAIContextHandler(storeRepo, &data.MongoWaitingListRepo{}, menuRepo)
 	adminHandler := handlers.NewStoreInfoAdminHandler(storeRepo)
@@ -117,6 +120,7 @@ func main() {
 		storeInfoHandler,
 		storeSettingsHandler,
 		storeStaffHandler,
+		shiftTableHandler,
 		storeListHandler,
 		storeAiContextHandler,
 		adminHandler,
