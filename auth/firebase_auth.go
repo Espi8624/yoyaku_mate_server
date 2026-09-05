@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log"
 
 	firebase "firebase.google.com/go/v4"
@@ -9,25 +10,41 @@ import (
 	"google.golang.org/api/option"
 )
 
+// - 認証情報ファイルの既定パス。プロセスの作業ディレクトリからの相対パスであることに注意
+const defaultCredentialsPath = "config/serviceAccountKey.json"
+
 var firebaseAuth *auth.Client
 
-func init() {
-	opt := option.WithCredentialsFile("config/serviceAccountKey.json")
+// ErrFirebaseNotInitialized InitFirebaseを呼ばずに認証機能を使おうとした場合のエラー
+var ErrFirebaseNotInitialized = errors.New("firebase auth is not initialized: call auth.InitFirebase() first")
+
+// InitFirebase Firebase Authクライアントを初期化する
+// - main から明示的に呼ぶ。init() で行うと、Firebaseを使わないテストであっても
+//   パッケージをimportしただけで認証情報ファイルを要求してしまい、
+//   しかもパスが作業ディレクトリ相対のためテスト実行時に解決できない
+// - 起動時に失敗させたい (fail-fast) 判断は呼び出し側に委ねる
+func InitFirebase() error {
+	opt := option.WithCredentialsFile(defaultCredentialsPath)
 	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
-		log.Fatalf("Firebase初期化エラー: %v\n", err)
+		return err
 	}
 
 	client, err := app.Auth(context.Background())
 	if err != nil {
-		log.Fatalf("Firebase Authクライアント生成エラー: %v\n", err)
+		return err
 	}
+
 	firebaseAuth = client
 	log.Println("Firebase Authクライアント初期化完了")
+	return nil
 }
 
 // フロントエンドから受け取ったIDトークンを検証し、UIDを返却
 func VerifyIDToken(ctx context.Context, idToken string) (string, error) {
+	if firebaseAuth == nil {
+		return "", ErrFirebaseNotInitialized
+	}
 	token, err := firebaseAuth.VerifyIDToken(ctx, idToken)
 	if err != nil {
 		return "", err
@@ -37,6 +54,9 @@ func VerifyIDToken(ctx context.Context, idToken string) (string, error) {
 
 // IDトークンを検証し、UID と emailVerified の両方を返却（会員登録専用）
 func VerifyIDTokenWithEmailVerified(ctx context.Context, idToken string) (string, bool, error) {
+	if firebaseAuth == nil {
+		return "", false, ErrFirebaseNotInitialized
+	}
 	token, err := firebaseAuth.VerifyIDToken(ctx, idToken)
 	if err != nil {
 		return "", false, err
@@ -47,5 +67,8 @@ func VerifyIDTokenWithEmailVerified(ctx context.Context, idToken string) (string
 
 // メールアドレスでFirebaseユーザーを取得（存在確認用）
 func GetUserByEmail(ctx context.Context, email string) (*auth.UserRecord, error) {
+	if firebaseAuth == nil {
+		return nil, ErrFirebaseNotInitialized
+	}
 	return firebaseAuth.GetUserByEmail(ctx, email)
 }
