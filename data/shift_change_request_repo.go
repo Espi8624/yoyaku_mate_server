@@ -8,6 +8,7 @@ import (
 	"yoyaku_mate_server/models"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -16,6 +17,8 @@ type ShiftChangeRequestRepository interface {
 	CreateRequest(req models.ShiftChangeRequest) error
 	GetRequestsForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
 	ResolvePendingForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
+	ResolveRequest(requestID string) error
+	DeleteRequest(requestID string) error
 }
 
 type MongoShiftChangeRequestRepo struct{}
@@ -107,4 +110,47 @@ func (r *MongoShiftChangeRequestRepo) ResolvePendingForWeek(storeID, weekStartDa
 		pending[i].ResolvedAt = &resolvedAt
 	}
 	return pending, nil
+}
+
+// ResolveRequest 修正依頼を1件だけ処理済み(resolved)にする。一括適用(ApplyShiftChangeRequestsHandler)が
+// 実際にシフト表へ反映できた依頼を、その場でresolvedにするために使う
+func (r *MongoShiftChangeRequestRepo) ResolveRequest(requestID string) error {
+	collection := db.GetCollection(DatabaseName, CollectionShiftChangeRequests)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(requestID)
+	if err != nil {
+		return err
+	}
+
+	resolvedAt := time.Now()
+	update := bson.M{"$set": bson.M{
+		"status":      models.ShiftChangeRequestStatusResolved,
+		"resolved_at": resolvedAt,
+	}}
+	if _, err := collection.UpdateOne(ctx, bson.M{"_id": objID}, update); err != nil {
+		log.Printf("Failed to resolve shift change request %s: %v", requestID, err)
+		return err
+	}
+	return nil
+}
+
+// DeleteRequest 修正依頼を1件削除する。一括適用で対応されずに残った依頼を、
+// マネージャーが手動で一覧から消せるようにするために使う
+func (r *MongoShiftChangeRequestRepo) DeleteRequest(requestID string) error {
+	collection := db.GetCollection(DatabaseName, CollectionShiftChangeRequests)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(requestID)
+	if err != nil {
+		return err
+	}
+
+	if _, err := collection.DeleteOne(ctx, bson.M{"_id": objID}); err != nil {
+		log.Printf("Failed to delete shift change request %s: %v", requestID, err)
+		return err
+	}
+	return nil
 }

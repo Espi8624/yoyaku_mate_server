@@ -119,4 +119,6 @@ func RegisterRoutes(
 	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.CreateShiftChangeRequestHandler).Methods("POST", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.GetShiftChangeRequestsHandler).Methods("GET", "OPTIONS")
 	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/resolve", shiftTableHandler.ResolveShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/apply", shiftTableHandler.ApplyShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
+	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/{requestId}", shiftTableHandler.DeleteShiftChangeRequestHandler).Methods("DELETE", "OPTIONS")
 }
