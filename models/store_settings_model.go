@@ -21,6 +21,9 @@ type Settings struct {
 	ResetTime          string                         `bson:"reset_time" json:"reset_time"`                                         // HH:MM format
 	AIAdditionalInfo   string                         `bson:"ai_additional_info" json:"ai_additional_info"`                         // AIへの追加情報
 	RequiredStaffCount map[string]DayStaffRequirement `bson:"required_staff_count,omitempty" json:"required_staff_count,omitempty"` // 曜日別の必要人数・1人あたりのシフト時間数
+	// ExcludeManagerFromShiftTable マネージャーをシフト自動配置の対象から除外するか。
+	// 未設定(既存ドキュメント)は false = 除外しない(＝これまで通りマネージャーを含める)
+	ExcludeManagerFromShiftTable bool `bson:"exclude_manager_from_shift_table" json:"exclude_manager_from_shift_table"`
 }
 
 type StoreDayHours struct {

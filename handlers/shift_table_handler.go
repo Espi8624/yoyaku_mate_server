@@ -27,6 +27,7 @@ type ShiftTableRepository interface {
 	DeleteShift(shiftTableID, shiftID string) error
 	ReplaceShifts(shiftTableID string, shifts []models.Shift) error
 	GetStaffShiftCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[primitive.ObjectID]int, error)
+	GetStaffPairCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[string]int, error)
 }
 
 // ShiftChangeRequestRepository 週間シフト表に対する修正依頼の操作を抽象化するインターフェース
@@ -34,6 +35,8 @@ type ShiftChangeRequestRepository interface {
 	CreateRequest(req models.ShiftChangeRequest) error
 	GetRequestsForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
 	ResolvePendingForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
+	ResolveRequest(requestID string) error
+	DeleteRequest(requestID string) error
 }
 
 // shiftFairnessLookbackWeeks 自動配置の公平配分で過去実績を遡って参照する週数。
@@ -494,7 +497,11 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 		return
 	}
 	candidates := buildAutoAssignCandidates(staffList, settings.ManagerID)
-	candidates = appendManagerCandidateIfMissing(candidates, settings.ManagerID)
+	if settings.Settings.ExcludeManagerFromShiftTable {
+		candidates = removeManagerCandidates(candidates)
+	} else {
+		candidates = appendManagerCandidateIfMissing(candidates, settings.ManagerID)
+	}
 
 	baseShifts := table.Shifts
 	if req.Mode == "replace_all" {
@@ -510,7 +517,16 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 		historicalCounts = nil
 	}
 
-	newShifts := autoAssignShifts(baseShifts, &settings.Settings, candidates, historicalCounts)
+	// 同様に、直近の実績から「誰と誰が一緒に組んだか」も取得し、自動配置が
+	// 同じペアばかり繰り返し組ませないようにする(取得に失敗しても自動配置自体は継続する)
+	historicalPairCounts, err := h.shiftTableRepo.GetStaffPairCounts(
+		storeID, weekStartDate, shiftFairnessLookbackWeeks)
+	if err != nil {
+		log.Printf("Failed to fetch historical pair counts for store_id=%s, continuing without them: %v", storeID, err)
+		historicalPairCounts = nil
+	}
+
+	newShifts := autoAssignShifts(baseShifts, &settings.Settings, candidates, historicalCounts, historicalPairCounts)
 
 	if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), newShifts); err != nil {
 		utils.RespondWithError(w, "Failed to auto-generate shifts", http.StatusInternalServerError)
@@ -670,6 +686,461 @@ func (h *ShiftTableHandler) ResolveShiftChangeRequestsHandler(w http.ResponseWri
 	// 「シフト表が更新されました」通知を送る (現時点はアプリ内表示のみ)
 
 	utils.RespondWithJSON(w, resolved, http.StatusOK)
+}
+
+// DeleteShiftChangeRequestHandler 修正依頼を1件削除する (マネージャー専用)。
+// 一括適用(ApplyShiftChangeRequestsHandler)で衝突により見送られ、対応不要になった
+// 依頼を手動で一覧から消すために使う
+func (h *ShiftTableHandler) DeleteShiftChangeRequestHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	storeID := vars["storeId"]
+	weekStartDate := vars["weekStartDate"]
+	requestID := vars["requestId"]
+	if storeID == "" || weekStartDate == "" || requestID == "" {
+		utils.RespondWithError(w, "store_id, week_start_date and request_id are required", http.StatusBadRequest)
+		return
+	}
+
+	user, statusCode, err := h.authenticate(r)
+	if err != nil {
+		utils.RespondWithError(w, err.Error(), statusCode)
+		return
+	}
+
+	hasAccess, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasAccess {
+		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		return
+	}
+
+	if err := h.changeRequestRepo.DeleteRequest(requestID); err != nil {
+		utils.RespondWithError(w, "Failed to delete shift change request", http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, map[string]string{"message": "Shift change request deleted successfully"}, http.StatusOK)
+}
+
+// --- 修正依頼の一括適用 ---
+// 「適用してみる」ボタン1回では終わらない場合がある(衝突が見つかるたび、マネージャーの
+// 判断を1件ずつ挟む必要があるため)。クライアントは、これまでの判断(resolutions)を
+// 毎回全部載せて何度も同じエンドポイントを呼び直すウィザード方式にする。各呼び出しは
+// (DB状態 + resolutions)だけで完結するステートレスな処理: 判断済みの依頼はそのまま
+// 反映し、まだ判断のない衝突に当たった時点で処理を止めてその1件をクライアントに返す。
+// 衝突に当たる前に反映できた分は、その呼び出しの中で確定コミットする(ウィザードを
+// 途中でやめても、既に答えた分は失われない)
+
+// 衝突1件に対してマネージャーが下す判断
+const (
+	changeRequestActionPrioritize     = "prioritize"      // 衝突(依頼同士)で、この依頼を優先する
+	changeRequestActionSwap           = "swap"            // 衝突(定員超過)で、指定した相手と自分の枠を入れ替える
+	changeRequestActionConfirmOverlap = "confirm_overlap" // 衝突(本人の時間重複)を承知の上で適用する
+	changeRequestActionSkip           = "skip"            // この依頼は今回見送る(保留のまま残す)
+)
+
+// 衝突の種類
+const (
+	changeRequestConflictTypeRequestConflict = "request_conflict"      // 複数の依頼が同じ枠を希望
+	changeRequestConflictTypeCapacity        = "capacity_conflict"     // 希望先の枠が既に定員一杯
+	changeRequestConflictTypeSelfOverlap     = "self_overlap_conflict" // 依頼者本人の他のシフトと重複
+)
+
+// changeRequestResolution クライアントが衝突1件に対して下した判断
+type changeRequestResolution struct {
+	RequestID     string `json:"request_id"`
+	Action        string `json:"action"`
+	TargetStaffID string `json:"target_staff_id,omitempty"`
+}
+
+// changeRequestCandidate 衝突ダイアログに並べる選択肢1件(名前ボタン)
+type changeRequestCandidate struct {
+	StaffID   string `json:"staff_id"`
+	StaffName string `json:"staff_name"`
+	// RequestID 依頼同士の衝突(request_conflict)で、この候補自身の依頼IDを表す。
+	// 定員超過(capacity)の候補(単なる既存シフトの担当者)には無い
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// changeRequestConflict マネージャーの判断待ちの衝突1件
+type changeRequestConflict struct {
+	Type        string                   `json:"type"`
+	RequestID   string                   `json:"request_id"`
+	StaffName   string                   `json:"staff_name"`
+	ToDay       string                   `json:"to_day"`
+	ToStartTime string                   `json:"to_start_time"`
+	ToEndTime   string                   `json:"to_end_time"`
+	Candidates  []changeRequestCandidate `json:"candidates,omitempty"`
+}
+
+// changeRequestApplyResult ApplyShiftChangeRequestsHandler のレスポンス。
+// conflict が nil なら今回の呼び出しで全て処理完了(done=true)
+type changeRequestApplyResult struct {
+	AppliedCount      int                    `json:"applied_count"`
+	SkippedStaleCount int                    `json:"skipped_stale_count"`
+	Done              bool                   `json:"done"`
+	Conflict          *changeRequestConflict `json:"conflict,omitempty"`
+}
+
+// ApplyShiftChangeRequestsHandler その週の未処理(pending)な修正依頼を、作成日時が
+// 古い順に実際のシフト表へ反映していく (マネージャー専用)。衝突(上記3種類)に当たると
+// 途中で止まり、その1件をレスポンスで返す。クライアントはマネージャーの判断を
+// resolutions に足して同じエンドポイントを呼び直す
+func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	storeID := vars["storeId"]
+	weekStartDate := vars["weekStartDate"]
+	if storeID == "" || weekStartDate == "" {
+		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		return
+	}
+
+	user, statusCode, err := h.authenticate(r)
+	if err != nil {
+		utils.RespondWithError(w, err.Error(), statusCode)
+		return
+	}
+
+	hasAccess, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasAccess {
+		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		return
+	}
+
+	var req struct {
+		Resolutions []changeRequestResolution `json:"resolutions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	resolutionByRequestID := make(map[string]changeRequestResolution, len(req.Resolutions))
+	for _, res := range req.Resolutions {
+		resolutionByRequestID[res.RequestID] = res
+	}
+
+	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			return
+		}
+		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		return
+	}
+
+	allRequests, err := h.changeRequestRepo.GetRequestsForWeek(storeID, weekStartDate)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
+		return
+	}
+	pending := make([]models.ShiftChangeRequest, 0, len(allRequests))
+	for _, cr := range allRequests {
+		if cr.Status == models.ShiftChangeRequestStatusPending {
+			pending = append(pending, cr)
+		}
+	}
+	// GetRequestsForWeek は新しい順なので、古い順(先着順)に処理するために反転する
+	sort.SliceStable(pending, func(i, j int) bool {
+		return pending[i].CreatedAt.Before(pending[j].CreatedAt)
+	})
+
+	settings, err := h.settingsRepo.GetSettings(storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch store settings", http.StatusInternalServerError)
+		return
+	}
+
+	staffList, err := h.staffRepo.GetStoreStaffByStoreID(storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
+		return
+	}
+	managerName := ""
+	if managerObjID, err := primitive.ObjectIDFromHex(settings.ManagerID); err == nil {
+		if manager, err := h.userRepo.GetUserData(managerObjID); err == nil && manager != nil {
+			managerName = manager.UserName
+		}
+	}
+	staffNames := resolveStaffNames(staffList, settings.ManagerID, managerName)
+
+	shifts := append([]models.Shift{}, table.Shifts...)
+	appliedRequestIDs := map[string]bool{}
+	skippedThisRun := map[string]bool{}
+	staleCount := 0
+	var conflict *changeRequestConflict
+
+requestLoop:
+	for _, cr := range pending {
+		reqIDHex := cr.ID.Hex()
+		if skippedThisRun[reqIDHex] || appliedRequestIDs[reqIDHex] {
+			continue
+		}
+
+		// 依頼元のシフトがまだそのまま存在するか (スタッフ・曜日・時刻が完全一致するか)。
+		// target_shift_id はあくまで参考情報のため一致判定には使わない
+		originalIdx := findShiftIndex(shifts, cr.StaffID, cr.FromDay, cr.FromStartTime, cr.FromEndTime)
+		if originalIdx == -1 {
+			staleCount++
+			continue
+		}
+
+		resolution, hasResolution := resolutionByRequestID[reqIDHex]
+		if hasResolution && resolution.Action == changeRequestActionSkip {
+			continue
+		}
+
+		// --- 衝突①: 他のまだ未処理の依頼と希望先が重なっていないか ---
+		competitors := findCompetingRequests(pending, cr, skippedThisRun, appliedRequestIDs)
+		if len(competitors) > 0 {
+			if !hasResolution || resolution.Action != changeRequestActionPrioritize {
+				candidates := []changeRequestCandidate{
+					{StaffID: cr.StaffID.Hex(), StaffName: cr.StaffName, RequestID: reqIDHex},
+				}
+				for _, c := range competitors {
+					candidates = append(candidates, changeRequestCandidate{
+						StaffID: c.StaffID.Hex(), StaffName: c.StaffName, RequestID: c.ID.Hex(),
+					})
+				}
+				conflict = &changeRequestConflict{
+					Type: changeRequestConflictTypeRequestConflict, RequestID: reqIDHex, StaffName: cr.StaffName,
+					ToDay: cr.ToDay, ToStartTime: cr.ToStartTime, ToEndTime: cr.ToEndTime,
+					Candidates: candidates,
+				}
+				break requestLoop
+			}
+			// 優先する人を決定 -> 選ばれなかった全員(自分自身も含めうる)は今回見送る
+			for _, c := range append([]models.ShiftChangeRequest{cr}, competitors...) {
+				if c.StaffID.Hex() != resolution.TargetStaffID {
+					skippedThisRun[c.ID.Hex()] = true
+				}
+			}
+			if cr.StaffID.Hex() != resolution.TargetStaffID {
+				// この依頼は敗れた側 -> 次の依頼へ(勝者は別途この後の周回で処理される)
+				continue
+			}
+		}
+
+		// --- 衝突②: 希望先の枠が既に必要人数分埋まっていないか ---
+		swapWithIdx := -1
+		required := settings.Settings.RequiredStaffCount[cr.ToDay].Count
+		if required > 0 {
+			occupants := findOccupants(shifts, cr.ToDay, cr.ToStartTime, cr.ToEndTime, cr.StaffID)
+			if len(occupants) >= required {
+				if hasResolution && resolution.Action == changeRequestActionSwap {
+					swapWithIdx = findShiftIndexByStaff(shifts, resolution.TargetStaffID, cr.ToDay, cr.ToStartTime, cr.ToEndTime)
+					if swapWithIdx == -1 {
+						// スワップ相手が(別の変更で)既にいなくなっている -> 保留のまま次へ
+						continue
+					}
+				} else {
+					candidates := make([]changeRequestCandidate, 0, len(occupants))
+					for _, occ := range occupants {
+						candidates = append(candidates, changeRequestCandidate{
+							StaffID: occ.StaffID.Hex(), StaffName: staffNameOf(staffNames, occ.StaffID),
+						})
+					}
+					conflict = &changeRequestConflict{
+						Type: changeRequestConflictTypeCapacity, RequestID: reqIDHex, StaffName: cr.StaffName,
+						ToDay: cr.ToDay, ToStartTime: cr.ToStartTime, ToEndTime: cr.ToEndTime,
+						Candidates: candidates,
+					}
+					break requestLoop
+				}
+			}
+		}
+
+		// --- 衝突③: 依頼者本人の他のシフトと時間が重ならないか ---
+		if hasOtherOverlappingShift(shifts, cr.StaffID, originalIdx, cr.ToDay, cr.ToStartTime, cr.ToEndTime) {
+			if !hasResolution || resolution.Action != changeRequestActionConfirmOverlap {
+				conflict = &changeRequestConflict{
+					Type: changeRequestConflictTypeSelfOverlap, RequestID: reqIDHex, StaffName: cr.StaffName,
+					ToDay: cr.ToDay, ToStartTime: cr.ToStartTime, ToEndTime: cr.ToEndTime,
+				}
+				break requestLoop
+			}
+		}
+
+		// ここまで来たら適用確定
+		shifts[originalIdx].Day = cr.ToDay
+		shifts[originalIdx].StartTime = cr.ToStartTime
+		shifts[originalIdx].EndTime = cr.ToEndTime
+		if swapWithIdx != -1 {
+			shifts[swapWithIdx].Day = cr.FromDay
+			shifts[swapWithIdx].StartTime = cr.FromStartTime
+			shifts[swapWithIdx].EndTime = cr.FromEndTime
+		}
+		appliedRequestIDs[reqIDHex] = true
+	}
+
+	// 衝突で止まった場合でも、そこまでに確定した分は必ずコミットする
+	// (ウィザードを途中でやめても、既に答えた分が失われないようにするため)
+	if len(appliedRequestIDs) > 0 {
+		if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), shifts); err != nil {
+			utils.RespondWithError(w, "Failed to apply shift changes", http.StatusInternalServerError)
+			return
+		}
+		for id := range appliedRequestIDs {
+			if err := h.changeRequestRepo.ResolveRequest(id); err != nil {
+				log.Printf("Failed to resolve shift change request %s after applying: %v", id, err)
+			}
+		}
+	}
+
+	utils.RespondWithJSON(w, changeRequestApplyResult{
+		AppliedCount:      len(appliedRequestIDs),
+		SkippedStaleCount: staleCount,
+		Done:              conflict == nil,
+		Conflict:          conflict,
+	}, http.StatusOK)
+}
+
+// findShiftIndex スタッフ・曜日・開始/終了時刻が完全一致するシフトを探す
+// (修正依頼の元になったシフトが、まだそのまま存在するかの確認に使う)
+func findShiftIndex(shifts []models.Shift, staffID primitive.ObjectID, day, startTime, endTime string) int {
+	for i, s := range shifts {
+		if s.StaffID == staffID && s.Day == day && s.StartTime == startTime && s.EndTime == endTime {
+			return i
+		}
+	}
+	return -1
+}
+
+// findShiftIndexByStaff 指定スタッフの、指定曜日・時間帯に重なるシフトを探す
+// (定員超過の衝突で、スワップ相手として指定された人の現在のシフトを特定するのに使う)
+func findShiftIndexByStaff(shifts []models.Shift, staffIDHex, day, startTime, endTime string) int {
+	startMin, ok1 := parseTimeToMinutes(startTime)
+	endMin, ok2 := parseTimeToMinutes(endTime)
+	if !ok1 || !ok2 {
+		return -1
+	}
+	for i, s := range shifts {
+		if s.Day != day || s.StaffID.Hex() != staffIDHex {
+			continue
+		}
+		if shiftOverlapsRange(s, startMin, endMin) {
+			return i
+		}
+	}
+	return -1
+}
+
+// findOccupants 指定曜日・時間帯に重なる、excludeStaffID以外のシフトを全て返す
+// (定員超過かどうかの判定、およびスワップ候補一覧の表示に使う)
+func findOccupants(shifts []models.Shift, day, startTime, endTime string, excludeStaffID primitive.ObjectID) []models.Shift {
+	startMin, ok1 := parseTimeToMinutes(startTime)
+	endMin, ok2 := parseTimeToMinutes(endTime)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	var occupants []models.Shift
+	for _, s := range shifts {
+		if s.Day != day || s.StaffID == excludeStaffID {
+			continue
+		}
+		if shiftOverlapsRange(s, startMin, endMin) {
+			occupants = append(occupants, s)
+		}
+	}
+	return occupants
+}
+
+// hasOtherOverlappingShift staffIDが、excludeIdx以外のシフトで指定曜日・時間帯と
+// 重なるものを持っているかどうか(依頼者本人の二重予約チェックに使う)
+func hasOtherOverlappingShift(shifts []models.Shift, staffID primitive.ObjectID, excludeIdx int, day, startTime, endTime string) bool {
+	startMin, ok1 := parseTimeToMinutes(startTime)
+	endMin, ok2 := parseTimeToMinutes(endTime)
+	if !ok1 || !ok2 {
+		return false
+	}
+	for i, s := range shifts {
+		if i == excludeIdx || s.StaffID != staffID || s.Day != day {
+			continue
+		}
+		if shiftOverlapsRange(s, startMin, endMin) {
+			return true
+		}
+	}
+	return false
+}
+
+// findCompetingRequests current と希望先(曜日・時間帯)が重なる、他のまだ未処理の
+// pending依頼を全て探す(依頼同士の衝突判定に使う)
+func findCompetingRequests(pending []models.ShiftChangeRequest, current models.ShiftChangeRequest,
+	skippedThisRun, appliedThisRun map[string]bool) []models.ShiftChangeRequest {
+	var competitors []models.ShiftChangeRequest
+	for _, other := range pending {
+		if other.ID == current.ID {
+			continue
+		}
+		otherIDHex := other.ID.Hex()
+		if skippedThisRun[otherIDHex] || appliedThisRun[otherIDHex] {
+			continue
+		}
+		if other.ToDay != current.ToDay {
+			continue
+		}
+		if timeRangesOverlap(current.ToStartTime, current.ToEndTime, other.ToStartTime, other.ToEndTime) {
+			competitors = append(competitors, other)
+		}
+	}
+	return competitors
+}
+
+// timeRangesOverlap 2つの [start, end) 時刻区間("HH:MM")が重なるかどうか
+func timeRangesOverlap(aStart, aEnd, bStart, bEnd string) bool {
+	aStartMin, ok1 := parseTimeToMinutes(aStart)
+	aEndMin, ok2 := parseTimeToMinutes(aEnd)
+	bStartMin, ok3 := parseTimeToMinutes(bStart)
+	bEndMin, ok4 := parseTimeToMinutes(bEnd)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return false
+	}
+	return aStartMin < bEndMin && bStartMin < aEndMin
+}
+
+// resolveStaffNames store_staff_info一覧から、シフトのstaffId(store_staff_infoの_id)を
+// 表示名に変換するマップを作る。マネージャーがstore_staff_infoを持たない(通常ケース)場合は
+// managerID/managerNameをフォールバックとして補う(shift_table_view.dartのクライアント側
+// ロジックと同じ考え方)
+func resolveStaffNames(staffList []map[string]interface{}, managerID, managerName string) map[string]string {
+	names := make(map[string]string, len(staffList)+1)
+	for _, entry := range staffList {
+		id, ok := entry["_id"].(primitive.ObjectID)
+		if !ok {
+			continue
+		}
+		name, _ := entry["user_name"].(string)
+		if name == "" {
+			name = "不明"
+		}
+		names[id.Hex()] = name
+	}
+	if managerID != "" {
+		if _, exists := names[managerID]; !exists {
+			if managerName != "" {
+				names[managerID] = managerName
+			} else {
+				names[managerID] = "マネージャー"
+			}
+		}
+	}
+	return names
+}
+
+// staffNameOf names から staffID の表示名を引く(無ければ「不明」)
+func staffNameOf(names map[string]string, staffID primitive.ObjectID) string {
+	if name, ok := names[staffID.Hex()]; ok {
+		return name
+	}
+	return "不明"
 }
 
 // --- 自動配置アルゴリズム ---
@@ -906,6 +1377,19 @@ func appendManagerCandidateIfMissing(candidates []autoAssignCandidate, managerID
 	return append(candidates, autoAssignCandidate{ID: objID, IsManager: true})
 }
 
+// removeManagerCandidates 設定でマネージャーがシフト自動配置から除外されている場合に、
+// 候補一覧からマネージャー分(buildAutoAssignCandidatesがIsManagerを立てた既存項目も含む)を取り除く
+func removeManagerCandidates(candidates []autoAssignCandidate) []autoAssignCandidate {
+	filtered := make([]autoAssignCandidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.IsManager {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
+}
+
 // autoAssignShifts 必要人員設定・営業時間・定休日・スタッフの勤務可能時間をもとに、
 // baseShifts に不足分のシフトを自動的に追加した新しいシフト一覧を返す。
 // 各曜日は営業開始〜終了時刻を (ShiftChangeCount+1)個の等しい長さのブロックに
@@ -913,8 +1397,19 @@ func appendManagerCandidateIfMissing(candidates []autoAssignCandidate, managerID
 // baseShifts が空(nilまたは長さ0)の場合は最初から全て自動生成する。
 // historicalCounts は直近数週間分の実績(スタッフごとの担当シフト数)。これを公平配分の
 // 初期値として使うことで、その週だけで完結しない、複数週にまたがった公平配分になる
-// (nilの場合は0から、つまり従来通りその週だけで公平配分する)
-func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, candidates []autoAssignCandidate, historicalCounts map[primitive.ObjectID]int) []models.Shift {
+// (nilの場合は0から、つまり従来通りその週だけで公平配分する)。
+// historicalPairCounts は同様に直近数週間分の「誰と誰が一緒に組んだか」の実績で、
+// ペア反復ペナルティの初期値として使う(nilの場合は0から)。
+//
+// 各ブロックの人員選定は、単純に担当数が少ない順に選ぶのではなく、
+// 必要人数分の組み合わせを全て作って点数を付け、最も点数が低い組み合わせを選ぶ
+// 2段階方式(候補生成→スコアリング)にしている。点数が低いほど良い組み合わせ:
+//
+//	score = 担当数合計*10 + ペア反復合計*5 + 連続勤務件数*5
+//
+// これにより、個人ごとの公平配分(担当数)だけでなく、同じ2人ばかりが
+// 繰り返し組まされること・同じ日に隙間なく連続して働かされることも抑えられる
+func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, candidates []autoAssignCandidate, historicalCounts map[primitive.ObjectID]int, historicalPairCounts map[string]int) []models.Shift {
 	result := make([]models.Shift, len(baseShifts))
 	copy(result, baseShifts)
 
@@ -926,6 +1421,23 @@ func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, cand
 	}
 	for _, s := range result {
 		assignedCount[s.StaffID]++
+	}
+
+	// ペア反復ペナルティのため、直近実績(historicalPairCounts)を初期値に、
+	// baseShifts に既に含まれるペア(同じ曜日で時間帯が重なる2人)も反映しておく
+	pairAssignedCount := make(map[string]int, len(historicalPairCounts))
+	for key, count := range historicalPairCounts {
+		pairAssignedCount[key] = count
+	}
+	for i := 0; i < len(result); i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[i].Day != result[j].Day || result[i].StaffID == result[j].StaffID {
+				continue
+			}
+			if shiftsOverlap(result[i], result[j]) {
+				pairAssignedCount[pairKey(result[i].StaffID, result[j].StaffID)]++
+			}
+		}
 	}
 
 	for _, day := range weekdayOrder {
@@ -993,20 +1505,53 @@ func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, cand
 				}
 			}
 
-			// 現在の総担当シフト数が少ない人を優先(公平分配)、同数ならID順で決定論的に
-			sort.SliceStable(eligible, func(i, j int) bool {
-				ci, cj := eligible[i], eligible[j]
-				if assignedCount[ci.ID] != assignedCount[cj.ID] {
-					return assignedCount[ci.ID] < assignedCount[cj.ID]
-				}
-				return ci.ID.Hex() < cj.ID.Hex()
-			})
+			if need > len(eligible) {
+				// 勤務可能な候補が必要人数に満たない場合は、いる分だけ配置する
+				need = len(eligible)
+			}
+			if need <= 0 {
+				continue
+			}
 
 			startTime := formatMinutesToTime(blockStart)
 			endTime := formatMinutesToTime(blockEnd)
 
-			for i := 0; i < need && i < len(eligible); i++ {
-				candidate := eligible[i]
+			// 必要人数分の組み合わせを全て作り、点数が最も低い(=良い)組み合わせを選ぶ。
+			// 組み合わせ数が極端に多くなる(スタッフが非常に多い等)場合の安全策として、
+			// その場合だけ従来通り「担当数が少ない順」の単純な方式にフォールバックする
+			var chosen []autoAssignCandidate
+			if combinationCountExceeds(len(eligible), need, maxAutoAssignCombinations) {
+				sorted := make([]autoAssignCandidate, len(eligible))
+				copy(sorted, eligible)
+				sort.SliceStable(sorted, func(i, j int) bool {
+					ci, cj := sorted[i], sorted[j]
+					if assignedCount[ci.ID] != assignedCount[cj.ID] {
+						return assignedCount[ci.ID] < assignedCount[cj.ID]
+					}
+					return ci.ID.Hex() < cj.ID.Hex()
+				})
+				chosen = sorted[:need]
+			} else {
+				var bestScore int
+				var bestKey string
+				for idx, combo := range generateCombinations(eligible, need) {
+					score := scoreCombination(combo, day, blockStart, blockEnd, assignedCount, pairAssignedCount, result)
+					key := comboKey(combo)
+					if idx == 0 || score < bestScore || (score == bestScore && key < bestKey) {
+						chosen = combo
+						bestScore = score
+						bestKey = key
+					}
+				}
+			}
+
+			for i := 0; i < len(chosen); i++ {
+				for j := i + 1; j < len(chosen); j++ {
+					pairAssignedCount[pairKey(chosen[i].ID, chosen[j].ID)]++
+				}
+			}
+
+			for _, candidate := range chosen {
 				result = append(result, models.Shift{
 					ID:        primitive.NewObjectID(),
 					StaffID:   candidate.ID,
@@ -1020,4 +1565,144 @@ func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, cand
 	}
 
 	return result
+}
+
+// maxAutoAssignCombinations 1ブロックあたりに全生成してよい組み合わせ数の上限。
+// スタッフ数が非常に多い店舗での組み合わせ爆発を防ぐための安全策で、これを超える
+// 場合だけ組み合わせ生成をやめ、以前と同じ「担当数が少ない順」の単純な方式にフォールバックする。
+// 実際の店舗規模(スタッフ数十名程度まで)では通常発動しない
+const maxAutoAssignCombinations = 20000
+
+// combinationCountExceeds nCk(nからkを選ぶ組み合わせの数)が cap を超えるかどうかを、
+// 大きな数への桁あふれを避けながら判定する(計算途中でcapを超えた時点で打ち切る)
+func combinationCountExceeds(n, k, cap int) bool {
+	if k <= 0 || k > n {
+		return false
+	}
+	count := 1
+	for i := 0; i < k; i++ {
+		count = count * (n - i) / (i + 1)
+		if count > cap {
+			return true
+		}
+	}
+	return false
+}
+
+// generateCombinations items から大きさ k の組み合わせを全て生成する(辞書順)
+func generateCombinations(items []autoAssignCandidate, k int) [][]autoAssignCandidate {
+	n := len(items)
+	if k <= 0 || k > n {
+		return nil
+	}
+
+	indices := make([]int, k)
+	for i := range indices {
+		indices[i] = i
+	}
+
+	var combos [][]autoAssignCandidate
+	for {
+		combo := make([]autoAssignCandidate, k)
+		for i, idx := range indices {
+			combo[i] = items[idx]
+		}
+		combos = append(combos, combo)
+
+		// 次の組み合わせのインデックス列へ進める。末尾から、まだ動かせる
+		// (n-k個の余地がある)桁を探して+1し、その右側を詰め直す
+		i := k - 1
+		for i >= 0 && indices[i] == i+n-k {
+			i--
+		}
+		if i < 0 {
+			break
+		}
+		indices[i]++
+		for j := i + 1; j < k; j++ {
+			indices[j] = indices[j-1] + 1
+		}
+	}
+	return combos
+}
+
+// scoreCombination 組み合わせ1件分の点数を計算する。低いほど良い組み合わせ:
+// 担当数合計(個人の公平配分) + ペア反復合計(同じ2人の組み合わせを避ける) +
+// 連続勤務件数(同じ日に隙間なく連続して働く負担を避ける)の加重合計
+func scoreCombination(combo []autoAssignCandidate, day string, blockStart, blockEnd int,
+	assignedCount map[primitive.ObjectID]int, pairAssignedCount map[string]int, result []models.Shift) int {
+	workloadImbalance := 0
+	for _, c := range combo {
+		workloadImbalance += assignedCount[c.ID]
+	}
+
+	pairRepeat := 0
+	for i := 0; i < len(combo); i++ {
+		for j := i + 1; j < len(combo); j++ {
+			pairRepeat += pairAssignedCount[pairKey(combo[i].ID, combo[j].ID)]
+		}
+	}
+
+	consecutiveBurden := 0
+	for _, c := range combo {
+		if hasAdjacentShift(result, c.ID, day, blockStart, blockEnd) {
+			consecutiveBurden++
+		}
+	}
+
+	return workloadImbalance*10 + pairRepeat*5 + consecutiveBurden*5
+}
+
+// hasAdjacentShift staffID が同じ曜日に、このブロックと隙間なく隣接するシフト
+// (終了時刻がこのブロックの開始時刻と一致、または開始時刻がこのブロックの終了時刻と一致)
+// を既に持っているかどうか。連続勤務の負担を表す簡易指標として使う
+func hasAdjacentShift(shifts []models.Shift, staffID primitive.ObjectID, day string, blockStart, blockEnd int) bool {
+	for _, s := range shifts {
+		if s.StaffID != staffID || s.Day != day {
+			continue
+		}
+		sMin, ok1 := parseTimeToMinutes(s.StartTime)
+		eMin, ok2 := parseTimeToMinutes(s.EndTime)
+		if !ok1 || !ok2 {
+			continue
+		}
+		if eMin == blockStart || sMin == blockEnd {
+			return true
+		}
+	}
+	return false
+}
+
+// shiftsOverlap 2つのシフトの [start_time, end_time) が重なるかどうか
+func shiftsOverlap(a, b models.Shift) bool {
+	aStart, ok1 := parseTimeToMinutes(a.StartTime)
+	aEnd, ok2 := parseTimeToMinutes(a.EndTime)
+	bStart, ok3 := parseTimeToMinutes(b.StartTime)
+	bEnd, ok4 := parseTimeToMinutes(b.EndTime)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return false
+	}
+	return aStart < bEnd && bStart < aEnd
+}
+
+// pairKey 2人分のIDから、順序に依存しない一意なマップキーを作る("aHex|bHex"、必ず
+// 小さい方が先)。data/shift_table_repo.go の同名関数と全く同じフォーマットにする必要がある
+// (過去実績からの初期値と、この関数内で使う実行中の累積値のキーを一致させるため)
+func pairKey(a, b primitive.ObjectID) string {
+	aHex, bHex := a.Hex(), b.Hex()
+	if aHex > bHex {
+		aHex, bHex = bHex, aHex
+	}
+	return aHex + "|" + bHex
+}
+
+// comboKey 組み合わせの同点タイブレーク用に、メンバーIDを昇順に並べて連結した
+// 文字列を作る(実行のたびに同じ入力なら同じ結果になる決定論的な選択にするため)
+func comboKey(combo []autoAssignCandidate) string {
+	ids := make([]string, len(combo))
+	for i, c := range combo {
+		ids[i] = c.ID.Hex()
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
 }
