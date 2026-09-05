@@ -21,6 +21,12 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Initialize Firebase Auth
+	// - 認証情報が無ければ全ての認証付きAPIが機能しないため、ここで即座に停止させる
+	if err := auth.InitFirebase(); err != nil {
+		log.Fatalf("Firebase初期化エラー: %v", err)
+	}
+
 	// Initialize MongoDB
 	if err := db.InitMongoDB(cfg.MongoDB.URI); err != nil {
 		log.Printf("MongoDB初期化失敗: %v", err)
@@ -82,11 +88,14 @@ func main() {
 	r.Use(mux.CORSMethodMiddleware(r))
 
 	// Initialize DI handlers
+	sessionRepo := &data.MongoSessionRepo{}
+
 	waitingHandler := handlers.NewWaitingListHandler(
 		&data.MongoWaitingListRepo{},
 		storeRepo,
 		userRepo,
 		authSvc,
+		sessionRepo,
 		events.GetBroker(),
 		events.GetWaitingUserBroker(),
 		metrics.GetTracker(),
@@ -98,6 +107,7 @@ func main() {
 		authSvc,
 	)
 
+	sessionHandler := handlers.NewSessionHandler(sessionRepo)
 	userInfoHandler := handlers.NewUserInfoHandler(userRepo, authSvc)
 	storeInfoHandler := handlers.NewStoreInfoHandler(storeRepo, userRepo)
 	storeSettingsHandler := handlers.NewStoreSettingsHandler(storeRepo, userRepo)
@@ -113,6 +123,8 @@ func main() {
 	handlers.RegisterRoutes(
 		r,
 		userRepo,
+		sessionRepo,
+		sessionHandler,
 		uploadHandler,
 		waitingHandler,
 		menuHandler,

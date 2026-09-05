@@ -11,6 +11,8 @@ import (
 func RegisterRoutes(
 	r *mux.Router,
 	userRepo MiddlewareUserRepository,
+	sessionRepo MiddlewareSessionRepository,
+	sessionHandler *SessionHandler,
 	uploadHandler *UploadHandler,
 	waitingHandler *WaitingListHandler,
 	menuHandler *MenuListHandler,
@@ -31,56 +33,49 @@ func RegisterRoutes(
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 
+	// ============================================================
+	// 公開ルート (ゲスト・顧客ウェブ・ログイン前の処理が利用するためセッション検証の対象外)
+	// ============================================================
+
+	// - 待機リスト: ゲスト登録/ゲストキャンセルと直員操作が同一エンドポイントを共有しており、
+	//   認証要否がリクエスト内容によって変わるため、ミドルウェアではなくハンドラ内で
+	//   VerifySessionForUser を呼び分ける
 	api.HandleFunc("/waiting-list", waitingHandler.Handle)
 	api.HandleFunc("/waiting-list/poll", waitingHandler.HandlePolling)
+	// - SSEストリームは店舗単位の公開データ (顧客ウェブも購読する)
 	api.HandleFunc("/waiting-list/stream", waitingHandler.HandleStream)
 	api.HandleFunc("/waiting-list/stream-user", waitingHandler.HandleWaitingItemStream)
-	api.HandleFunc("/statistics", statisticsHandler.HandleGet)
 
 	api.HandleFunc("/public/store_ai_context", storeAiContextHandler.HandleGet)
 	api.HandleFunc("/public/ai-chat", AIChatHandler).Methods("POST", "OPTIONS")
 
-	api.HandleFunc("/menu-list", menuHandler.Handle).Methods("GET", "POST", "OPTIONS", "PATCH")
-	api.HandleFunc("/menu-list/bulk-save", menuHandler.HandleBulkSaveMenuList)
-	api.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
-
+	// - メニュー一覧の取得は顧客ウェブも利用するため公開 (更新系は点主アプリ専用ルートで処理)
+	api.HandleFunc("/menu-list", menuHandler.Handle).Methods("GET", "OPTIONS")
 	// - 店舗設定の取得 (公開、GETのみ許可)
 	api.HandleFunc("/store_settings", storeSettingsHandler.GetStoreSettingsHandler).Methods("GET", "OPTIONS")
-	// ProviderMenu endpoints
-	api.HandleFunc("/provider_menu", menuHandler.Handle).Methods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
-	api.HandleFunc("/provider_menu/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_menu/category/bulk-update", menuHandler.HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_menu/category/bulk-delete", menuHandler.HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/provider_menu/all/bulk-delete", menuHandler.HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
 	// - 店舗情報の取得 (公開、GETのみ許可)
 	api.HandleFunc("/provider_store", storeInfoHandler.GetStoreHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
-	api.HandleFunc("/provider_store/license", storeLicenseCallHandler.GetStoreLicenseHandler)
-	api.HandleFunc("/provider_user/firebase_uid", userInfoHandler.UserByFirebaseUIDHandler)
 
-	// - 認証が必要なルートグループ (RequireAuthMiddlewareを適用)
-	authApi := api.PathPrefix("").Subrouter()
-	authApi.Use(RequireAuthMiddleware(userRepo))
-
-	// - ユーザー情報 (個人情報保護: GET/PUT ともに認証が必要)
-	authApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "OPTIONS")
-	// - 店舗情報の更新 (認証が必要、GETは公開ルートで処理)
-	authApi.HandleFunc("/provider_store", storeInfoHandler.UpdateStoreHandler).Methods("PUT", "OPTIONS")
-	// - 店舗設定の更新 (認証が必要、GETは公開ルートで処理)
-	authApi.HandleFunc("/store_settings", storeSettingsHandler.UpdateStoreSettingsHandler).Methods("PUT", "OPTIONS")
-
-	// Auth endpoints
-	api.HandleFunc("/provider_stores/store-list", storeListHandler.GetMyStoresHandler)
-
+	// - 会員登録・重複チェックはログイン前に呼ばれるため認証・セッションともに不要
 	api.HandleFunc("/auth/signup", SignUpHandler)
-	api.HandleFunc("/stores/add", AddNewStoreHandler)
-	api.HandleFunc("/stores/join", storeStaffHandler.JoinStoreHandler)
 	api.HandleFunc("/auth/check-store", StoreExistsHandler)
 	api.HandleFunc("/auth/check-email", EmailCheckHandler)
 	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
 
+	// - 会員登録直後(セッション確立前)の店舗作成・参加・営業許可証アップロード。
+	//   Firebase認証はハンドラ内で行うが、セッション検証を課すと登録フローが成立しないため対象外
+	api.HandleFunc("/stores/add", AddNewStoreHandler)
+	api.HandleFunc("/stores/join", storeStaffHandler.JoinStoreHandler)
 	api.HandleFunc("/stores/upload-license", uploadHandler.UploadLicense)
+
+	// - セッション発行の起点。このエンドポイント自体がセッションを発行するため、
+	//   セッション検証の対象にはできない (Firebase認証のみ要求する)
+	sessionApi := api.PathPrefix("").Subrouter()
+	sessionApi.Use(RequireAuthMiddleware(userRepo))
+	sessionApi.HandleFunc("/auth/session", sessionHandler.Handle).Methods("POST", "DELETE", "OPTIONS")
+
+	// - プロフィール取得。セッション確立前(アプリ起動直後)にも呼ばれるため対象外
+	api.HandleFunc("/provider_user/firebase_uid", userInfoHandler.UserByFirebaseUIDHandler)
 
 	// Admin endpoints
 	adminApi := api.PathPrefix("/admin").Subrouter()
@@ -101,24 +96,56 @@ func RegisterRoutes(
 	adminApi.HandleFunc("/metrics/system", GetSystemMetricsHandler).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/db", GetDBMetricsHandler).Methods("GET", "OPTIONS")
 
+	// ============================================================
+	// 点主アプリ専用ルート (Firebase認証 + 端末セッション検証)
+	// - ハンドラごとに検証を書くと必ず付け忘れが発生するため、ここにルートを登録するだけで
+	//   検証が掛かるようにしている。新しい点主アプリ向けAPIは全てこのグループに追加すること
+	// ============================================================
+	providerApi := api.PathPrefix("").Subrouter()
+	providerApi.Use(RequireAuthMiddleware(userRepo))
+	providerApi.Use(RequireSessionMiddleware(sessionRepo))
+
+	// - ユーザー情報 (個人情報保護: GET/PUT ともに認証が必要)
+	providerApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "OPTIONS")
+	providerApi.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
+
+	// - 店舗情報・店舗設定の更新 (GETは公開ルートで処理)
+	providerApi.HandleFunc("/provider_store", storeInfoHandler.UpdateStoreHandler).Methods("PUT", "OPTIONS")
+	providerApi.HandleFunc("/store_settings", storeSettingsHandler.UpdateStoreSettingsHandler).Methods("PUT", "OPTIONS")
+	providerApi.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_store/license", storeLicenseCallHandler.GetStoreLicenseHandler)
+	providerApi.HandleFunc("/provider_stores/store-list", storeListHandler.GetMyStoresHandler)
+
+	providerApi.HandleFunc("/statistics", statisticsHandler.HandleGet)
+
+	// Menu endpoints
+	providerApi.HandleFunc("/menu-list", menuHandler.Handle).Methods("POST", "PATCH")
+	providerApi.HandleFunc("/menu-list/bulk-save", menuHandler.HandleBulkSaveMenuList)
+	providerApi.HandleFunc("/menus/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_menu", menuHandler.Handle).Methods("GET", "POST", "PATCH", "DELETE", "OPTIONS")
+	providerApi.HandleFunc("/provider_menu/{menuId}/image", uploadHandler.UploadMenuImage).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_menu/category/bulk-update", menuHandler.HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_menu/category/bulk-delete", menuHandler.HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
+	providerApi.HandleFunc("/provider_menu/all/bulk-delete", menuHandler.HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
+
 	// Staff Management endpoints
-	api.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/{staffId}", storeStaffHandler.UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", storeStaffHandler.UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/staff/{staffId}/availability", storeStaffHandler.UpdateStoreStaffAvailabilityHandler).Methods("PATCH", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/staff/{staffId}", storeStaffHandler.UpdateStoreStaffStatusHandler).Methods("PATCH", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/staff/{staffId}/permissions", storeStaffHandler.UpdateStoreStaffPermissionsHandler).Methods("PATCH", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/staff/{staffId}/availability", storeStaffHandler.UpdateStoreStaffAvailabilityHandler).Methods("PATCH", "OPTIONS")
 
 	// Shift Table endpoints
-	api.HandleFunc("/stores/{storeId}/shift-tables", shiftTableHandler.CreateShiftTableHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}", shiftTableHandler.GetShiftTableHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts", shiftTableHandler.AddShiftHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.UpdateShiftHandler).Methods("PATCH", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.DeleteShiftHandler).Methods("DELETE", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/auto-generate", shiftTableHandler.AutoGenerateShiftsHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables", shiftTableHandler.CreateShiftTableHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}", shiftTableHandler.GetShiftTableHandler).Methods("GET", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts", shiftTableHandler.AddShiftHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.UpdateShiftHandler).Methods("PATCH", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.DeleteShiftHandler).Methods("DELETE", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/auto-generate", shiftTableHandler.AutoGenerateShiftsHandler).Methods("POST", "OPTIONS")
 
 	// Shift Change Request endpoints (週間シフト表に対する修正依頼)
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.CreateShiftChangeRequestHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.GetShiftChangeRequestsHandler).Methods("GET", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/resolve", shiftTableHandler.ResolveShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/apply", shiftTableHandler.ApplyShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
-	api.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/{requestId}", shiftTableHandler.DeleteShiftChangeRequestHandler).Methods("DELETE", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.CreateShiftChangeRequestHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.GetShiftChangeRequestsHandler).Methods("GET", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/resolve", shiftTableHandler.ResolveShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/apply", shiftTableHandler.ApplyShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/{requestId}", shiftTableHandler.DeleteShiftChangeRequestHandler).Methods("DELETE", "OPTIONS")
 }

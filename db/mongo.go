@@ -18,6 +18,7 @@ const (
 	CollectionRequestLogs      = "request_logs"
 	CollectionDailyActiveUsers = "daily_active_users"
 	CollectionAuditLogs        = "audit_logs"
+	CollectionSessions         = "sessions"
 )
 
 var MongoClient *mongo.Client
@@ -188,6 +189,49 @@ func EnsureIndexes() error {
 			log.Printf("Failed to create compound unique index for daily_active_users: %v", err)
 		} else {
 			log.Println("Created unique index: idx_date_ip on daily_active_users")
+		}
+	}
+
+	sessionsCollection := GetCollection(DatabaseName, CollectionSessions)
+	if sessionsCollection != nil {
+		// - セッショントークンによる検索は認証が必要な全リクエストで走るため、ユニークインデックスを張る
+		sessionIDIndexModel := mongo.IndexModel{
+			Keys:    bson.D{{Key: "session_id", Value: 1}},
+			Options: options.Index().SetUnique(true).SetName("idx_sessions_session_id"),
+		}
+		_, err := sessionsCollection.Indexes().CreateOne(ctx, sessionIDIndexModel)
+		if err != nil {
+			log.Printf("Failed to create session_id index for sessions: %v", err)
+		} else {
+			log.Println("Created unique index: idx_sessions_session_id on sessions")
+		}
+
+		// - 同一端末の有効セッション検索、および他端末の一括無効化で使う複合インデックス
+		sessionUserIndexModel := mongo.IndexModel{
+			Keys: bson.D{
+				{Key: "user_id", Value: 1},
+				{Key: "device_id", Value: 1},
+				{Key: "revoked_at", Value: 1},
+			},
+			Options: options.Index().SetName("idx_sessions_user_device"),
+		}
+		_, err = sessionsCollection.Indexes().CreateOne(ctx, sessionUserIndexModel)
+		if err != nil {
+			log.Printf("Failed to create user/device index for sessions: %v", err)
+		} else {
+			log.Println("Created index: idx_sessions_user_device on sessions")
+		}
+
+		// - 90日間アクセスの無いセッションは自動削除する (無効化済みの古いレコードが無限に溜まるのを防ぐ)
+		sessionTTLIndexModel := mongo.IndexModel{
+			Keys:    bson.D{{Key: "last_seen_at", Value: 1}},
+			Options: options.Index().SetExpireAfterSeconds(7776000).SetName("idx_sessions_ttl"),
+		}
+		_, err = sessionsCollection.Indexes().CreateOne(ctx, sessionTTLIndexModel)
+		if err != nil {
+			log.Printf("Failed to create TTL index for sessions: %v", err)
+		} else {
+			log.Println("Created TTL index: idx_sessions_ttl on sessions (90 days)")
 		}
 	}
 

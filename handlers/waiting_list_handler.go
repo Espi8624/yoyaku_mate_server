@@ -42,10 +42,9 @@ type UserRepository interface {
 	CheckStorePermission(userID primitive.ObjectID, storeID, role, permission string) (bool, error)
 }
 
-// AuthService Firebase認証とログイントークン検証を抽象化するインターフェース
+// AuthService Firebase認証を抽象化するインターフェース
 type AuthService interface {
 	VerifyIDToken(ctx context.Context, idToken string) (string, error)
-	VerifyLoginToken(userID primitive.ObjectID, token string) (bool, error)
 }
 
 // ErrorTracker エラーログ記録を抽象化するインターフェース
@@ -63,6 +62,9 @@ type WaitingListHandler struct {
 	storeRepo   StoreRepository
 	userRepo    UserRepository
 	authSvc     AuthService
+	// - ゲストと直員が同一エンドポイントを共有しており認証要否がリクエスト内容で変わるため、
+	//   このハンドラだけはセッション検証をミドルウェアに任せられず、自前で呼び出す
+	sessionRepo MiddlewareSessionRepository
 	broker      *events.Broker
 	userBroker  *events.WaitingUserBroker
 	tracker     ErrorTracker
@@ -74,6 +76,7 @@ func NewWaitingListHandler(
 	storeRepo StoreRepository,
 	userRepo UserRepository,
 	authSvc AuthService,
+	sessionRepo MiddlewareSessionRepository,
 	broker *events.Broker,
 	userBroker *events.WaitingUserBroker,
 	tracker ErrorTracker,
@@ -83,6 +86,7 @@ func NewWaitingListHandler(
 		storeRepo:   storeRepo,
 		userRepo:    userRepo,
 		authSvc:     authSvc,
+		sessionRepo: sessionRepo,
 		broker:      broker,
 		userBroker:  userBroker,
 		tracker:     tracker,
@@ -361,11 +365,8 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 			return
 		}
 
-		// - ダブルログインチェック
-		loginToken := r.Header.Get("X-Login-Token")
-		valid, err := h.authSvc.VerifyLoginToken(user.ID, loginToken)
-		if err != nil || !valid {
-			utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
+		// - 端末セッションチェック (ミドルウェアを適用できないため自前で呼び出す)
+		if !VerifySessionForUser(w, r, h.sessionRepo, user) {
 			return
 		}
 
@@ -450,11 +451,8 @@ func (h *WaitingListHandler) handleClearWaitingList(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// - ダブルログインチェック
-	loginToken := r.Header.Get("X-Login-Token")
-	valid, err := h.authSvc.VerifyLoginToken(user.ID, loginToken)
-	if err != nil || !valid {
-		utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
+	// - 端末セッションチェック (ミドルウェアを適用できないため自前で呼び出す)
+	if !VerifySessionForUser(w, r, h.sessionRepo, user) {
 		return
 	}
 
@@ -523,11 +521,8 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 			return
 		}
 
-		// - ダブルログインチェック
-		loginToken := r.Header.Get("X-Login-Token")
-		valid, err := h.authSvc.VerifyLoginToken(user.ID, loginToken)
-		if err != nil || !valid {
-			utils.RespondWithError(w, "DUPLICATE_LOGIN", http.StatusUnauthorized)
+		// - 端末セッションチェック (ミドルウェアを適用できないため自前で呼び出す)
+		if !VerifySessionForUser(w, r, h.sessionRepo, user) {
 			return
 		}
 

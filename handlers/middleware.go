@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"yoyaku_mate_server/auth"
@@ -61,6 +62,86 @@ func RequireAuthMiddleware(repo MiddlewareUserRepository) func(http.Handler) htt
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 	}
+}
+
+// セッション検証の結果を表すエラーコード
+// - クライアントはこのコードで挙動を分岐する。両者を1つのコードにまとめてしまうと、
+//   静かに復旧できる状況でもログアウトダイアログが出てしまい、ユーザーは障害だと受け取る
+const (
+	// - セッショントークンが無い/サーバーに存在しない。端末の再インストール等でローカルの
+	//   セッションが失われた場合に起きる。クライアントは静かに再発行して1度だけリトライする
+	ErrCodeSessionRequired = "SESSION_REQUIRED"
+	// - セッションが無効化されている。他端末でログインされた場合に起きる。
+	//   ここだけがユーザーへの通知(ログアウト)対象
+	ErrCodeSessionRevoked = "SESSION_REVOKED"
+)
+
+// MiddlewareSessionRepository セッション検証ミドルウェアが必要とする操作のみを切り出したインターフェース
+type MiddlewareSessionRepository interface {
+	FindBySessionID(sessionID string) (*models.Session, error)
+	TouchLastSeen(session *models.Session) error
+}
+
+// RequireSessionMiddleware 端末セッションを検証するミドルウェア
+// - RequireAuthMiddleware の後段に置くこと (contextの認証済みユーザーを前提とする)
+// - ハンドラごとに手で検証を書くと必ず付け忘れが発生するため、付け忘れようのない位置に置く
+func RequireSessionMiddleware(repo MiddlewareSessionRepository) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// - CORSプリフライトは認証情報を伴わないため検証対象外
+			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			user, ok := GetUserFromContext(r.Context())
+			if !ok {
+				utils.RespondWithError(w, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+
+			if !VerifySessionForUser(w, r, repo, user) {
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// VerifySessionForUser セッションを検証し、無効な場合はエラーレスポンスを書き込んで false を返す
+// - ミドルウェアを適用できないルート (ゲストと直員が同じエンドポイントを共有しており、
+//   認証要否がリクエスト内容によって変わるもの) から直接呼び出すためのヘルパー
+func VerifySessionForUser(w http.ResponseWriter, r *http.Request, repo MiddlewareSessionRepository, user *models.User) bool {
+	sessionID := r.Header.Get("X-Session-Id")
+	if sessionID == "" {
+		utils.RespondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
+		return false
+	}
+
+	session, err := repo.FindBySessionID(sessionID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify session", http.StatusInternalServerError)
+		return false
+	}
+
+	// - 未知のトークン、または他ユーザーのトークン。奪われたわけではないので再発行を促すだけに留める
+	if session == nil || session.UserID != user.ID {
+		utils.RespondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
+		return false
+	}
+
+	// - 無効化済み: 他端末でログインされたケース
+	if !session.IsActive() {
+		utils.RespondWithErrorCode(w, ErrCodeSessionRevoked, "他の端末でログインされたため、ログアウトします。", http.StatusUnauthorized)
+		return false
+	}
+
+	// - 最終アクセス日時の更新に失敗してもリクエスト自体は通す (可用性を優先)
+	if err := repo.TouchLastSeen(session); err != nil {
+		log.Printf("Failed to touch session last_seen: %v", err)
+	}
+	return true
 }
 
 // GetUserFromContext 認証ミドルウェアが格納したユーザー情報をcontextから取り出すヘルパー

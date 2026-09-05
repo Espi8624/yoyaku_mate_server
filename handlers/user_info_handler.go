@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
@@ -133,30 +132,12 @@ func (h *UserInfoHandler) UserByFirebaseUIDHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// - 3. トークン再生成の意図確認
-	regenerateToken := r.URL.Query().Get("regenerate_token") == "true"
-
-	// - 4. ユーザー情報取得
+	// - 3. ユーザー情報取得
+	// - 端末セッションの発行は POST /api/auth/session が担うため、ここでは行わない
 	user, err := h.userRepo.GetUserDataByFirebaseUID(uid)
 	if err != nil {
 		utils.RespondWithError(w, "User not found", http.StatusNotFound)
 		return
-	}
-
-	if regenerateToken {
-		// - 新しいログイントークン（セッションID）を生成
-		newLoginToken := utils.GenerateRandomString(32)
-
-		// - DBのユーザー情報を新しいトークンで更新
-		_, err = h.userRepo.UpdateUserData(user.ID, map[string]interface{}{
-			"login_token": newLoginToken,
-			"updated_at":  time.Now(),
-		})
-		if err != nil {
-			utils.RespondWithError(w, "Failed to update login session", http.StatusInternalServerError)
-			return
-		}
-		user.LoginToken = newLoginToken
 	}
 
 	utils.RespondWithJSON(w, user, http.StatusOK)

@@ -56,6 +56,22 @@ func RespondWithError(w http.ResponseWriter, message string, statusCode int) {
 	})
 }
 
+// エラーコード付きのエラーレスポンスを返すヘルパー関数
+// - クライアント側が「静かに復旧すべき状況」と「ユーザーに通知すべき状況」を区別できるようにするため、
+//   人間向けのmessageとは別に機械可読なcodeを返す
+func RespondWithErrorCode(w http.ResponseWriter, code, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "error",
+		"code":    code,
+		"message": message,
+	})
+}
+
 // IsValidWaitingID는 웨이팅 IDの形式が正しいか検証します
 // 許容形式: "YYYYMMDD-HHMMSS" または "YYYYMMDD-HHMMSS-xxxxxx"（ランダム英数字6桁）
 func IsValidWaitingID(id string) bool {

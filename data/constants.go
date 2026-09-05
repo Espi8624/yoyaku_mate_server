@@ -11,4 +11,5 @@ const (
 	CollectionStoreStaffInfo      = "store_staff_info"
 	CollectionShiftTables         = "shift_tables"
 	CollectionShiftChangeRequests = "shift_change_requests"
+	CollectionSessions            = "sessions"
 )

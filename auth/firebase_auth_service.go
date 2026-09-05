@@ -2,8 +2,6 @@ package auth
 
 import (
 	"context"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // FirebaseAuthService Firebase認証サービスの実装
@@ -15,7 +13,3 @@ func (s *FirebaseAuthService) VerifyIDToken(ctx context.Context, idToken string)
 	return VerifyIDToken(ctx, idToken)
 }
 
-// VerifyLoginToken 指定ユーザーのログイントークンを検証する
-func (s *FirebaseAuthService) VerifyLoginToken(userID primitive.ObjectID, token string) (bool, error) {
-	return VerifyLoginToken(userID, token)
-}
