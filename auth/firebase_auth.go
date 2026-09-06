@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
@@ -12,6 +13,10 @@ import (
 
 // - 認証情報ファイルの既定パス。プロセスの作業ディレクトリからの相対パスであることに注意
 const defaultCredentialsPath = "config/serviceAccountKey.json"
+
+// - コンテナ環境(Infisical等)から認証情報JSONを直接受け取る場合の環境変数名
+//   ファイルは.gitignore対象でイメージに含まれないため、本番/dev環境ではこちらを使う
+const credentialsJSONEnvVar = "FIREBASE_SERVICE_ACCOUNT_JSON"
 
 var firebaseAuth *auth.Client
 
@@ -23,8 +28,17 @@ var ErrFirebaseNotInitialized = errors.New("firebase auth is not initialized: ca
 //     パッケージをimportしただけで認証情報ファイルを要求してしまい、
 //     しかもパスが作業ディレクトリ相対のためテスト実行時に解決できない
 //   - 起動時に失敗させたい (fail-fast) 判断は呼び出し側に委ねる
+//   - config.Load()と同じ方針: 環境変数(Infisical注入)があれば優先し、なければ
+//     ローカル開発用のファイルにフォールバックする
 func InitFirebase() error {
-	opt := option.WithCredentialsFile(defaultCredentialsPath)
+	var opt option.ClientOption
+	if credentialsJSON := os.Getenv(credentialsJSONEnvVar); credentialsJSON != "" {
+		log.Printf("Using %s from environment variable", credentialsJSONEnvVar)
+		opt = option.WithCredentialsJSON([]byte(credentialsJSON))
+	} else {
+		opt = option.WithCredentialsFile(defaultCredentialsPath)
+	}
+
 	app, err := firebase.NewApp(context.Background(), nil, opt)
 	if err != nil {
 		return err
