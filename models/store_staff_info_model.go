@@ -36,13 +36,17 @@ type Availability struct {
 
 // user_info モデル
 type StoreStaffInfo struct {
-	ID           primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
-	UserID       primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
-	Role         string             `bson:"role" json:"role"`
-	StoreID      string             `bson:"store_id,omitempty" json:"store_id,omitempty"`
-	Status       string             `bson:"status" json:"status"`
-	Permissions  []string           `bson:"permissions,omitempty" json:"permissions,omitempty"`
-	Availability Availability       `bson:"availability,omitempty" json:"availability,omitempty"`
-	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt    time.Time          `bson:"updated_at" json:"updated_at"`
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
+	UserID      primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	Role        string             `bson:"role" json:"role"`
+	StoreID     string             `bson:"store_id,omitempty" json:"store_id,omitempty"`
+	Status      string             `bson:"status" json:"status"`
+	Permissions []string           `bson:"permissions,omitempty" json:"permissions,omitempty"`
+	// 一度でも承認(APPROVED)されたことがあるかどうか。REJECTEDは「申請却下」
+	// (一度も承認されていない)と「承認取り消し」(過去に承認されていた)の
+	// 両方で共有される状態のため、この2つをクライアント側で区別するために保持する
+	HasBeenApproved bool         `bson:"has_been_approved,omitempty" json:"has_been_approved,omitempty"`
+	Availability    Availability `bson:"availability,omitempty" json:"availability,omitempty"`
+	CreatedAt       time.Time    `bson:"created_at" json:"created_at"`
+	UpdatedAt       time.Time    `bson:"updated_at" json:"updated_at"`
 }

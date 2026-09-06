@@ -126,17 +126,18 @@ func (r *MongoStaffRepo) GetStoreStaffByStoreID(storeID string) ([]map[string]in
 		}}},
 		{{Key: "$unwind", Value: "$user_details"}},
 		{{Key: "$project", Value: bson.M{
-			"_id":          1,
-			"user_id":      1,
-			"store_id":     1,
-			"role":         1,
-			"status":       1,
-			"permissions":  1,
-			"created_at":   1,
-			"updated_at":   1,
-			"availability": 1,
-			"user_name":    "$user_details.user_name",
-			"email":        "$user_details.email",
+			"_id":               1,
+			"user_id":           1,
+			"store_id":          1,
+			"role":              1,
+			"status":            1,
+			"has_been_approved": 1,
+			"permissions":       1,
+			"created_at":        1,
+			"updated_at":        1,
+			"availability":      1,
+			"user_name":         "$user_details.user_name",
+			"email":             "$user_details.email",
 			// 退会済み(WITHDRAWN)スタッフでもマネージャーが連絡できるよう、
 			// 電話番号・住所も併せて取得する
 			"phone":   "$user_details.phone",
@@ -170,12 +171,16 @@ func (r *MongoStaffRepo) UpdateStoreStaffStatus(staffID string, status string) e
 		return err
 	}
 
-	update := bson.M{
-		"$set": bson.M{
-			"status":     status,
-			"updated_at": time.Now(),
-		},
+	setFields := bson.M{
+		"status":     status,
+		"updated_at": time.Now(),
 	}
+	// 承認された事実は取り消し後も残す(REJECTEDが「申請却下」か「承認取り消し」かを
+	// クライアント側で区別するために使う。一度trueになったら以後falseへは戻さない)
+	if status == models.StaffStatusApproved {
+		setFields["has_been_approved"] = true
+	}
+	update := bson.M{"$set": setFields}
 
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	if err != nil {
