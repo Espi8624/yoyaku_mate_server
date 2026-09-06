@@ -16,8 +16,9 @@ import (
 type ShiftChangeRequestRepository interface {
 	CreateRequest(req models.ShiftChangeRequest) error
 	GetRequestsForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	ResolvePendingForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	ResolveRequest(requestID string) error
+	ResolveAppliedForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
+	RevertAppliedForWeek(storeID, weekStartDate string) (int, error)
+	MarkRequestApplied(requestID string) error
 	DeleteRequest(requestID string) error
 }
 
@@ -64,10 +65,10 @@ func (r *MongoShiftChangeRequestRepo) GetRequestsForWeek(storeID, weekStartDate 
 	return requests, nil
 }
 
-// ResolvePendingForWeek 指定週の未処理(pending)な修正依頼を全て処理済み(resolved)にする。
-// マネージャーが編集のたびに個別処理するのではなく、まとめて「確定」した時に一括で呼ぶ想定。
-// 通知(将来のプッシュ通知等)の送信対象を呼び出し側で判断できるよう、処理した依頼一覧を返す
-func (r *MongoShiftChangeRequestRepo) ResolvePendingForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error) {
+// ResolveAppliedForWeek 指定週の「下書きへ反映済み・未確定(applied)」な依頼を全て処理済み(resolved)にする。
+// シフト表の確定(PublishShiftTableHandler)と同時に呼び、下書き上の対応を確定と同じタイミングで
+// スタッフに見せるためのもの。まだ手を付けていない pending の依頼は未対応のまま残す
+func (r *MongoShiftChangeRequestRepo) ResolveAppliedForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error) {
 	collection := db.GetCollection(DatabaseName, CollectionShiftChangeRequests)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -75,24 +76,24 @@ func (r *MongoShiftChangeRequestRepo) ResolvePendingForWeek(storeID, weekStartDa
 	filter := bson.M{
 		"store_id":        storeID,
 		"week_start_date": weekStartDate,
-		"status":          models.ShiftChangeRequestStatusPending,
+		"status":          models.ShiftChangeRequestStatusApplied,
 	}
 
 	cursor, err := collection.Find(ctx, filter)
 	if err != nil {
-		log.Printf("Failed to find pending shift change requests: %v", err)
+		log.Printf("Failed to find applied shift change requests: %v", err)
 		return nil, err
 	}
-	pending := []models.ShiftChangeRequest{}
-	decodeErr := cursor.All(ctx, &pending)
+	applied := []models.ShiftChangeRequest{}
+	decodeErr := cursor.All(ctx, &applied)
 	cursor.Close(ctx)
 	if decodeErr != nil {
-		log.Printf("Failed to decode pending shift change requests: %v", decodeErr)
+		log.Printf("Failed to decode applied shift change requests: %v", decodeErr)
 		return nil, decodeErr
 	}
 
-	if len(pending) == 0 {
-		return pending, nil
+	if len(applied) == 0 {
+		return applied, nil
 	}
 
 	resolvedAt := time.Now()
@@ -101,20 +102,47 @@ func (r *MongoShiftChangeRequestRepo) ResolvePendingForWeek(storeID, weekStartDa
 		"resolved_at": resolvedAt,
 	}}
 	if _, err := collection.UpdateMany(ctx, filter, update); err != nil {
-		log.Printf("Failed to resolve shift change requests: %v", err)
+		log.Printf("Failed to resolve applied shift change requests: %v", err)
 		return nil, err
 	}
 
-	for i := range pending {
-		pending[i].Status = models.ShiftChangeRequestStatusResolved
-		pending[i].ResolvedAt = &resolvedAt
+	for i := range applied {
+		applied[i].Status = models.ShiftChangeRequestStatusResolved
+		applied[i].ResolvedAt = &resolvedAt
 	}
-	return pending, nil
+	return applied, nil
 }
 
-// ResolveRequest 修正依頼を1件だけ処理済み(resolved)にする。一括適用(ApplyShiftChangeRequestsHandler)が
-// 実際にシフト表へ反映できた依頼を、その場でresolvedにするために使う
-func (r *MongoShiftChangeRequestRepo) ResolveRequest(requestID string) error {
+// RevertAppliedForWeek 指定週の「下書きへ反映済み・未確定(applied)」な依頼を未対応(pending)へ戻す。
+// 下書きの破棄(DiscardShiftTableDraftHandler)と同時に呼ぶ。反映先の下書きを捨てる以上、
+// 「反映済み」の状態だけ残すと、シフト表に無い変更が対応済み扱いで消えてしまうため
+func (r *MongoShiftChangeRequestRepo) RevertAppliedForWeek(storeID, weekStartDate string) (int, error) {
+	collection := db.GetCollection(DatabaseName, CollectionShiftChangeRequests)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	filter := bson.M{
+		"store_id":        storeID,
+		"week_start_date": weekStartDate,
+		"status":          models.ShiftChangeRequestStatusApplied,
+	}
+	update := bson.M{
+		"$set":   bson.M{"status": models.ShiftChangeRequestStatusPending},
+		"$unset": bson.M{"resolved_at": ""},
+	}
+
+	result, err := collection.UpdateMany(ctx, filter, update)
+	if err != nil {
+		log.Printf("Failed to revert applied shift change requests: %v", err)
+		return 0, err
+	}
+	return int(result.ModifiedCount), nil
+}
+
+// MarkRequestApplied 修正依頼を1件だけ「下書きへ反映済み・未確定(applied)」にする。
+// 一括適用(ApplyShiftChangeRequestsHandler)は下書きしか触らないため、ここでは resolved にしない。
+// 確定されるまでスタッフには pending に伏せて見せる
+func (r *MongoShiftChangeRequestRepo) MarkRequestApplied(requestID string) error {
 	collection := db.GetCollection(DatabaseName, CollectionShiftChangeRequests)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -124,13 +152,9 @@ func (r *MongoShiftChangeRequestRepo) ResolveRequest(requestID string) error {
 		return err
 	}
 
-	resolvedAt := time.Now()
-	update := bson.M{"$set": bson.M{
-		"status":      models.ShiftChangeRequestStatusResolved,
-		"resolved_at": resolvedAt,
-	}}
+	update := bson.M{"$set": bson.M{"status": models.ShiftChangeRequestStatusApplied}}
 	if _, err := collection.UpdateOne(ctx, bson.M{"_id": objID}, update); err != nil {
-		log.Printf("Failed to resolve shift change request %s: %v", requestID, err)
+		log.Printf("Failed to mark shift change request %s as applied: %v", requestID, err)
 		return err
 	}
 	return nil

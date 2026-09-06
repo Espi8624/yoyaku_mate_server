@@ -141,11 +141,14 @@ func RegisterRoutes(
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.UpdateShiftHandler).Methods("PATCH", "OPTIONS")
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/shifts/{shiftId}", shiftTableHandler.DeleteShiftHandler).Methods("DELETE", "OPTIONS")
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/auto-generate", shiftTableHandler.AutoGenerateShiftsHandler).Methods("POST", "OPTIONS")
+	// 下書きを確定してスタッフに公開する。シフト表がスタッフから見える唯一の経路
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/publish", shiftTableHandler.PublishShiftTableHandler).Methods("POST", "OPTIONS")
+	// 下書きを破棄して確定版へ戻す (確定版そのものは変更しない)
+	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/discard-draft", shiftTableHandler.DiscardShiftTableDraftHandler).Methods("POST", "OPTIONS")
 
 	// Shift Change Request endpoints (週間シフト表に対する修正依頼)
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.CreateShiftChangeRequestHandler).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests", shiftTableHandler.GetShiftChangeRequestsHandler).Methods("GET", "OPTIONS")
-	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/resolve", shiftTableHandler.ResolveShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/apply", shiftTableHandler.ApplyShiftChangeRequestsHandler).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/stores/{storeId}/shift-tables/{weekStartDate}/change-requests/{requestId}", shiftTableHandler.DeleteShiftChangeRequestHandler).Methods("DELETE", "OPTIONS")
 }

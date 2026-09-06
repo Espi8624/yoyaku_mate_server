@@ -7,8 +7,14 @@ import (
 )
 
 // ShiftChangeRequestStatus 修正依頼のステータス値
+//
+// pending -> applied -> resolved と遷移する。applied はマネージャーが下書きへ反映済みだが
+// まだ確定していない中間状態で、マネージャーにしか見えない。スタッフ向けのレスポンスでは
+// pending に伏せて返すため、確定前に「対応済み」と誤解されることがない
 const (
-	ShiftChangeRequestStatusPending  = "pending"
+	ShiftChangeRequestStatusPending = "pending"
+	// ShiftChangeRequestStatusApplied 下書きへ反映済み・未確定 (マネージャーのみが見る中間状態)
+	ShiftChangeRequestStatusApplied  = "applied"
 	ShiftChangeRequestStatusResolved = "resolved"
 )
 

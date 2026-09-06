@@ -21,6 +21,7 @@ type ShiftTableRepository interface {
 	UpdateShift(shiftTableID, shiftID string, shift models.Shift) error
 	DeleteShift(shiftTableID, shiftID string) error
 	ReplaceShifts(shiftTableID string, shifts []models.Shift) error
+	PublishShifts(shiftTableID string, shifts []models.Shift, publishedAt time.Time) error
 	GetStaffShiftCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[primitive.ObjectID]int, error)
 	GetStaffPairCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[string]int, error)
 }
@@ -148,6 +149,40 @@ func (r *MongoShiftTableRepo) ReplaceShifts(shiftTableID string, shifts []models
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	if err != nil {
 		log.Printf("Failed to replace shifts: %v", err)
+		return err
+	}
+	return nil
+}
+
+// PublishShifts は、下書き(shifts)の内容を確定版(published_shifts)へコピーして公開する。
+// スタッフが見るのは確定版だけなので、この呼び出しが「シフト表がスタッフに反映される」唯一の瞬間になる。
+// 下書き自体はそのまま残す(確定後もマネージャーは同じ下書きを編集し続ける)
+func (r *MongoShiftTableRepo) PublishShifts(shiftTableID string, shifts []models.Shift, publishedAt time.Time) error {
+	collection := db.GetCollection(DatabaseName, CollectionShiftTables)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(shiftTableID)
+	if err != nil {
+		return err
+	}
+
+	// shifts が空でも published_shifts を空配列で上書きする必要があるため、
+	// nil ではなく必ず配列を渡す (omitempty でフィールドごと消えるのを防ぐ)
+	if shifts == nil {
+		shifts = []models.Shift{}
+	}
+
+	update := bson.M{
+		"$set": bson.M{
+			"published_shifts": shifts,
+			"published_at":     publishedAt,
+			"updated_at":       publishedAt,
+		},
+	}
+
+	if _, err := collection.UpdateOne(ctx, bson.M{"_id": objID}, update); err != nil {
+		log.Printf("Failed to publish shifts: %v", err)
 		return err
 	}
 	return nil
