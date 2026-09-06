@@ -72,3 +72,11 @@ func GetUserByEmail(ctx context.Context, email string) (*auth.UserRecord, error)
 	}
 	return firebaseAuth.GetUserByEmail(ctx, email)
 }
+
+// UIDでFirebaseユーザーを削除（放置された未認証アカウントの整理用）
+func DeleteUser(ctx context.Context, uid string) error {
+	if firebaseAuth == nil {
+		return ErrFirebaseNotInitialized
+	}
+	return firebaseAuth.DeleteUser(ctx, uid)
+}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -23,6 +24,11 @@ const (
 	StoresCollection        = "store_info"
 	StoreSettingsCollection = "store_settings"
 	StoreLicenseCollection  = "store_license"
+
+	// メール認証を完了しないまま放置されたFirebaseアカウントを、
+	// 同じメールアドレスでの再登録時に削除してよいとみなす猶予期間。
+	// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮し削除しない
+	unverifiedAccountGracePeriod = 30 * time.Minute
 )
 
 // 会員加入処理
@@ -374,6 +380,17 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	// 未認証のFirebaseアカウントは再登録可能（中断された登録フローへの対応）
 	if firebaseExists && firebaseUserRecord != nil && !firebaseUserRecord.EmailVerified {
 		firebaseExists = false
+
+		// 猶予期間を過ぎた未認証アカウントは実際に削除し、メールアドレスを解放する。
+		// (削除しないとクライアント側のFirebase Auth createUserWithEmailAndPassword が
+		//  依然として email-already-in-use で失敗し、再登録が完了しないため)
+		// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮して削除しない
+		createdAt := time.UnixMilli(firebaseUserRecord.UserMetadata.CreationTimestamp)
+		if time.Since(createdAt) > unverifiedAccountGracePeriod {
+			if err := auth.DeleteUser(r.Context(), firebaseUserRecord.UID); err != nil {
+				log.Printf("放置された未認証Firebaseアカウントの削除に失敗しました (uid=%s): %v", firebaseUserRecord.UID, err)
+			}
+		}
 	}
 
 	// DBまたはFirebaseに存在する場合、利用できない
