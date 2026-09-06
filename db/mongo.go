@@ -61,11 +61,15 @@ func InitMongoDB(uri string) error {
 
 		log.Println("MongoDB connect success")
 
-		// Create indexes
-		if err := EnsureIndexes(); err != nil {
-			log.Printf("Failed to create indexes: %v", err)
-			// Index creation failure should not stop server startup, but warn loudly
-		}
+		// - インデックス作成はリクエスト処理をブロックしないようバックグラウンドで実行
+		//   (Fly.ioのコールドスタート時、起動からリスニング開始までの時間を最短化するため。
+		//    以前は同期実行しており、10個超のインデックスを順次作成する間ProxyがTimeoutしていた)
+		go func() {
+			if err := EnsureIndexes(); err != nil {
+				log.Printf("Failed to create indexes: %v", err)
+				// Index creation failure should not stop server startup, but warn loudly
+			}
+		}()
 
 		return nil
 	}
