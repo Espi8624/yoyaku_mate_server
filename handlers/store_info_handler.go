@@ -11,6 +11,19 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+// allowedStoreUpdateFields PUT /api/provider_store で書き換えてよいフィールド。
+// store_id・user_idや営業許可証関連は専用フローでのみ変更されるべきなので、
+// ここには含めない(store_image_urlも専用アップロードエンドポイントがあるため除外)
+var allowedStoreUpdateFields = map[string]bool{
+	"store_name": true,
+	"zip_code":   true,
+	"prefecture": true,
+	"city":       true,
+	"address":    true,
+	"building":   true,
+	"phone":      true,
+}
+
 // StoreInfoRepository 店舗情報の取得と更新を抽象化するインターフェース
 type StoreInfoRepository interface {
 	GetStoreData(storeID string) (*models.Store, error)
@@ -110,6 +123,14 @@ func (h *StoreInfoHandler) UpdateStoreHandler(w http.ResponseWriter, r *http.Req
 	var update map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// マスアサインメント対策: store_id・user_idなど本来クライアントが
+	// 書き換えてはいけないフィールドを弾くため、許可されたフィールドのみ残す
+	update = utils.FilterAllowedFields(update, allowedStoreUpdateFields)
+	if len(update) == 0 {
+		utils.RespondWithError(w, "No valid fields to update", http.StatusBadRequest)
 		return
 	}
 

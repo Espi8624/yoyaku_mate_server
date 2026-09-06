@@ -10,6 +10,20 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// allowedUserUpdateFields PUT /api/provider_user で本人が書き換えてよいフィールド。
+// role・store_id・firebase_uid・email・terms_agreed等は専用フローでのみ変更されるべきなので、
+// ここには含めない(user_image_urlも専用エンドポイント[/provider_user/image]があるため除外)
+var allowedUserUpdateFields = map[string]bool{
+	"user_name":          true,
+	"user_name_furigana": true,
+	"birthdate":          true,
+	"zip_code":           true,
+	"prefecture":         true,
+	"city":               true,
+	"address":            true,
+	"building":           true,
+}
+
 // UserInfoRepository ユーザー情報の取得と更新を抽象化するインターフェース
 type UserInfoRepository interface {
 	GetUserData(userID primitive.ObjectID) (*models.User, error)
@@ -92,6 +106,15 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
+
+		// マスアサインメント対策: role・store_id・firebase_uidなど本来クライアントが
+		// 書き換えてはいけないフィールドを弾くため、許可されたフィールドのみ残す
+		update = utils.FilterAllowedFields(update, allowedUserUpdateFields)
+		if len(update) == 0 {
+			utils.RespondWithError(w, "No valid fields to update", http.StatusBadRequest)
+			return
+		}
+
 		updatedUser, err := h.userRepo.UpdateUserData(objectID, update)
 		if err != nil {
 			utils.RespondWithError(w, "Failed to update user info", http.StatusInternalServerError)
