@@ -75,6 +75,27 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 本人情報(生年月日・住所)の必須フィールド検証 (建物名のみ任意)
+	if req.Birthdate == "" || req.ZipCode == "" || req.Prefecture == "" || req.City == "" || req.Address == "" {
+		utils.RespondWithError(w, "Missing required personal info fields (birthdate/address)", http.StatusBadRequest)
+		return
+	}
+
+	// 生年月日の形式検証 + 満年齢が労働基準法上の最低就労年齢(満15歳)以上か確認
+	birthdate, err := time.Parse("2006-01-02", req.Birthdate)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid birthdate format (expected YYYY-MM-DD)", http.StatusBadRequest)
+		return
+	}
+	if birthdate.After(time.Now()) {
+		utils.RespondWithError(w, "Birthdate cannot be in the future", http.StatusBadRequest)
+		return
+	}
+	if calculateAge(birthdate) < 15 {
+		utils.RespondWithError(w, "Applicant must be at least 15 years old", http.StatusBadRequest)
+		return
+	}
+
 	// 権限検証
 	if req.Role != "manager" && req.Role != "staff" {
 		utils.RespondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
@@ -264,6 +285,12 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			Email:            req.Email,
 			Phone:            req.PhoneNumber,
 			Role:             req.Role,
+			Birthdate:        req.Birthdate,
+			ZipCode:          req.ZipCode,
+			Prefecture:       req.Prefecture,
+			City:             req.City,
+			Address:          req.Address,
+			Building:         req.Building,
 			StoreID:          storeIdForUser, // 空文字の場合はomitemptyで無視、または空文字として保存
 			TermsAgreed:      req.TermsAgreed,
 			TermsAgreedAt:    termsAgreedAt,
@@ -322,6 +349,18 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Transaction成功
 	utils.RespondWithJSON(w, result, http.StatusCreated)
+}
+
+// calculateAge 生年月日から満年齢を計算する(誕生日を迎えているかどうかを考慮)
+func calculateAge(birthdate time.Time) int {
+	now := time.Now()
+	age := now.Year() - birthdate.Year()
+	// 今年の誕生日がまだ来ていない場合は1歳引く
+	if now.Month() < birthdate.Month() ||
+		(now.Month() == birthdate.Month() && now.Day() < birthdate.Day()) {
+		age--
+	}
+	return age
 }
 
 func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
