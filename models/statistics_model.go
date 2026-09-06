@@ -1,34 +1,26 @@
 package models
 
-type HourlyData struct {
-	Hour      int `json:"hour" bson:"hour"`
-	Count     int `json:"count" bson:"count"`
-	PrevCount int `json:"prev_count" bson:"prev_count"`
-}
-
-type VisitorStats struct {
-	Today           int     `json:"today"`
-	Yesterday       int     `json:"yesterday"`
-	LastWeekSameDay int     `json:"last_week_same_day"`
-	WowGrowthRate   float64 `json:"wow_growth_rate"` // 前週比成長率
-	DodGrowthRate   float64 `json:"dod_growth_rate"` // 前日比成長率
-}
-
+// ChartData はグラフ1本分のデータポイント（時間帯別 or 曜日別）を表す
 type ChartData struct {
-	Label     string `json:"label" bson:"label"` // X軸ラベル (例: "Mon", "1日", "1月")
+	Label     string `json:"label" bson:"label"` // X軸ラベル (例: "13時", "月")
 	Value     int    `json:"value" bson:"value"`
-	PrevValue int    `json:"prev_value" bson:"prev_value"` // 前期間のデータ
+	PrevValue int    `json:"prev_value" bson:"prev_value"` // 比較対象期間（昨日 or 先週同曜日）のデータ
 }
 
+// StatisticsResponse は統計API のレスポンス全体
+// period="auto" の場合は「今日」を時間帯別(0〜23時)に、
+// period="weekly" の場合は「今週(日〜土、常に直近の週固定)」を曜日別に集計する。
+// 過去の期間へのナビゲーションは提供しない（機能を今日/今週に絞ったため）。
 type StatisticsResponse struct {
-	VisitorStats       VisitorStats `json:"visitor_stats"`
-	HourlyCongestion   []HourlyData `json:"hourly_congestion"`
-	ChartData          []ChartData  `json:"chart_data"`        // 選択された期間のチャートデータ
-	AverageWaitTime    string       `json:"average_wait_time"` // 例: "15分"
-	WaitTimeSeconds    int          `json:"wait_time_seconds"`
-	NoShowRate         float64      `json:"no_show_rate"`
-	TotalCancelled     int          `json:"total_cancelled"`
-	TotalNoShow        int          `json:"total_no_show"`
-	NoShowChartData    []ChartData  `json:"no_show_chart_data"`   // 期間ごとのNo-Show数
-	CancelledChartData []ChartData  `json:"cancelled_chart_data"` // 期間ごとのキャンセル数
+	Period            string      `json:"period"`
+	VisitorTotal      int         `json:"visitor_total"`
+	VisitorGrowthRate float64     `json:"visitor_growth_rate"` // autoなら前日比、weeklyなら前週比
+	CancelledTotal    int         `json:"cancelled_total"`
+	NoShowTotal       int         `json:"no_show_total"`
+	NoShowRate        float64     `json:"no_show_rate"`
+	AverageWaitTime   string      `json:"average_wait_time"` // 例: "15分"
+	WaitTimeSeconds   int         `json:"wait_time_seconds"`
+	VisitorChart      []ChartData `json:"visitor_chart"`
+	CancelledChart    []ChartData `json:"cancelled_chart"`
+	NoShowChart       []ChartData `json:"no_show_chart"`
 }
