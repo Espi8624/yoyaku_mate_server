@@ -28,23 +28,12 @@ RUN apk add --no-cache ca-certificates
 COPY --from=build /saboten-server /saboten-server
 
 # 'build'環境にコピーした'config'フォルダ全体をそのままコピー
-# サーバー実行時にこのフォルダから設定ファイルを読み取れる
+# (config/*.jsonはgitignore対象のため実際にはexampleファイルのみ含まれる。
+#  実行時の設定値はFly Secretsとして注入される環境変数で上書きされる)
 COPY --from=build /src/config /config
-
-# Run in non-interactive mode for Infisical install
-# jq 追加 (JSON parse)
-RUN apk add --no-cache curl bash jq && \
-    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
-    apk add infisical
 
 # 8080portを公開
 EXPOSE 8080
 
-# サーバー実行 (Infisicalを通じて実行, 環境変数で環境を指定)
-# 1. APIを使用してトークン発行(CLIログイン問題回避)
-# 2. 発行されたトークンでrun実行
-CMD sh -c "export INFISICAL_TOKEN=\$(curl --silent --location --request POST 'https://app.infisical.com/api/v1/auth/universal-auth/login' \
-    --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode \"clientId=\${INFISICAL_CLIENT_ID}\" \
-    --data-urlencode \"clientSecret=\${INFISICAL_CLIENT_SECRET}\" | jq -r .accessToken) && \
-    infisical run --token=\${INFISICAL_TOKEN} --projectId=\${INFISICAL_PROJECT_ID} --env=\${INFISICAL_ENV:-dev} -- /saboten-server"
+# サーバー実行 (設定はFly Secretsで注入された環境変数から読み込む)
+CMD ["/saboten-server"]
