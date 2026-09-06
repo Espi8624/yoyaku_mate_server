@@ -1,15 +1,16 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+# develop ブランチへのpush時、開発用アプリ(rusui-dev, fly.toml参照)へ自動デプロイする
 
-name: Fly Deploy
+name: Fly Deploy (Dev)
 on:
   push:
     branches:
-      - main
+      - develop
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
-    concurrency: deploy-group    # optional: ensure only one action runs at a time
+    concurrency: deploy-group-dev    # 本番用(main)のconcurrencyグループとは分離
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
