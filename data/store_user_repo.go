@@ -126,6 +126,22 @@ func (r *MongoStoreRepo) GetStoreDataByUserID(userID primitive.ObjectID) (*model
 	return r.GetStoreData(user.StoreID)
 }
 
+// CountStoresByOwner 指定ユーザーがオーナー(user_id)として持つ店舗数を返す。
+// user_infoのstore_idは1件しか保持できないが、マネージャーは複数店舗を
+// 所有できるため、会員退会時の安全チェックには store_info を直接 user_id で検索する
+func (r *MongoStoreRepo) CountStoresByOwner(userID primitive.ObjectID) (int64, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	count, err := collection.CountDocuments(ctx, bson.M{"user_id": userID})
+	if err != nil {
+		log.Printf("Failed to count stores owned by user '%s': %v", userID.Hex(), err)
+		return 0, err
+	}
+	return count, nil
+}
+
 // 店舗設定データ取得
 func (r *MongoStoreRepo) GetSettings(storeID string) (*models.StoreSetting, error) {
 	collection := db.GetCollection(DatabaseName, CollectionStoreSettings)
@@ -489,6 +505,21 @@ func (r *MongoUserRepo) UpdateUserData(userID primitive.ObjectID, update map[str
 		return nil, err
 	}
 	return &updatedUser, nil
+}
+
+// DeleteUserData 指定ユーザーのuser_infoドキュメントを完全に削除する(会員退会時に使用)。
+// Firebase Authアカウントの削除は呼び出し側(handler)がauth.DeleteUserで別途行う
+func (r *MongoUserRepo) DeleteUserData(userID primitive.ObjectID) error {
+	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := collection.DeleteOne(ctx, bson.M{"_id": userID})
+	if err != nil {
+		log.Printf("Failed to delete user info for user '%s': %v", userID.Hex(), err)
+		return err
+	}
+	return nil
 }
 
 func (r *MongoUserRepo) UpdateUserImageURL(firebaseUID string, userImageURL string) (*models.User, error) {

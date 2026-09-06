@@ -105,8 +105,8 @@ func RegisterRoutes(
 	providerApi.Use(RequireAuthMiddleware(userRepo))
 	providerApi.Use(RequireSessionMiddleware(sessionRepo))
 
-	// - ユーザー情報 (個人情報保護: GET/PUT ともに認証が必要)
-	providerApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "OPTIONS")
+	// - ユーザー情報 (個人情報保護: GET/PUT/DELETE ともに認証が必要。DELETEは会員退会)
+	providerApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "DELETE", "OPTIONS")
 	providerApi.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
 
 	// - 店舗情報・店舗設定の更新 (GETは公開ルートで処理)

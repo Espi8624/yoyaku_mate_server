@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
@@ -29,23 +31,44 @@ type UserInfoRepository interface {
 	GetUserData(userID primitive.ObjectID) (*models.User, error)
 	UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) (*models.User, error)
 	GetUserDataByFirebaseUID(uid string) (*models.User, error)
+	DeleteUserData(userID primitive.ObjectID) error
+}
+
+// UserAccountStoreOwnershipRepository 会員退会時、店舗オーナーかどうかの確認に使う最小インターフェース
+type UserAccountStoreOwnershipRepository interface {
+	CountStoresByOwner(userID primitive.ObjectID) (int64, error)
+}
+
+// UserAccountStaffMembershipRepository 会員退会時、スタッフの店舗所属情報削除に使う最小インターフェース
+type UserAccountStaffMembershipRepository interface {
+	DeleteStoreStaffByUserID(userID primitive.ObjectID) error
 }
 
 // UserInfoHandler ユーザー情報関連のHTTPリクエストを処理するハンドラ
 type UserInfoHandler struct {
-	userRepo UserInfoRepository
-	authSvc  AuthService
+	userRepo  UserInfoRepository
+	storeRepo UserAccountStoreOwnershipRepository
+	staffRepo UserAccountStaffMembershipRepository
+	authSvc   AuthService
 }
 
-func NewUserInfoHandler(userRepo UserInfoRepository, authSvc AuthService) *UserInfoHandler {
+func NewUserInfoHandler(
+	userRepo UserInfoRepository,
+	storeRepo UserAccountStoreOwnershipRepository,
+	staffRepo UserAccountStaffMembershipRepository,
+	authSvc AuthService,
+) *UserInfoHandler {
 	return &UserInfoHandler{
-		userRepo: userRepo,
-		authSvc:  authSvc,
+		userRepo:  userRepo,
+		storeRepo: storeRepo,
+		staffRepo: staffRepo,
+		authSvc:   authSvc,
 	}
 }
 
 // HandleUser GET /api/provider_user?user_id=xxx
 // HandleUser PUT /api/provider_user?user_id=xxx
+// HandleUser DELETE /api/provider_user?user_id=xxx (会員退会)
 // - RequireAuthMiddlewareを通過後に呼び出される
 func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 	// - ミドルウェアで格納された認証済みユーザーを取得
@@ -122,6 +145,69 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 		}
 		// - REST標準: PUTレスポンスに更新後のリソースを返却
 		utils.RespondWithJSON(w, updatedUser, http.StatusOK)
+
+	case http.MethodDelete:
+		userID := r.URL.Query().Get("user_id")
+		if userID == "" {
+			utils.RespondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
+			return
+		}
+		objectID, err := primitive.ObjectIDFromHex(userID)
+		if err != nil {
+			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
+			return
+		}
+
+		// - 本人のアカウントのみ削除可能（他ユーザーの退会を防止）
+		if objectID != authUser.ID {
+			utils.RespondWithError(w, "Forbidden: cannot delete other user's account", http.StatusForbidden)
+			return
+		}
+
+		user, err := h.userRepo.GetUserData(objectID)
+		if err != nil {
+			utils.RespondWithError(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		switch user.Role {
+		case "manager":
+			// マネージャーが店舗を持ったまま退会すると、待機リスト・メニュー・
+			// スタッフ所属・シフト表など下位データが宙に浮いてしまうため、
+			// 店舗を全て削除(または譲渡)してからでないと退会できないようにする
+			storeCount, err := h.storeRepo.CountStoresByOwner(objectID)
+			if err != nil {
+				utils.RespondWithError(w, "Failed to check owned stores", http.StatusInternalServerError)
+				return
+			}
+			if storeCount > 0 {
+				utils.RespondWithError(w,
+					"店舗を保有したまま退会することはできません。先に店舗を削除してください。",
+					http.StatusConflict)
+				return
+			}
+		case "staff":
+			// スタッフは複数店舗に所属し得るため、所属情報を全て削除してから退会させる
+			if err := h.staffRepo.DeleteStoreStaffByUserID(objectID); err != nil {
+				utils.RespondWithError(w, "Failed to remove store memberships", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// 個人情報を確実に消すことを優先し、Mongo側のドキュメント削除を先に行う。
+		// Firebase Auth側の削除に失敗しても、既に個人情報は消えているためログのみ残す
+		if err := h.userRepo.DeleteUserData(objectID); err != nil {
+			utils.RespondWithError(w, "Failed to delete user account", http.StatusInternalServerError)
+			return
+		}
+
+		if user.FirebaseUID != "" {
+			if err := auth.DeleteUser(r.Context(), user.FirebaseUID); err != nil {
+				log.Printf("会員退会時のFirebaseアカウント削除に失敗しました (uid=%s): %v", user.FirebaseUID, err)
+			}
+		}
+
+		utils.RespondWithJSON(w, map[string]string{"message": "Account deleted successfully"}, http.StatusOK)
 
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)

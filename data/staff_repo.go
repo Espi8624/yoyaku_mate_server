@@ -77,6 +77,21 @@ func (r *MongoStaffRepo) CheckStoreStaffExists(userID primitive.ObjectID, storeI
 	return count > 0, nil
 }
 
+// DeleteStoreStaffByUserID 指定ユーザーの店舗スタッフ所属情報を全て削除する(会員退会時に使用)。
+// スタッフは複数店舗に所属し得るため、該当ユーザーの全ドキュメントを対象にする
+func (r *MongoStaffRepo) DeleteStoreStaffByUserID(userID primitive.ObjectID) error {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := collection.DeleteMany(ctx, bson.M{"user_id": userID})
+	if err != nil {
+		log.Printf("Failed to delete store_staff_info for user '%s': %v", userID.Hex(), err)
+		return err
+	}
+	return nil
+}
+
 func (r *MongoStaffRepo) CreateStoreStaffInfo(info models.StoreStaffInfo) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

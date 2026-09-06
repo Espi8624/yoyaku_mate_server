@@ -108,7 +108,7 @@ func main() {
 	)
 
 	sessionHandler := handlers.NewSessionHandler(sessionRepo)
-	userInfoHandler := handlers.NewUserInfoHandler(userRepo, authSvc)
+	userInfoHandler := handlers.NewUserInfoHandler(userRepo, storeRepo, staffRepo, authSvc)
 	storeInfoHandler := handlers.NewStoreInfoHandler(storeRepo, userRepo)
 	storeSettingsHandler := handlers.NewStoreSettingsHandler(storeRepo, userRepo)
 	storeStaffHandler := handlers.NewStoreStaffHandler(staffRepo, userRepo, storeRepo, authSvc)
