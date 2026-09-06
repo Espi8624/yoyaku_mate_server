@@ -45,6 +45,11 @@ func Load() Config {
 
 	fileName := env + ".json"
 
+	// configファイルが存在しない場合(本番コンテナ等)でも、その下の環境変数
+	// オーバーライドは必ず適用したいため、ここでは早期returnせずcfgをデフォルト
+	// 値で初期化しておき、ファイルが読めた場合のみ上書きする
+	cfg := getDefaultConfig()
+
 	// ローカル起動時は相対パス "config/xxx.json" を先に確認
 	configPath := filepath.Join("config", fileName)
 	f, err := os.Open(configPath)
@@ -56,24 +61,25 @@ func Load() Config {
 		var openErr error
 		f, openErr = os.Open(fallbackPath)
 		if openErr != nil {
-			log.Printf("Warning: Could not open config file at fallback path '%s', using default config. Error: %v", fallbackPath, openErr)
-			return getDefaultConfig()
+			log.Printf("Warning: Could not open config file at fallback path '%s'. Using default config as base; environment variables (Infisical等)で上書きします。 Error: %v", fallbackPath, openErr)
+			f = nil
+		} else {
+			configPath = fallbackPath
 		}
-		configPath = fallbackPath
-	}
-	defer f.Close()
-
-	log.Printf("Using config file: %s", configPath)
-
-	var cfg Config
-	decoder := json.NewDecoder(f)
-	err = decoder.Decode(&cfg)
-	if err != nil {
-		log.Printf("Warning: Could not decode config file, using defaults. Error: %v", err)
-		return getDefaultConfig()
 	}
 
-	// Environment variables override
+	if f != nil {
+		defer f.Close()
+		log.Printf("Using config file: %s", configPath)
+
+		decoder := json.NewDecoder(f)
+		if decodeErr := decoder.Decode(&cfg); decodeErr != nil {
+			log.Printf("Warning: Could not decode config file, using defaults. Error: %v", decodeErr)
+			cfg = getDefaultConfig()
+		}
+	}
+
+	// Environment variables override (configファイルの有無に関わらず常に適用)
 	if mongoURI := os.Getenv("MONGODB_URI"); mongoURI != "" {
 		cfg.MongoDB.URI = mongoURI
 		log.Println("Using MONGODB_URI from environment variable")
