@@ -507,16 +507,24 @@ func (r *MongoUserRepo) UpdateUserData(userID primitive.ObjectID, update map[str
 	return &updatedUser, nil
 }
 
-// DeleteUserData 指定ユーザーのuser_infoドキュメントを完全に削除する(会員退会時に使用)。
-// Firebase Authアカウントの削除は呼び出し側(handler)がauth.DeleteUserで別途行う
-func (r *MongoUserRepo) DeleteUserData(userID primitive.ObjectID) error {
+// MarkUserWithdrawn 指定ユーザーを退会済み(WITHDRAWN)としてマークする(ソフトデリート)。
+// 電話番号・住所などの連絡先は削除せず保持したまま、ログインのみ不可にする方針のため、
+// ドキュメント自体は消さずstatus/withdrawn_atだけ更新する。
+// Firebase Auth側の無効化は呼び出し側(handler)がauth.WithdrawFirebaseUserで別途行う
+func (r *MongoUserRepo) MarkUserWithdrawn(userID primitive.ObjectID) error {
 	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := collection.DeleteOne(ctx, bson.M{"_id": userID})
+	update := bson.M{
+		"$set": bson.M{
+			"status":       models.UserStatusWithdrawn,
+			"withdrawn_at": time.Now(),
+		},
+	}
+	_, err := collection.UpdateOne(ctx, bson.M{"_id": userID}, update)
 	if err != nil {
-		log.Printf("Failed to delete user info for user '%s': %v", userID.Hex(), err)
+		log.Printf("Failed to mark user withdrawn for user '%s': %v", userID.Hex(), err)
 		return err
 	}
 	return nil

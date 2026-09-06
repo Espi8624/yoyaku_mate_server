@@ -19,10 +19,10 @@ var firebaseAuth *auth.Client
 var ErrFirebaseNotInitialized = errors.New("firebase auth is not initialized: call auth.InitFirebase() first")
 
 // InitFirebase Firebase Authクライアントを初期化する
-// - main から明示的に呼ぶ。init() で行うと、Firebaseを使わないテストであっても
-//   パッケージをimportしただけで認証情報ファイルを要求してしまい、
-//   しかもパスが作業ディレクトリ相対のためテスト実行時に解決できない
-// - 起動時に失敗させたい (fail-fast) 判断は呼び出し側に委ねる
+//   - main から明示的に呼ぶ。init() で行うと、Firebaseを使わないテストであっても
+//     パッケージをimportしただけで認証情報ファイルを要求してしまい、
+//     しかもパスが作業ディレクトリ相対のためテスト実行時に解決できない
+//   - 起動時に失敗させたい (fail-fast) 判断は呼び出し側に委ねる
 func InitFirebase() error {
 	opt := option.WithCredentialsFile(defaultCredentialsPath)
 	app, err := firebase.NewApp(context.Background(), nil, opt)
@@ -79,4 +79,17 @@ func DeleteUser(ctx context.Context, uid string) error {
 		return ErrFirebaseNotInitialized
 	}
 	return firebaseAuth.DeleteUser(ctx, uid)
+}
+
+// WithdrawFirebaseUser 会員退会時に呼び出す。アカウント自体は削除せず、
+// 無効化(Disabled)した上で発行済みのリフレッシュトークンを失効させることで、
+// 既にログイン中の端末も含めて即座にログイン不可にする
+func WithdrawFirebaseUser(ctx context.Context, uid string) error {
+	if firebaseAuth == nil {
+		return ErrFirebaseNotInitialized
+	}
+	if _, err := firebaseAuth.UpdateUser(ctx, uid, (&auth.UserToUpdate{}).Disabled(true)); err != nil {
+		return err
+	}
+	return firebaseAuth.RevokeRefreshTokens(ctx, uid)
 }

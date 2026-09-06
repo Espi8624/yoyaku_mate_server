@@ -31,7 +31,7 @@ type UserInfoRepository interface {
 	GetUserData(userID primitive.ObjectID) (*models.User, error)
 	UpdateUserData(userID primitive.ObjectID, update map[string]interface{}) (*models.User, error)
 	GetUserDataByFirebaseUID(uid string) (*models.User, error)
-	DeleteUserData(userID primitive.ObjectID) error
+	MarkUserWithdrawn(userID primitive.ObjectID) error
 }
 
 // UserAccountStoreOwnershipRepository 会員退会時、店舗オーナーかどうかの確認に使う最小インターフェース
@@ -68,7 +68,7 @@ func NewUserInfoHandler(
 
 // HandleUser GET /api/provider_user?user_id=xxx
 // HandleUser PUT /api/provider_user?user_id=xxx
-// HandleUser DELETE /api/provider_user?user_id=xxx (会員退会)
+// HandleUser DELETE /api/provider_user?user_id=xxx (会員退会。ソフトデリートで連絡先は保持する)
 // - RequireAuthMiddlewareを通過後に呼び出される
 func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 	// - ミドルウェアで格納された認証済みユーザーを取得
@@ -194,20 +194,21 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 個人情報を確実に消すことを優先し、Mongo側のドキュメント削除を先に行う。
-		// Firebase Auth側の削除に失敗しても、既に個人情報は消えているためログのみ残す
-		if err := h.userRepo.DeleteUserData(objectID); err != nil {
-			utils.RespondWithError(w, "Failed to delete user account", http.StatusInternalServerError)
+		// ソフトデリート: 電話番号・住所などの連絡先は保持したまま、
+		// ステータスをWITHDRAWNにしてログインのみ不可にする。
+		// (退会後も運営側から本人に連絡できるようにするための方針)
+		if err := h.userRepo.MarkUserWithdrawn(objectID); err != nil {
+			utils.RespondWithError(w, "Failed to withdraw user account", http.StatusInternalServerError)
 			return
 		}
 
 		if user.FirebaseUID != "" {
-			if err := auth.DeleteUser(r.Context(), user.FirebaseUID); err != nil {
-				log.Printf("会員退会時のFirebaseアカウント削除に失敗しました (uid=%s): %v", user.FirebaseUID, err)
+			if err := auth.WithdrawFirebaseUser(r.Context(), user.FirebaseUID); err != nil {
+				log.Printf("会員退会時のFirebaseアカウント無効化に失敗しました (uid=%s): %v", user.FirebaseUID, err)
 			}
 		}
 
-		utils.RespondWithJSON(w, map[string]string{"message": "Account deleted successfully"}, http.StatusOK)
+		utils.RespondWithJSON(w, map[string]string{"message": "Account withdrawn successfully"}, http.StatusOK)
 
 	default:
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)

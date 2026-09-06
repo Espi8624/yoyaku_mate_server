@@ -16,6 +16,12 @@ type contextKey string
 // - 認証済みユーザー情報を格納するcontextキー
 const ContextKeyUser contextKey = "authenticated_user"
 
+//   - 退会済みアカウントによるアクセスを示すエラーコード。
+//     Firebase Authの無効化(Disabled)+リフレッシュトークン失効だけでは、
+//     退会直前に発行済みのIDトークンが有効期限(最長1時間)まで通ってしまうため、
+//     Mongo側のstatusを毎リクエスト確認して即座に弾く
+const ErrCodeAccountWithdrawn = "ACCOUNT_WITHDRAWN"
+
 // MiddlewareUserRepository 認証ミドルウェアでFirebase UIDに基づいて内部システムのユーザー情報を取得するためのインターフェース
 type MiddlewareUserRepository interface {
 	GetByFirebaseUID(uid string) (*models.User, error)
@@ -27,46 +33,52 @@ type MiddlewareUserRepository interface {
 // - 成功時は *models.User をcontextに格納し、次のハンドラを呼び出す
 func RequireAuthMiddleware(repo MiddlewareUserRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// - Authorizationヘッダーを取得
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
-			return
-		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// - Authorizationヘッダーを取得
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+				return
+			}
 
-		// - "Bearer " プレフィックスを除去してトークンを取得
-		idToken := strings.TrimPrefix(authHeader, "Bearer ")
-		if idToken == authHeader {
-			// - "Bearer " プレフィックスが存在しない場合は不正なフォーマット
-			utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
-			return
-		}
+			// - "Bearer " プレフィックスを除去してトークンを取得
+			idToken := strings.TrimPrefix(authHeader, "Bearer ")
+			if idToken == authHeader {
+				// - "Bearer " プレフィックスが存在しない場合は不正なフォーマット
+				utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+				return
+			}
 
-		// - Firebase IDトークンを検証
-		firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
-		if err != nil {
-			utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
-			return
-		}
+			// - Firebase IDトークンを検証
+			firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
+			if err != nil {
+				utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+				return
+			}
 
-		// - DBからユーザー情報を取得
-		user, err := repo.GetByFirebaseUID(firebaseUID)
-		if err != nil || user == nil {
-			utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
-			return
-		}
+			// - DBからユーザー情報を取得
+			user, err := repo.GetByFirebaseUID(firebaseUID)
+			if err != nil || user == nil {
+				utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+				return
+			}
 
-		// - 認証済みユーザーをcontextに格納し、次のハンドラへ渡す
-		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+			// - 退会済みアカウント: Firebase側のトークンがまだ有効期限内でも即座に拒否する
+			if user.IsWithdrawn() {
+				utils.RespondWithErrorCode(w, ErrCodeAccountWithdrawn, "退会済みのアカウントです。", http.StatusForbidden)
+				return
+			}
+
+			// - 認証済みユーザーをcontextに格納し、次のハンドラへ渡す
+			ctx := context.WithValue(r.Context(), ContextKeyUser, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }
 
 // セッション検証の結果を表すエラーコード
-// - クライアントはこのコードで挙動を分岐する。両者を1つのコードにまとめてしまうと、
-//   静かに復旧できる状況でもログアウトダイアログが出てしまい、ユーザーは障害だと受け取る
+//   - クライアントはこのコードで挙動を分岐する。両者を1つのコードにまとめてしまうと、
+//     静かに復旧できる状況でもログアウトダイアログが出てしまい、ユーザーは障害だと受け取る
 const (
 	// - セッショントークンが無い/サーバーに存在しない。端末の再インストール等でローカルの
 	//   セッションが失われた場合に起きる。クライアントは静かに再発行して1度だけリトライする
@@ -110,8 +122,8 @@ func RequireSessionMiddleware(repo MiddlewareSessionRepository) func(http.Handle
 }
 
 // VerifySessionForUser セッションを検証し、無効な場合はエラーレスポンスを書き込んで false を返す
-// - ミドルウェアを適用できないルート (ゲストと直員が同じエンドポイントを共有しており、
-//   認証要否がリクエスト内容によって変わるもの) から直接呼び出すためのヘルパー
+//   - ミドルウェアを適用できないルート (ゲストと直員が同じエンドポイントを共有しており、
+//     認証要否がリクエスト内容によって変わるもの) から直接呼び出すためのヘルパー
 func VerifySessionForUser(w http.ResponseWriter, r *http.Request, repo MiddlewareSessionRepository, user *models.User) bool {
 	sessionID := r.Header.Get("X-Session-Id")
 	if sessionID == "" {

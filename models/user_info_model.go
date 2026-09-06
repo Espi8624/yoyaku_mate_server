@@ -6,6 +6,14 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// ユーザーステータス定義
+//   - Statusが空文字("")の既存ドキュメントもACTIVE扱いにすること
+//     (フィールド追加前に作られたドキュメントとの後方互換性のため)
+const (
+	UserStatusActive    = "ACTIVE"
+	UserStatusWithdrawn = "WITHDRAWN" // 退会済み。連絡先は保持したまま、ログインのみ不可にする
+)
+
 // user_info モデル
 type User struct {
 	ID               primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
@@ -31,4 +39,13 @@ type User struct {
 	TermsAgreedAt   time.Time `bson:"terms_agreed_at" json:"terms_agreed_at"`
 	PrivacyAgreed   bool      `bson:"privacy_agreed" json:"privacy_agreed"`
 	PrivacyAgreedAt time.Time `bson:"privacy_agreed_at" json:"privacy_agreed_at"`
+	// Status/WithdrawnAtは会員退会(ソフトデリート)用。連絡先(電話番号等)は
+	// 削除せず保持し、ログインのみ不可にする(handlers.RequireAuthMiddlewareで拒否)
+	Status      string    `bson:"status,omitempty" json:"status,omitempty"`
+	WithdrawnAt time.Time `bson:"withdrawn_at,omitempty" json:"withdrawn_at,omitempty"`
+}
+
+// IsWithdrawn 退会済みかどうかを返す(Status未設定の既存ドキュメントはACTIVE扱い)
+func (u *User) IsWithdrawn() bool {
+	return u != nil && u.Status == UserStatusWithdrawn
 }
