@@ -510,7 +510,7 @@ func (r *MongoUserRepo) UpdateUserData(userID primitive.ObjectID, update map[str
 // MarkUserWithdrawn 指定ユーザーを退会済み(WITHDRAWN)としてマークする(ソフトデリート)。
 // 電話番号・住所などの連絡先は削除せず保持したまま、ログインのみ不可にする方針のため、
 // ドキュメント自体は消さずstatus/withdrawn_atだけ更新する。
-// Firebase Auth側の無効化は呼び出し側(handler)がauth.WithdrawFirebaseUserで別途行う
+// Firebase Auth側のアカウント削除は呼び出し側(handler)がauth.DeleteUserで別途行う
 func (r *MongoUserRepo) MarkUserWithdrawn(userID primitive.ObjectID) error {
 	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

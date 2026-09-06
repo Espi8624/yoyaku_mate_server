@@ -129,9 +129,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		userCollection := db.GetCollection(DatabaseName, UsersCollection)
 		storeCollection := db.GetCollection(DatabaseName, StoresCollection)
 
-		// ユーザー中腹確認 (FirebaseUID, メールアドレス, 個人電話番号)
+		// ユーザー重複確認 (FirebaseUID, メールアドレス, 個人電話番号)。
+		// 退会済み(WITHDRAWN)アカウントは対象から除外する: 退会は連絡先を残す
+		// ソフトデリートのため、同じメール/電話番号で改めて新規登録できてよい
+		// (Firebase Auth側のアカウントは退会時に削除済みなので衝突しない)
 		var existingUser models.User
 		err := userCollection.FindOne(sessCtx, bson.M{
+			"status": bson.M{"$ne": models.UserStatusWithdrawn},
 			"$or": []bson.M{
 				{"firebase_uid": req.FirebaseUID},
 				{"email": req.Email},
@@ -139,26 +143,15 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			},
 		}).Decode(&existingUser)
 
-		// 退会済み(WITHDRAWN)アカウントが同じメールアドレスで再登録してきた場合は、
-		// 新規重複エラーにせず「再活性化」として扱う(既存ドキュメントの_idを再利用する)。
-		// 電話番号のみが偶然一致するケース等、メール以外での一致は通常通り重複エラーとする
-		isReactivation := false
 		if err == nil {
-			if existingUser.IsWithdrawn() && existingUser.Email == req.Email {
-				isReactivation = true
-			} else {
-				// 既に存在するユーザーである為、Transaction Callback
-				return nil, fmt.Errorf("user with this email or phone number already exists")
-			}
+			// 既に存在するユーザーである為、Transaction Callback
+			return nil, fmt.Errorf("user with this email or phone number already exists")
 		} else if err != mongo.ErrNoDocuments {
 			return nil, fmt.Errorf("database error during user check")
 		}
 
 		var storeIdForUser string
 		newUserID := primitive.NewObjectID()
-		if isReactivation {
-			newUserID = existingUser.ID
-		}
 		var newStore *models.Store
 
 		switch req.Role {
@@ -309,13 +302,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			PrivacyAgreedAt:  privacyAgreedAt,
 		}
 
-		// ユーザー生成 (再活性化の場合は既存ドキュメントを新しい内容で丸ごと置き換える。
-		// Status/WithdrawnAtはnewUserに含まれないため、置き換えと同時に自動的にクリアされる)
-		if isReactivation {
-			_, err = userCollection.ReplaceOne(sessCtx, bson.M{"_id": newUserID}, newUser)
-		} else {
-			_, err = userCollection.InsertOne(sessCtx, newUser)
-		}
+		// ユーザー生成 (退会済みアカウントと同じメール/電話番号でも、別ドキュメント・
+		// 別UIDの新規ユーザーとして作成する。退会済みの古いドキュメントはそのまま
+		// 履歴として残る)
+		_, err = userCollection.InsertOne(sessCtx, newUser)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
@@ -419,20 +409,14 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 1. MongoDB check
-	// 退会済み(WITHDRAWN)アカウントは再登録(再活性化)を許可するため、
-	// 件数だけでなくstatusも見る必要がある
+	// 退会済み(WITHDRAWN)アカウントは、同じメールアドレスでの新規登録を
+	// 妨げないよう件数から除外する(退会は連絡先を残すソフトデリートのため)
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	var existingUser models.User
-	err := userCollection.FindOne(r.Context(), bson.M{"email": req.Email}).Decode(&existingUser)
-	mongoUnavailable := false
-	isWithdrawnAccount := false
-	if err == nil {
-		if existingUser.IsWithdrawn() {
-			isWithdrawnAccount = true
-		} else {
-			mongoUnavailable = true
-		}
-	} else if err != mongo.ErrNoDocuments {
+	count, err := userCollection.CountDocuments(r.Context(), bson.M{
+		"email":  req.Email,
+		"status": bson.M{"$ne": models.UserStatusWithdrawn},
+	})
+	if err != nil {
 		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
@@ -440,38 +424,28 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	// 2. Firebase Auth check
 	// MongoDBに存在しない場合でもFirebaseに存在する可能性があるため、チェックする
 	// ただし、メール未認証のアカウントは再登録を許可する
+	// (退会済みアカウントのFirebaseユーザーは退会時に既に削除済みのため、ここには残らない)
 	firebaseUserRecord, firebaseErr := auth.GetUserByEmail(r.Context(), req.Email)
 	firebaseExists := (firebaseErr == nil)
 
-	if firebaseExists && firebaseUserRecord != nil {
-		shouldFreeUpFirebaseAccount := false
+	// 未認証のFirebaseアカウントは再登録可能（中断された登録フローへの対応）
+	if firebaseExists && firebaseUserRecord != nil && !firebaseUserRecord.EmailVerified {
+		firebaseExists = false
 
-		if !firebaseUserRecord.EmailVerified {
-			// 未認証のFirebaseアカウントは再登録可能（中断された登録フローへの対応）。
-			// ただし猶予期間を過ぎたものは実際に削除し、メールアドレスを解放する。
-			// (削除しないとクライアント側のFirebase Auth createUserWithEmailAndPassword が
-			//  依然として email-already-in-use で失敗し、再登録が完了しないため)
-			// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮して削除しない
-			createdAt := time.UnixMilli(firebaseUserRecord.UserMetadata.CreationTimestamp)
-			if time.Since(createdAt) > unverifiedAccountGracePeriod {
-				shouldFreeUpFirebaseAccount = true
-			}
-		} else if isWithdrawnAccount {
-			// 退会済みアカウントの再登録: 旧Firebaseアカウント(無効化済み)を削除し、
-			// クライアントが新しいパスワードで新規Firebaseアカウントを作成できるようにする
-			shouldFreeUpFirebaseAccount = true
-		}
-
-		if shouldFreeUpFirebaseAccount {
+		// 猶予期間を過ぎた未認証アカウントは実際に削除し、メールアドレスを解放する。
+		// (削除しないとクライアント側のFirebase Auth createUserWithEmailAndPassword が
+		//  依然として email-already-in-use で失敗し、再登録が完了しないため)
+		// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮して削除しない
+		createdAt := time.UnixMilli(firebaseUserRecord.UserMetadata.CreationTimestamp)
+		if time.Since(createdAt) > unverifiedAccountGracePeriod {
 			if err := auth.DeleteUser(r.Context(), firebaseUserRecord.UID); err != nil {
-				log.Printf("退会済み/放置されたFirebaseアカウントの削除に失敗しました (uid=%s): %v", firebaseUserRecord.UID, err)
+				log.Printf("放置された未認証Firebaseアカウントの削除に失敗しました (uid=%s): %v", firebaseUserRecord.UID, err)
 			}
-			firebaseExists = false
 		}
 	}
 
-	// DBまたはFirebaseに存在する場合、利用できない (退会済みアカウントは利用可能扱い)
-	isUnavailable := mongoUnavailable || firebaseExists
+	// DBまたはFirebaseに存在する場合、利用できない
+	isUnavailable := (count > 0) || firebaseExists
 
 	utils.RespondWithJSON(w, map[string]bool{"available": !isUnavailable}, http.StatusOK)
 }
@@ -495,8 +469,12 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Invalid phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
+	// 退会済み(WITHDRAWN)アカウントは、同じ電話番号での新規登録を妨げないよう除外する
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	count, err := userCollection.CountDocuments(r.Context(), bson.M{"phone": req.PhoneNumber})
+	count, err := userCollection.CountDocuments(r.Context(), bson.M{
+		"phone":  req.PhoneNumber,
+		"status": bson.M{"$ne": models.UserStatusWithdrawn},
+	})
 	if err != nil {
 		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
 		return

@@ -39,9 +39,9 @@ type UserAccountStoreOwnershipRepository interface {
 	CountStoresByOwner(userID primitive.ObjectID) (int64, error)
 }
 
-// UserAccountStaffMembershipRepository 会員退会時、スタッフの店舗所属情報削除に使う最小インターフェース
+// UserAccountStaffMembershipRepository 会員退会時、スタッフの店舗所属情報更新に使う最小インターフェース
 type UserAccountStaffMembershipRepository interface {
-	DeleteStoreStaffByUserID(userID primitive.ObjectID) error
+	MarkStoreStaffWithdrawnByUserID(userID primitive.ObjectID) error
 }
 
 // UserInfoHandler ユーザー情報関連のHTTPリクエストを処理するハンドラ
@@ -187,9 +187,11 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case "staff":
-			// スタッフは複数店舗に所属し得るため、所属情報を全て削除してから退会させる
-			if err := h.staffRepo.DeleteStoreStaffByUserID(objectID); err != nil {
-				utils.RespondWithError(w, "Failed to remove store memberships", http.StatusInternalServerError)
+			// スタッフは複数店舗に所属し得るため、所属情報は削除せず全てWITHDRAWNに
+			// マークする。店舗のスタッフ一覧に「退会済み」として残り続け、
+			// マネージャーが後から連絡先を確認できるようにするため
+			if err := h.staffRepo.MarkStoreStaffWithdrawnByUserID(objectID); err != nil {
+				utils.RespondWithError(w, "Failed to update store memberships", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -202,9 +204,11 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Firebase Auth側のアカウントは削除する(連絡先はMongo側に残るため、
+		// ログイン用の認証情報自体を残しておく必要はない)
 		if user.FirebaseUID != "" {
-			if err := auth.WithdrawFirebaseUser(r.Context(), user.FirebaseUID); err != nil {
-				log.Printf("会員退会時のFirebaseアカウント無効化に失敗しました (uid=%s): %v", user.FirebaseUID, err)
+			if err := auth.DeleteUser(r.Context(), user.FirebaseUID); err != nil {
+				log.Printf("会員退会時のFirebaseアカウント削除に失敗しました (uid=%s): %v", user.FirebaseUID, err)
 			}
 		}
 

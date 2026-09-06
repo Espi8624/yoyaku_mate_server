@@ -73,23 +73,10 @@ func GetUserByEmail(ctx context.Context, email string) (*auth.UserRecord, error)
 	return firebaseAuth.GetUserByEmail(ctx, email)
 }
 
-// UIDでFirebaseユーザーを削除（放置された未認証アカウントの整理用）
+// UIDでFirebaseユーザーを削除（放置された未認証アカウント・会員退会時の整理用）
 func DeleteUser(ctx context.Context, uid string) error {
 	if firebaseAuth == nil {
 		return ErrFirebaseNotInitialized
 	}
 	return firebaseAuth.DeleteUser(ctx, uid)
-}
-
-// WithdrawFirebaseUser 会員退会時に呼び出す。アカウント自体は削除せず、
-// 無効化(Disabled)した上で発行済みのリフレッシュトークンを失効させることで、
-// 既にログイン中の端末も含めて即座にログイン不可にする
-func WithdrawFirebaseUser(ctx context.Context, uid string) error {
-	if firebaseAuth == nil {
-		return ErrFirebaseNotInitialized
-	}
-	if _, err := firebaseAuth.UpdateUser(ctx, uid, (&auth.UserToUpdate{}).Disabled(true)); err != nil {
-		return err
-	}
-	return firebaseAuth.RevokeRefreshTokens(ctx, uid)
 }

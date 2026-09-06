@@ -77,16 +77,19 @@ func (r *MongoStaffRepo) CheckStoreStaffExists(userID primitive.ObjectID, storeI
 	return count > 0, nil
 }
 
-// DeleteStoreStaffByUserID 指定ユーザーの店舗スタッフ所属情報を全て削除する(会員退会時に使用)。
+// MarkStoreStaffWithdrawnByUserID 指定ユーザーの店舗スタッフ所属情報を全てWITHDRAWNにする
+// (会員退会時に使用)。削除はせず残すことで、店舗のスタッフ一覧に「退会済み」として
+// 表示され続け、マネージャーが後から連絡先を確認できるようにする。
 // スタッフは複数店舗に所属し得るため、該当ユーザーの全ドキュメントを対象にする
-func (r *MongoStaffRepo) DeleteStoreStaffByUserID(userID primitive.ObjectID) error {
+func (r *MongoStaffRepo) MarkStoreStaffWithdrawnByUserID(userID primitive.ObjectID) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := collection.DeleteMany(ctx, bson.M{"user_id": userID})
+	update := bson.M{"$set": bson.M{"status": models.StaffStatusWithdrawn}}
+	_, err := collection.UpdateMany(ctx, bson.M{"user_id": userID}, update)
 	if err != nil {
-		log.Printf("Failed to delete store_staff_info for user '%s': %v", userID.Hex(), err)
+		log.Printf("Failed to mark store_staff_info withdrawn for user '%s': %v", userID.Hex(), err)
 		return err
 	}
 	return nil
@@ -134,6 +137,10 @@ func (r *MongoStaffRepo) GetStoreStaffByStoreID(storeID string) ([]map[string]in
 			"availability": 1,
 			"user_name":    "$user_details.user_name",
 			"email":        "$user_details.email",
+			// 退会済み(WITHDRAWN)スタッフでもマネージャーが連絡できるよう、
+			// 電話番号・住所も併せて取得する
+			"phone":   "$user_details.phone",
+			"address": "$user_details.address",
 		}}},
 	}
 

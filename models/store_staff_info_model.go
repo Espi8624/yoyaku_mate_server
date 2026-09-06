@@ -8,9 +8,10 @@ import (
 
 // 認証ステータス定義
 const (
-	StaffStatusPending  = "PENDING"  // 審査中
-	StaffStatusApproved = "APPROVED" // 承認済み
-	StaffStatusRejected = "REJECTED" // 反則
+	StaffStatusPending   = "PENDING"   // 審査中
+	StaffStatusApproved  = "APPROVED"  // 承認済み
+	StaffStatusRejected  = "REJECTED"  // 反則
+	StaffStatusWithdrawn = "WITHDRAWN" // 会員退会済み(店舗の所属記録としては残す)
 )
 
 // UnavailableRange 1件の勤務不可時間帯。終日不可の場合は AllDay=true とし、
