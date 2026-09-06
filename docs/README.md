@@ -59,6 +59,7 @@ docs/
 | [ADR-004-active-user-tracking.md](./decisions/ADR-004-active-user-tracking.md) | インメモリのスライディングウィンドウおよび日別アクティブユーザーコレクションを活用した接続者トラッキングの採用理由 |
 | [ADR-005-sse-zombie-detection.md](./decisions/ADR-005-sse-zombie-detection.md) | SSEゾンビ接続検知方式 — select-defaultによるノンブロッキング送信の採用理由 |
 | [ADR-006-sse-monitoring-polling.md](./decisions/ADR-006-sse-monitoring-polling.md) | SSE監視ダッシュボードにおける通信の分離およびHTTPポーリング方式採用の理由 |
+| [ADR-007-shift-table-draft-publish.md](./decisions/ADR-007-shift-table-draft-publish.md) | シフト表を下書きと確定版に分離し、明示的な「確定」でのみスタッフへ公開する理由 |
 
 
 ---

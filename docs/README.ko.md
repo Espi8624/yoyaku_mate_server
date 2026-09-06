@@ -59,6 +59,7 @@ docs/
 | [ADR-004-active-user-tracking.ko.md](./decisions/ADR-004-active-user-tracking.ko.md) | 인메모리 슬라이딩 윈도우 및 일별 활성 사용자 컬렉션을 활용한 접속자 트래킹 채택 이유 |
 | [ADR-005-sse-zombie-detection.ko.md](./decisions/ADR-005-sse-zombie-detection.ko.md) | SSE 좀비 연결 감지 방식 — `select-default` 논블로킹 전송 채택 이유 |
 | [ADR-006-sse-monitoring-polling.ko.md](./decisions/ADR-006-sse-monitoring-polling.ko.md) | SSE 모니터링 대시보드의 통신 격리 및 HTTP 폴링 방식 채택 이유 |
+| [ADR-007-shift-table-draft-publish.ko.md](./decisions/ADR-007-shift-table-draft-publish.ko.md) | 시프트표를 초안과 확정본으로 분리하고, 명시적인 「확정」으로만 스태프에게 공개하는 이유 |
 
 ---
 

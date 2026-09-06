@@ -26,6 +26,7 @@ type ShiftTableRepository interface {
 	UpdateShift(shiftTableID, shiftID string, shift models.Shift) error
 	DeleteShift(shiftTableID, shiftID string) error
 	ReplaceShifts(shiftTableID string, shifts []models.Shift) error
+	PublishShifts(shiftTableID string, shifts []models.Shift, publishedAt time.Time) error
 	GetStaffShiftCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[primitive.ObjectID]int, error)
 	GetStaffPairCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[string]int, error)
 }
@@ -34,8 +35,9 @@ type ShiftTableRepository interface {
 type ShiftChangeRequestRepository interface {
 	CreateRequest(req models.ShiftChangeRequest) error
 	GetRequestsForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	ResolvePendingForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	ResolveRequest(requestID string) error
+	ResolveAppliedForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
+	RevertAppliedForWeek(storeID, weekStartDate string) (int, error)
+	MarkRequestApplied(requestID string) error
 	DeleteRequest(requestID string) error
 }
 
@@ -166,6 +168,12 @@ func (h *ShiftTableHandler) GetShiftTableHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
+	isManager, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -177,7 +185,218 @@ func (h *ShiftTableHandler) GetShiftTableHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if !isManager {
+		// スタッフには確定版だけを見せる。一度も確定していない週は「まだ作成されていない」のと
+		// 区別する必要がないため、404を返して既存の空状態表示に寄せる
+		if table.PublishedAt == nil {
+			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			return
+		}
+		// クライアントが下書き/確定版を意識せず描画できるよう、確定版を Shifts に載せ替えて返す
+		table.Shifts = table.PublishedShifts
+		table.HasUnpublishedChanges = false
+		utils.RespondWithJSON(w, table, http.StatusOK)
+		return
+	}
+
+	// マネージャーには下書きをそのまま返し、確定ボタンの出し分けに使う未確定フラグを添える
+	table.HasUnpublishedChanges, err = h.hasUnpublishedChanges(table)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to check unpublished changes", http.StatusInternalServerError)
+		return
+	}
+
 	utils.RespondWithJSON(w, table, http.StatusOK)
+}
+
+// hasUnpublishedChanges 下書きに未確定の変更が残っているかを判定する。
+// シフトの内容差分だけでなく「下書きへ反映済み・未確定(applied)」の修正依頼も見る。
+// 出し直し(superseded)や陳腐化(stale)の依頼はシフト表を変えずに状態だけが変わるため、
+// 内容比較だけだと確定ボタンが出ず、applied のまま永久に残ってしまう
+func (h *ShiftTableHandler) hasUnpublishedChanges(table *models.ShiftTable) (bool, error) {
+	if table.PublishedAt == nil {
+		return true, nil
+	}
+	if !shiftsContentEqual(table.Shifts, table.PublishedShifts) {
+		return true, nil
+	}
+
+	requests, err := h.changeRequestRepo.GetRequestsForWeek(table.StoreID, table.WeekStartDate)
+	if err != nil {
+		return false, err
+	}
+	for _, cr := range requests {
+		if cr.Status == models.ShiftChangeRequestStatusApplied {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// shiftsContentEqual 2つのシフト一覧が「中身として」同じかを判定する。
+// _id は比較しない。削除して同じ内容を作り直すとIDだけが変わるが、シフト表としては
+// 何も変わっていないため、それを未確定の変更として扱わないようにする
+func shiftsContentEqual(a, b []models.Shift) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	key := func(s models.Shift) string {
+		return s.StaffID.Hex() + "|" + s.Day + "|" + s.StartTime + "|" + s.EndTime
+	}
+	keysA := make([]string, 0, len(a))
+	for _, s := range a {
+		keysA = append(keysA, key(s))
+	}
+	keysB := make([]string, 0, len(b))
+	for _, s := range b {
+		keysB = append(keysB, key(s))
+	}
+	sort.Strings(keysA)
+	sort.Strings(keysB)
+	for i := range keysA {
+		if keysA[i] != keysB[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// PublishShiftTableHandler 下書きを確定し、スタッフに公開する (マネージャー専用)。
+// シフト表がスタッフから見えるようになる唯一の経路で、同時に下書きへ反映済みの
+// 修正依頼(applied)も処理済み(resolved)へ進める
+func (h *ShiftTableHandler) PublishShiftTableHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	storeID := vars["storeId"]
+	weekStartDate := vars["weekStartDate"]
+
+	if storeID == "" || weekStartDate == "" {
+		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		return
+	}
+	if !isValidWeekStartDate(weekStartDate) {
+		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		return
+	}
+
+	user, statusCode, err := h.authenticate(r)
+	if err != nil {
+		utils.RespondWithError(w, err.Error(), statusCode)
+		return
+	}
+
+	hasAccess, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasAccess {
+		utils.RespondWithError(w, "You do not have permission to publish the shift table for this store", http.StatusForbidden)
+		return
+	}
+
+	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			return
+		}
+		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		return
+	}
+
+	publishedAt := time.Now()
+	if err := h.shiftTableRepo.PublishShifts(table.ID.Hex(), table.Shifts, publishedAt); err != nil {
+		utils.RespondWithError(w, "Failed to publish shift table", http.StatusInternalServerError)
+		return
+	}
+
+	// 確定版の公開に成功した後で依頼を処理済みにする。ここが失敗しても
+	// シフト表自体は公開済みなので、依頼状態のズレはログに残して処理は続行する
+	resolved, err := h.changeRequestRepo.ResolveAppliedForWeek(storeID, weekStartDate)
+	if err != nil {
+		log.Printf("Failed to resolve applied change requests after publishing %s/%s: %v", storeID, weekStartDate, err)
+	}
+
+	table.PublishedShifts = table.Shifts
+	table.PublishedAt = &publishedAt
+	table.UpdatedAt = publishedAt
+	table.HasUnpublishedChanges = false
+
+	utils.RespondWithJSON(w, map[string]interface{}{
+		"shift_table":            table,
+		"resolved_request_count": len(resolved),
+	}, http.StatusOK)
+}
+
+// DiscardShiftTableDraftHandler 下書きを破棄し、確定版の内容へ戻す (マネージャー専用)。
+// 「確定してからの編集をなかったことにする」操作で、確定版そのものは一切変更しない。
+// スタッフに見えているシフト表は元から確定版なので、この操作でスタッフ側の表示は変わらない
+func (h *ShiftTableHandler) DiscardShiftTableDraftHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	storeID := vars["storeId"]
+	weekStartDate := vars["weekStartDate"]
+
+	if storeID == "" || weekStartDate == "" {
+		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		return
+	}
+	if !isValidWeekStartDate(weekStartDate) {
+		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		return
+	}
+
+	user, statusCode, err := h.authenticate(r)
+	if err != nil {
+		utils.RespondWithError(w, err.Error(), statusCode)
+		return
+	}
+
+	hasAccess, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasAccess {
+		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		return
+	}
+
+	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			return
+		}
+		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		return
+	}
+
+	// 一度も確定していない週は戻す先が「空のシフト表」になる。
+	// ここを拒否すると、シフト表を削除しただけの状態から自動配置をやり直す手段が
+	// 無くなる (下部ボタンは確定に切り替わっている) ため、空へ戻すことを許可する
+	published := table.PublishedShifts
+	if published == nil {
+		published = []models.Shift{}
+	}
+	if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), published); err != nil {
+		utils.RespondWithError(w, "Failed to discard draft", http.StatusInternalServerError)
+		return
+	}
+
+	// 下書きを捨てた以上、その下書きへの反映だけを根拠にした applied も未対応へ戻す。
+	// ここが失敗しても下書きは既に戻っているため、ログに残して処理は続行する
+	revertedCount, err := h.changeRequestRepo.RevertAppliedForWeek(storeID, weekStartDate)
+	if err != nil {
+		log.Printf("Failed to revert applied change requests after discarding draft %s/%s: %v", storeID, weekStartDate, err)
+	}
+
+	table.Shifts = published
+	table.HasUnpublishedChanges = false
+
+	utils.RespondWithJSON(w, map[string]interface{}{
+		"shift_table":            table,
+		"reverted_request_count": revertedCount,
+	}, http.StatusOK)
 }
 
 // CreateShiftTableHandler 指定週の空のシフト表を作成 (マネージャー専用)
@@ -540,7 +759,8 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 // --- シフト修正依頼 ---
 // スタッフが自分の割当ブロックをタップし、「現在の割当(From)→希望する割当(To)」を送る
 // (スタッフ→マネージャー)。マネージャーは依頼を見ながら通常のシフト編集機能でシフト表を
-// 直接修正し、対応が済んだら ResolveShiftChangeRequestsHandler でまとめて処理済みにする
+// 直接修正するか、ApplyShiftChangeRequestsHandler で下書きへ一括反映する。
+// どちらも下書き止まりで、確定(PublishShiftTableHandler)で初めてスタッフに反映される
 
 // CreateShiftChangeRequestHandler シフトブロックに対する修正依頼を1件作成する (承認済みスタッフ用)
 func (h *ShiftTableHandler) CreateShiftChangeRequestHandler(w http.ResponseWriter, r *http.Request) {
@@ -640,52 +860,39 @@ func (h *ShiftTableHandler) GetShiftChangeRequestsHandler(w http.ResponseWriter,
 		return
 	}
 
+	isManager, err := h.hasManageAccess(user.ID, storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+
 	requests, err := h.changeRequestRepo.GetRequestsForWeek(storeID, weekStartDate)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
 		return
 	}
 
+	if !isManager {
+		// applied はマネージャーが下書きに反映しただけの中間状態。スタッフのシフト表は
+		// まだ変わっていないため、「対応済み」と見せると実態と食い違う。未対応に伏せて返す
+		requests = maskAppliedAsPending(requests)
+	}
+
 	utils.RespondWithJSON(w, requests, http.StatusOK)
 }
 
-// ResolveShiftChangeRequestsHandler その週の未処理(pending)な修正依頼を全てまとめて
-// 処理済み(resolved)にする (マネージャー専用。編集のたびではなく、対応が一段落した時に押す想定)
-func (h *ShiftTableHandler) ResolveShiftChangeRequestsHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	storeID := vars["storeId"]
-	weekStartDate := vars["weekStartDate"]
-	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
-		return
+// maskAppliedAsPending applied な依頼を pending として見せるためのコピーを返す
+// (呼び出し側のスライスは書き換えない)
+func maskAppliedAsPending(requests []models.ShiftChangeRequest) []models.ShiftChangeRequest {
+	masked := make([]models.ShiftChangeRequest, len(requests))
+	copy(masked, requests)
+	for i := range masked {
+		if masked[i].Status == models.ShiftChangeRequestStatusApplied {
+			masked[i].Status = models.ShiftChangeRequestStatusPending
+			masked[i].ResolvedAt = nil
+		}
 	}
-
-	user, statusCode, err := h.authenticate(r)
-	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
-		return
-	}
-
-	hasAccess, err := h.hasManageAccess(user.ID, storeID)
-	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
-		return
-	}
-	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
-		return
-	}
-
-	resolved, err := h.changeRequestRepo.ResolvePendingForWeek(storeID, weekStartDate)
-	if err != nil {
-		utils.RespondWithError(w, "Failed to resolve shift change requests", http.StatusInternalServerError)
-		return
-	}
-
-	// TODO: プッシュ通知インフラ整備後、ここで resolved の各 StaffID 宛に
-	// 「シフト表が更新されました」通知を送る (現時点はアプリ内表示のみ)
-
-	utils.RespondWithJSON(w, resolved, http.StatusOK)
+	return masked
 }
 
 // DeleteShiftChangeRequestHandler 修正依頼を1件削除する (マネージャー専用)。
@@ -779,7 +986,11 @@ type changeRequestConflict struct {
 // changeRequestApplyResult ApplyShiftChangeRequestsHandler のレスポンス。
 // conflict が nil なら今回の呼び出しで全て処理完了(done=true)
 type changeRequestApplyResult struct {
-	AppliedCount      int                    `json:"applied_count"`
+	AppliedCount int `json:"applied_count"`
+	// SupersededCount 本人が同じ枠へ出し直したため、古い方を解決済みにした件数
+	SupersededCount int `json:"superseded_count"`
+	// SkippedStaleCount 依頼元のシフトが既に存在せず適用できなかったため、解決済みにした件数
+	// (「既に処理済み」とは限らない。マネージャーがそのシフトを削除・変更した場合も含む)
 	SkippedStaleCount int                    `json:"skipped_stale_count"`
 	Done              bool                   `json:"done"`
 	Conflict          *changeRequestConflict `json:"conflict,omitempty"`
@@ -874,7 +1085,10 @@ func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWrite
 	shifts := append([]models.Shift{}, table.Shifts...)
 	appliedRequestIDs := map[string]bool{}
 	skippedThisRun := map[string]bool{}
-	staleCount := 0
+	// - 本人が出し直した結果、古い方が不要になった依頼
+	supersededRequestIDs := findSupersededRequests(pending)
+	// - 依頼元のシフトが既に無く、適用しようがない依頼
+	staleRequestIDs := map[string]bool{}
 	var conflict *changeRequestConflict
 
 requestLoop:
@@ -883,12 +1097,20 @@ requestLoop:
 		if skippedThisRun[reqIDHex] || appliedRequestIDs[reqIDHex] {
 			continue
 		}
+		// - 本人の新しい依頼に置き換えられたものは処理せず、後でまとめて解決済みにする
+		if supersededRequestIDs[reqIDHex] {
+			continue
+		}
+
+		// 依頼者(user_info._id)に対応するシフト表上のStaffIDを解決する。
+		// 両者はID体系が異なるため、そのまま突き合わせると常に不一致になる
+		shiftStaffIDs := resolveShiftStaffIDs(cr.StaffID, staffList, settings.ManagerID)
 
 		// 依頼元のシフトがまだそのまま存在するか (スタッフ・曜日・時刻が完全一致するか)。
 		// target_shift_id はあくまで参考情報のため一致判定には使わない
-		originalIdx := findShiftIndex(shifts, cr.StaffID, cr.FromDay, cr.FromStartTime, cr.FromEndTime)
+		originalIdx := findShiftIndex(shifts, shiftStaffIDs, cr.FromDay, cr.FromStartTime, cr.FromEndTime)
 		if originalIdx == -1 {
-			staleCount++
+			staleRequestIDs[reqIDHex] = true
 			continue
 		}
 
@@ -932,7 +1154,7 @@ requestLoop:
 		swapWithIdx := -1
 		required := settings.Settings.RequiredStaffCount[cr.ToDay].Count
 		if required > 0 {
-			occupants := findOccupants(shifts, cr.ToDay, cr.ToStartTime, cr.ToEndTime, cr.StaffID)
+			occupants := findOccupants(shifts, cr.ToDay, cr.ToStartTime, cr.ToEndTime, shiftStaffIDs)
 			if len(occupants) >= required {
 				if hasResolution && resolution.Action == changeRequestActionSwap {
 					swapWithIdx = findShiftIndexByStaff(shifts, resolution.TargetStaffID, cr.ToDay, cr.ToStartTime, cr.ToEndTime)
@@ -958,7 +1180,7 @@ requestLoop:
 		}
 
 		// --- 衝突③: 依頼者本人の他のシフトと時間が重ならないか ---
-		if hasOtherOverlappingShift(shifts, cr.StaffID, originalIdx, cr.ToDay, cr.ToStartTime, cr.ToEndTime) {
+		if hasOtherOverlappingShift(shifts, shiftStaffIDs, originalIdx, cr.ToDay, cr.ToStartTime, cr.ToEndTime) {
 			if !hasResolution || resolution.Action != changeRequestActionConfirmOverlap {
 				conflict = &changeRequestConflict{
 					Type: changeRequestConflictTypeSelfOverlap, RequestID: reqIDHex, StaffName: cr.StaffName,
@@ -982,21 +1204,47 @@ requestLoop:
 
 	// 衝突で止まった場合でも、そこまでに確定した分は必ずコミットする
 	// (ウィザードを途中でやめても、既に答えた分が失われないようにするため)
+	// ただし反映先はあくまで下書き。スタッフに見える確定版へは「確定」を押すまで反映されない
 	if len(appliedRequestIDs) > 0 {
 		if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), shifts); err != nil {
 			utils.RespondWithError(w, "Failed to apply shift changes", http.StatusInternalServerError)
 			return
 		}
 		for id := range appliedRequestIDs {
-			if err := h.changeRequestRepo.ResolveRequest(id); err != nil {
-				log.Printf("Failed to resolve shift change request %s after applying: %v", id, err)
+			if err := h.changeRequestRepo.MarkRequestApplied(id); err != nil {
+				log.Printf("Failed to mark shift change request %s as applied: %v", id, err)
 			}
+		}
+	}
+
+	// 適用されなかったが、そのままにしておくと永久に未対応として残り続ける依頼を片付ける
+	// - superseded: 本人が出し直したため、古い方はもう本人の意思ではない
+	// - stale: 依頼元のシフトが既に無く、この先も適用されることはない
+	// 衝突で中断した場合、まだ判定されていない依頼が残っているため stale は確定扱いにしない
+	// これらもマネージャーの判断なので applied 止まりにし、確定と同時にスタッフへ見せる
+	resolvedAsObsolete := 0
+	for id := range supersededRequestIDs {
+		if err := h.changeRequestRepo.MarkRequestApplied(id); err != nil {
+			log.Printf("Failed to mark superseded shift change request %s as applied: %v", id, err)
+			continue
+		}
+		resolvedAsObsolete++
+	}
+	staleResolved := 0
+	if conflict == nil {
+		for id := range staleRequestIDs {
+			if err := h.changeRequestRepo.MarkRequestApplied(id); err != nil {
+				log.Printf("Failed to mark stale shift change request %s as applied: %v", id, err)
+				continue
+			}
+			staleResolved++
 		}
 	}
 
 	utils.RespondWithJSON(w, changeRequestApplyResult{
 		AppliedCount:      len(appliedRequestIDs),
-		SkippedStaleCount: staleCount,
+		SupersededCount:   resolvedAsObsolete,
+		SkippedStaleCount: staleResolved,
 		Done:              conflict == nil,
 		Conflict:          conflict,
 	}, http.StatusOK)
@@ -1004,13 +1252,52 @@ requestLoop:
 
 // findShiftIndex スタッフ・曜日・開始/終了時刻が完全一致するシフトを探す
 // (修正依頼の元になったシフトが、まだそのまま存在するかの確認に使う)
-func findShiftIndex(shifts []models.Shift, staffID primitive.ObjectID, day, startTime, endTime string) int {
+func findShiftIndex(shifts []models.Shift, staffIDs []primitive.ObjectID, day, startTime, endTime string) int {
 	for i, s := range shifts {
-		if s.StaffID == staffID && s.Day == day && s.StartTime == startTime && s.EndTime == endTime {
+		if containsObjectID(staffIDs, s.StaffID) && s.Day == day && s.StartTime == startTime && s.EndTime == endTime {
 			return i
 		}
 	}
 	return -1
+}
+
+// resolveShiftStaffIDs 修正依頼の依頼者(user_info._id)に対応する、シフト表上のStaffID候補を返す
+//
+// シフトのStaffIDと修正依頼のStaffIDは別のID体系である点に注意:
+//   - Shift.StaffID       : 通常は store_staff_info._id。ただしstore_staff_infoを持たない
+//     マネージャーのシフトには user_info._id (= ManagerID) がそのまま入る
+//   - ShiftChangeRequest.StaffID : 常に user_info._id (依頼作成時の認証ユーザー)
+//
+// 両体系がデータ上混在しうるため、単一の値ではなく候補集合として扱う
+func resolveShiftStaffIDs(requesterID primitive.ObjectID, staffList []map[string]interface{}, managerID string) []primitive.ObjectID {
+	ids := make([]primitive.ObjectID, 0, 2)
+
+	for _, entry := range staffList {
+		userID, ok := entry["user_id"].(primitive.ObjectID)
+		if !ok || userID != requesterID {
+			continue
+		}
+		if staffDocID, ok := entry["_id"].(primitive.ObjectID); ok {
+			ids = append(ids, staffDocID)
+		}
+	}
+
+	// - store_staff_info を持たないマネージャーのシフトは user_info._id で登録されているため、
+	//   依頼者がマネージャー本人の場合はその値も候補に含める
+	if managerID != "" && requesterID.Hex() == managerID {
+		ids = append(ids, requesterID)
+	}
+
+	return ids
+}
+
+func containsObjectID(ids []primitive.ObjectID, target primitive.ObjectID) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
 }
 
 // findShiftIndexByStaff 指定スタッフの、指定曜日・時間帯に重なるシフトを探す
@@ -1034,7 +1321,7 @@ func findShiftIndexByStaff(shifts []models.Shift, staffIDHex, day, startTime, en
 
 // findOccupants 指定曜日・時間帯に重なる、excludeStaffID以外のシフトを全て返す
 // (定員超過かどうかの判定、およびスワップ候補一覧の表示に使う)
-func findOccupants(shifts []models.Shift, day, startTime, endTime string, excludeStaffID primitive.ObjectID) []models.Shift {
+func findOccupants(shifts []models.Shift, day, startTime, endTime string, excludeStaffIDs []primitive.ObjectID) []models.Shift {
 	startMin, ok1 := parseTimeToMinutes(startTime)
 	endMin, ok2 := parseTimeToMinutes(endTime)
 	if !ok1 || !ok2 {
@@ -1042,7 +1329,7 @@ func findOccupants(shifts []models.Shift, day, startTime, endTime string, exclud
 	}
 	var occupants []models.Shift
 	for _, s := range shifts {
-		if s.Day != day || s.StaffID == excludeStaffID {
+		if s.Day != day || containsObjectID(excludeStaffIDs, s.StaffID) {
 			continue
 		}
 		if shiftOverlapsRange(s, startMin, endMin) {
@@ -1054,14 +1341,14 @@ func findOccupants(shifts []models.Shift, day, startTime, endTime string, exclud
 
 // hasOtherOverlappingShift staffIDが、excludeIdx以外のシフトで指定曜日・時間帯と
 // 重なるものを持っているかどうか(依頼者本人の二重予約チェックに使う)
-func hasOtherOverlappingShift(shifts []models.Shift, staffID primitive.ObjectID, excludeIdx int, day, startTime, endTime string) bool {
+func hasOtherOverlappingShift(shifts []models.Shift, staffIDs []primitive.ObjectID, excludeIdx int, day, startTime, endTime string) bool {
 	startMin, ok1 := parseTimeToMinutes(startTime)
 	endMin, ok2 := parseTimeToMinutes(endTime)
 	if !ok1 || !ok2 {
 		return false
 	}
 	for i, s := range shifts {
-		if i == excludeIdx || s.StaffID != staffID || s.Day != day {
+		if i == excludeIdx || !containsObjectID(staffIDs, s.StaffID) || s.Day != day {
 			continue
 		}
 		if shiftOverlapsRange(s, startMin, endMin) {
@@ -1080,6 +1367,11 @@ func findCompetingRequests(pending []models.ShiftChangeRequest, current models.S
 		if other.ID == current.ID {
 			continue
 		}
+		// - 同一人物の重複依頼は「誰を優先するか」の問題ではないため競合として扱わない。
+		//   (新しい方だけを本人の意思とみなす処理が findSupersededRequests 側で行われる)
+		if other.StaffID == current.StaffID {
+			continue
+		}
 		otherIDHex := other.ID.Hex()
 		if skippedThisRun[otherIDHex] || appliedThisRun[otherIDHex] {
 			continue
@@ -1092,6 +1384,35 @@ func findCompetingRequests(pending []models.ShiftChangeRequest, current models.S
 		}
 	}
 	return competitors
+}
+
+// findSupersededRequests 同一人物が同じ枠へ複数の依頼を出している場合に、
+// 古い方の依頼IDを返す
+//
+// 「この日を変えたい」と出した後で「やっぱりこの日のを変えたい」と出し直す運用を想定しており、
+// 後から出した依頼を本人の最終的な意思とみなす。1人が同じ枠へ2つのシフトを移すことは
+// できないため、古い依頼はここで畳んでおかないとマネージャーに
+// 「本人 vs 本人、どちらを優先するか」という無意味な選択を迫ることになる
+func findSupersededRequests(pending []models.ShiftChangeRequest) map[string]bool {
+	superseded := make(map[string]bool)
+	for _, a := range pending {
+		for _, b := range pending {
+			if a.ID == b.ID || a.StaffID != b.StaffID {
+				continue
+			}
+			if a.ToDay != b.ToDay {
+				continue
+			}
+			if !timeRangesOverlap(a.ToStartTime, a.ToEndTime, b.ToStartTime, b.ToEndTime) {
+				continue
+			}
+			// - bの方が新しければ、aは置き換えられたものとして扱う
+			if b.CreatedAt.After(a.CreatedAt) {
+				superseded[a.ID.Hex()] = true
+			}
+		}
+	}
+	return superseded
 }
 
 // timeRangesOverlap 2つの [start, end) 時刻区間("HH:MM")が重なるかどうか
