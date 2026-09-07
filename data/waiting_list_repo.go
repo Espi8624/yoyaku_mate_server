@@ -49,7 +49,9 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 		return cutoffTime
 	}
 
-	weekday := now.Weekday().String()
+	// now.Weekday().String()は"Monday"のように先頭大文字だが、DBのoperating_hoursキーは
+	// "monday"のように小文字保存されているため、そのままでは常にマップ参照が失敗していた
+	weekday := strings.ToLower(now.Weekday().String())
 	dayHours, ok := settings.Settings.OperatingHours[weekday]
 	if !ok || dayHours.Start == "" {
 		if now.Hour() < 4 {
