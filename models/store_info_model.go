@@ -6,26 +6,50 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// 業種タグ定義（店舗登録時必須・設定画面で編集可能）
+const (
+	StoreCategoryRestaurant  = "RESTAURANT"   // 飲食店
+	StoreCategoryCafeDessert = "CAFE_DESSERT" // カフェ・デザート
+	StoreCategoryBeauty      = "BEAUTY"       // 美容室・ビューティー
+	StoreCategoryRetail      = "RETAIL"       // 小売業
+	StoreCategoryOther       = "OTHER"        // その他
+)
+
+var validStoreCategories = map[string]bool{
+	StoreCategoryRestaurant:  true,
+	StoreCategoryCafeDessert: true,
+	StoreCategoryBeauty:      true,
+	StoreCategoryRetail:      true,
+	StoreCategoryOther:       true,
+}
+
+// IsValidStoreCategory は業種タグが許可された値かどうかを検証する
+func IsValidStoreCategory(v string) bool {
+	return validStoreCategories[v]
+}
+
 // store_info モデル
 type Store struct {
-	ID            primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
-	StoreName     string             `bson:"store_name" json:"store_name"`
-	Address       string             `bson:"address" json:"address"`
-	Building      string             `bson:"building" json:"building"`
-	ZipCode       string             `bson:"zip_code,omitempty" json:"zip_code,omitempty"`
-	Prefecture    string             `bson:"prefecture,omitempty" json:"prefecture,omitempty"`
-	City          string             `bson:"city,omitempty" json:"city,omitempty"`
-	Phone         string             `bson:"phone" json:"phone"`
-	UserID        primitive.ObjectID `bson:"user_id" json:"user_id"`
-	StoreID       string             `bson:"store_id" json:"store_id"`
-	StoreImageURL string             `bson:"store_image_url,omitempty" json:"store_image_url,omitempty"`
-	OpeningHours  string             `bson:"opening_hours,omitempty" json:"opening_hours,omitempty"`
-	Timezone      string             `bson:"timezone,omitempty" json:"timezone,omitempty"`
+	ID               primitive.ObjectID `bson:"_id,omitempty" json:"_id"`
+	StoreName        string             `bson:"store_name" json:"store_name"`
+	BusinessCategory string             `bson:"business_category" json:"business_category"`
+	Address          string             `bson:"address" json:"address"`
+	Building         string             `bson:"building" json:"building"`
+	ZipCode          string             `bson:"zip_code,omitempty" json:"zip_code,omitempty"`
+	Prefecture       string             `bson:"prefecture,omitempty" json:"prefecture,omitempty"`
+	City             string             `bson:"city,omitempty" json:"city,omitempty"`
+	Phone            string             `bson:"phone" json:"phone"`
+	UserID           primitive.ObjectID `bson:"user_id" json:"user_id"`
+	StoreID          string             `bson:"store_id" json:"store_id"`
+	StoreImageURL    string             `bson:"store_image_url,omitempty" json:"store_image_url,omitempty"`
+	OpeningHours     string             `bson:"opening_hours,omitempty" json:"opening_hours,omitempty"`
+	Timezone         string             `bson:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
 type StoreWithLicense struct {
 	StoreID            string    `bson:"store_id"            json:"store_id"`
 	StoreName          string    `bson:"store_name"          json:"store_name"`
+	BusinessCategory   string    `bson:"business_category"   json:"business_category"`
 	Address            string    `bson:"address"             json:"address"`
 	Phone              string    `bson:"phone"               json:"phone"`
 	LicenseImageURL    string    `bson:"license_image_url"   json:"license_image_url"`

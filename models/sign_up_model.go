@@ -16,6 +16,7 @@ type SignUpRequest struct {
 	Building                string                   `json:"building,omitempty"`                           // 任意項目
 	StoreID                 string                   `bson:"store_id,omitempty" json:"store_id,omitempty"` // *stringからstringへ変更、bsonタグを追加
 	StoreName               *string                  `json:"store_name,omitempty"`
+	StoreCategory           *string                  `json:"business_category,omitempty"` // 業種タグ（店舗作成時必須）
 	StoreZipCode            *string                  `json:"store_zip_code,omitempty"`
 	StorePrefecture         *string                  `json:"store_prefecture,omitempty"`
 	StoreCity               *string                  `json:"store_city,omitempty"`

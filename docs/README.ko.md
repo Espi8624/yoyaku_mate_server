@@ -26,6 +26,7 @@ docs/
 | [audit-log.ko.md](./features/audit-log.ko.md) | 관리자 행위 감사 로그 자동 기록 및 이력 관리 |
 | [staff-availability.ko.md](./features/staff-availability.ko.md) | 스태프 요일별 근무 가능 시간대 입력·조회·수정 |
 | [shift-table.ko.md](./features/shift-table.ko.md) | 매장 주 단위 시프트표(생성·시프트 추가/수정/삭제·조회) |
+| [store-category.ko.md](./features/store-category.ko.md) | 점포 업종 태그(등록 시 필수 선택·설정 화면에서 변경 가능) |
 
 ---
 

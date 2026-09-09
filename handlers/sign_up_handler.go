@@ -161,6 +161,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 				if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
 					return nil, fmt.Errorf("invalid store phone number format (e.g., 02-123-4567)")
 				}
+				// 業種タグ必須検証
+				if req.StoreCategory == nil || *req.StoreCategory == "" {
+					return nil, fmt.Errorf("business category is required")
+				}
+				if !models.IsValidStoreCategory(*req.StoreCategory) {
+					return nil, fmt.Errorf("Invalid business category")
+				}
 
 				// 店舗電話番号重複検査
 				count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
@@ -172,16 +179,17 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				createdStore := models.Store{
-					ID:         primitive.NewObjectID(),
-					StoreName:  *req.StoreName,
-					Address:    *req.StoreAddress,
-					Building:   utils.GetStringPointerValue(req.StoreBuilding, ""),
-					ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
-					Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
-					City:       utils.GetStringPointerValue(req.StoreCity, ""),
-					Phone:      *req.StoreTelNumber,
-					StoreID:    primitive.NewObjectID().Hex(),
-					UserID:     newUserID,
+					ID:               primitive.NewObjectID(),
+					StoreName:        *req.StoreName,
+					BusinessCategory: *req.StoreCategory,
+					Address:          *req.StoreAddress,
+					Building:         utils.GetStringPointerValue(req.StoreBuilding, ""),
+					ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
+					Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
+					City:             utils.GetStringPointerValue(req.StoreCity, ""),
+					Phone:            *req.StoreTelNumber,
+					StoreID:          primitive.NewObjectID().Hex(),
+					UserID:           newUserID,
 				}
 
 				_, err = storeCollection.InsertOne(sessCtx, createdStore)
@@ -543,6 +551,13 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
 			return nil, fmt.Errorf("invalid store phone number format")
 		}
+		// 業種タグ必須検証
+		if req.StoreCategory == nil || *req.StoreCategory == "" {
+			return nil, fmt.Errorf("business category is required")
+		}
+		if !models.IsValidStoreCategory(*req.StoreCategory) {
+			return nil, fmt.Errorf("invalid business category")
+		}
 		count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
 		if err != nil {
 			return nil, fmt.Errorf("database error during store phone check: %w", err)
@@ -553,16 +568,17 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 		// 新しい店舗データ生成
 		newStore := models.Store{
-			ID:         primitive.NewObjectID(),
-			StoreName:  *req.StoreName,
-			Address:    *req.StoreAddress,
-			Building:   utils.GetStringPointerValue(req.StoreBuilding, ""), // New
-			ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
-			Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
-			City:       utils.GetStringPointerValue(req.StoreCity, ""),
-			Phone:      *req.StoreTelNumber,
-			StoreID:    primitive.NewObjectID().Hex(),
-			UserID:     existingUser.ID,
+			ID:               primitive.NewObjectID(),
+			StoreName:        *req.StoreName,
+			BusinessCategory: *req.StoreCategory,
+			Address:          *req.StoreAddress,
+			Building:         utils.GetStringPointerValue(req.StoreBuilding, ""), // New
+			ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
+			Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
+			City:             utils.GetStringPointerValue(req.StoreCity, ""),
+			Phone:            *req.StoreTelNumber,
+			StoreID:          primitive.NewObjectID().Hex(),
+			UserID:           existingUser.ID,
 		}
 		_, err = storeCollection.InsertOne(sessCtx, newStore)
 		if err != nil {
@@ -634,6 +650,8 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, err.Error(), http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "already exists") {
 			utils.RespondWithError(w, err.Error(), http.StatusConflict)
+		} else if strings.Contains(err.Error(), "required") || strings.Contains(strings.ToLower(err.Error()), "invalid") {
+			utils.RespondWithError(w, err.Error(), http.StatusBadRequest)
 		} else {
 			utils.RespondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
 		}

@@ -719,6 +719,7 @@ func (r *MongoStoreRepo) GetStoresByStatus(status string) ([]models.StoreWithLic
 	projectStage := bson.D{{Key: "$project", Value: bson.D{
 		{Key: "store_id", Value: "$store_id"},
 		{Key: "store_name", Value: "$storeDetails.store_name"},
+		{Key: "business_category", Value: "$storeDetails.business_category"},
 		{Key: "address", Value: "$storeDetails.address"},
 		{Key: "phone", Value: "$storeDetails.phone"},
 		{Key: "license_image_url", Value: "$license_image_url"},

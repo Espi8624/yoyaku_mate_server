@@ -26,6 +26,7 @@ docs/
 | [audit-log.md](./features/audit-log.md) | 管理者操作の監査ログ自動記録および履歴管理 |
 | [staff-availability.md](./features/staff-availability.md) | スタッフの曜日別勤務可能時間帯の入力・照会・修正 |
 | [shift-table.md](./features/shift-table.md) | 店舗の週単位シフト表(作成・シフト追加/修正/削除・照会) |
+| [store-category.md](./features/store-category.md) | 店舗業種タグ(登録時必須選択・設定画面から変更可能) |
 
 ---
 
