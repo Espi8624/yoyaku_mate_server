@@ -20,16 +20,22 @@ import (
 
 const CollectionCounters = "counters"
 
+// 店舗設定が信頼できない場合(取得失敗・形式不正)に使う安全なデフォルトカットオフ時刻
+const (
+	defaultCutoffHour = 4
+	defaultCutoffMin  = 0
+)
+
 // MongoWaitingListRepo 待機リストのMongoDBリポジトリ実装
 type MongoWaitingListRepo struct{}
 
 // Helper: 店舗の営業開始時間に基づいて、現在の「営業日」の開始時刻(Cutoff)を計算する
 func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Time) time.Time {
-	defaultCutoff := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
+	defaultCutoff := time.Date(now.Year(), now.Month(), now.Day(), defaultCutoffHour, defaultCutoffMin, 0, 0, now.Location())
 	storeRepo := &MongoStoreRepo{}
 	settings, err := storeRepo.GetSettings(storeID)
 	if err != nil {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
@@ -38,7 +44,7 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 	if settings.Settings.Is24Hours {
 		resetParts := strings.Split(settings.Settings.ResetTime, ":")
 		if len(resetParts) != 2 {
-			resetParts = []string{"06", "00"}
+			resetParts = []string{fmt.Sprintf("%02d", defaultCutoffHour), fmt.Sprintf("%02d", defaultCutoffMin)}
 		}
 		resetHour, _ := strconv.Atoi(resetParts[0])
 		resetMin, _ := strconv.Atoi(resetParts[1])
@@ -54,7 +60,7 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 	weekday := strings.ToLower(now.Weekday().String())
 	dayHours, ok := settings.Settings.OperatingHours[weekday]
 	if !ok || dayHours.Start == "" {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
@@ -62,7 +68,7 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 
 	parts := strings.Split(dayHours.Start, ":")
 	if len(parts) != 2 {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
