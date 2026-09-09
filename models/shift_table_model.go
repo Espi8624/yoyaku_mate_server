@@ -43,4 +43,19 @@ type ShiftTable struct {
 	// HasUnpublishedChanges 下書きに未確定の変更が残っているか (DBには保存せず、GET時に算出)。
 	// マネージャー向けのレスポンスにだけ含める
 	HasUnpublishedChanges bool `bson:"-" json:"has_unpublished_changes"`
+
+	// ShiftShortages 自動配置の結果、必要人員数を満たせなかったブロックの一覧
+	// (DBには保存せず、AutoGenerateShiftsHandlerのレスポンスにのみ算出して含める)
+	ShiftShortages []ShiftShortage `bson:"-" json:"shift_shortages,omitempty"`
+}
+
+// ShiftShortage 特定の曜日・直(交代ブロック)で必要人員数に対して人員が不足している状態
+type ShiftShortage struct {
+	Day        string `bson:"-" json:"day"`         // Weekday定数 (monday..sunday)
+	ShiftIndex int    `bson:"-" json:"shift_index"` // 0-based。その曜日の何番目のブロック(直)か
+	StartTime  string `bson:"-" json:"start_time"`  // "HH:MM"
+	EndTime    string `bson:"-" json:"end_time"`    // "HH:MM"
+	Required   int    `bson:"-" json:"required"`    // 必要人員数
+	Filled     int    `bson:"-" json:"filled"`      // 実際に配置できた人員数
+	Shortage   int    `bson:"-" json:"shortage"`    // 不足人数 (Required - Filled)
 }

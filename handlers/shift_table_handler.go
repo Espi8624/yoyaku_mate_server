@@ -753,6 +753,9 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 	}
 
 	table.Shifts = newShifts
+	// 配置しきれなかったブロック(勤務可能な候補が必要人数に満たなかった等)を
+	// マネージャーに伝えるため、配置結果に対して不足分を算出して添える
+	table.ShiftShortages = computeShiftShortages(newShifts, &settings.Settings)
 	utils.RespondWithJSON(w, table, http.StatusOK)
 }
 
@@ -1886,6 +1889,68 @@ func autoAssignShifts(baseShifts []models.Shift, settings *models.Settings, cand
 	}
 
 	return result
+}
+
+// computeShiftShortages autoAssignShifts が実際に配置した結果(shifts)を、必要人員設定と
+// 突き合わせて、必要人数に届かなかったブロックだけを抽出する。
+// autoAssignShifts 内の曜日→ブロック分割・現員数カウントと同じロジックを使うが、
+// こちらは新規配置は行わず「今の状態がどれだけ足りないか」を読み取るだけの読み取り専用処理
+func computeShiftShortages(shifts []models.Shift, settings *models.Settings) []models.ShiftShortage {
+	var shortages []models.ShiftShortage
+
+	for _, day := range weekdayOrder {
+		if isClosedDay(day, settings.ClosedDays) {
+			continue
+		}
+
+		requirement := settings.RequiredStaffCount[day]
+		required := requirement.Count
+		blockCount := requirement.ShiftChangeCount + 1
+		if required <= 0 || requirement.ShiftChangeCount < 0 {
+			continue
+		}
+
+		dayStart := dayStartMinutes(day, settings)
+		dayEnd := dayEndMinutes(day, settings, dayStart)
+		if dayEnd <= dayStart {
+			continue
+		}
+		totalMinutes := dayEnd - dayStart
+
+		for i := 0; i < blockCount; i++ {
+			blockStart := dayStart + totalMinutes*i/blockCount
+			blockEnd := dayStart + totalMinutes*(i+1)/blockCount
+			if blockEnd <= blockStart {
+				continue
+			}
+
+			// 同じ曜日・時間帯に重なっているスタッフの人数(重複割り当て防止のため人単位で数える)
+			assigned := map[primitive.ObjectID]bool{}
+			for _, s := range shifts {
+				if s.Day != day {
+					continue
+				}
+				if shiftOverlapsRange(s, blockStart, blockEnd) {
+					assigned[s.StaffID] = true
+				}
+			}
+			filled := len(assigned)
+
+			if filled < required {
+				shortages = append(shortages, models.ShiftShortage{
+					Day:        day,
+					ShiftIndex: i,
+					StartTime:  formatMinutesToTime(blockStart),
+					EndTime:    formatMinutesToTime(blockEnd),
+					Required:   required,
+					Filled:     filled,
+					Shortage:   required - filled,
+				})
+			}
+		}
+	}
+
+	return shortages
 }
 
 // maxAutoAssignCombinations 1ブロックあたりに全生成してよい組み合わせ数の上限。

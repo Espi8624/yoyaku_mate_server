@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
@@ -270,6 +271,41 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
 }
 
+// isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
+// - 定休日(closed_days.regular_weekly、shift_table_handler.goのisClosedDayと共通ロジック)なら false
+// - 24時間営業なら true
+// - 当日の営業時間データが無い/不正な場合は、既存店舗の設定不備で誤って受付停止にしないよう true (制限しない)
+// - 閉店時刻が開始時刻以下の場合は日をまたぐ営業(例: 18:00〜翌2:00)とみなして判定する
+func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
+	weekday := strings.ToLower(now.Weekday().String())
+
+	if isClosedDay(weekday, settings.ClosedDays) {
+		return false
+	}
+
+	if settings.Is24Hours {
+		return true
+	}
+
+	hours, ok := settings.OperatingHours[weekday]
+	if !ok || hours.Start == "" || hours.End == "" {
+		return true
+	}
+
+	startMin, okStart := parseTimeToMinutes(hours.Start)
+	endMin, okEnd := parseTimeToMinutes(hours.End)
+	if !okStart || !okEnd {
+		return true
+	}
+
+	nowMin := now.Hour()*60 + now.Minute()
+
+	if endMin <= startMin {
+		return nowMin >= startMin || nowMin < endMin
+	}
+	return nowMin >= startMin && nowMin < endMin
+}
+
 // handleCreateWaitingList 新しい待機リストアイテムの作成(POST)を処理
 func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
 	// - QRトークンの検証
@@ -384,6 +420,16 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		}
 		// - スタッフ/マネージャーによるAppからの登録
 		newWaiting.Source = "app"
+	}
+
+	// - 営業時間外の受付拒否 (QRからの顧客登録のみ対象。マネージャー/スタッフによる
+	//   Appからの手動登録(source=="app")は、閉店直前のウォークイン客対応のため対象外)
+	if newWaiting.Source == "web" && settings != nil {
+		if !isStoreOpenNow(&settings.Settings, now) {
+			log.Printf("Store %s is currently closed (outside operating hours), rejecting web waiting registration", newWaiting.StoreID)
+			http.Error(w, "現在、営業時間外のため、待機受付を行っておりません。", http.StatusForbidden)
+			return
+		}
 	}
 
 	// - ライセンス確認
