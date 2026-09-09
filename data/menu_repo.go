@@ -20,7 +20,7 @@ type MenuRepository interface {
 	InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuList, error)
 	UpdateSingleMenu(menuData map[string]interface{}) (*models.MenuList, error)
 	DeleteSingleMenu(menuID string) error
-	BulkUpdateMenuCategory(storeID, oldCategory, newCategory string) (int64, error)
+	BulkUpdateMenuCategory(storeID, oldCategory, newCategory string, categoryTranslations map[string]string) (int64, error)
 	BulkDeleteMenuCategory(storeID, category string) (int64, error)
 	BulkDeleteAllMenus(storeID string) (int64, error)
 	UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error)
@@ -107,6 +107,7 @@ func (r *MongoMenuRepo) InsertMenuListData(storeID string, menuData []map[string
 				"is_pre_order_available":   getBoolValue(item, "is_pre_order_available"),
 				"title_translations":       item["title_translations"],
 				"description_translations": item["description_translations"],
+				"category_translations":    item["category_translations"],
 			},
 			"$setOnInsert": bson.M{
 				"created_at": parseTimeToString(getStringValue(item, "created_at")),
@@ -201,6 +202,9 @@ func (r *MongoMenuRepo) UpdateSingleMenu(menuData map[string]interface{}) (*mode
 	if val, ok := menuData["description_translations"]; ok {
 		update["$set"].(bson.M)["description_translations"] = val
 	}
+	if val, ok := menuData["category_translations"]; ok {
+		update["$set"].(bson.M)["category_translations"] = val
+	}
 	if imageURL, exists := menuData["menu_image_url"]; exists {
 		if imageURLStr, ok := imageURL.(string); ok {
 			if imageURLStr == "" {
@@ -258,7 +262,7 @@ func (r *MongoMenuRepo) DeleteSingleMenu(menuID string) error {
 }
 
 // BulkUpdateMenuCategory カテゴリー名の一括更新
-func (r *MongoMenuRepo) BulkUpdateMenuCategory(storeID, oldCategory, newCategory string) (int64, error) {
+func (r *MongoMenuRepo) BulkUpdateMenuCategory(storeID, oldCategory, newCategory string, categoryTranslations map[string]string) (int64, error) {
 	collection := db.GetCollection(DatabaseName, CollectionMenuList)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -274,8 +278,9 @@ func (r *MongoMenuRepo) BulkUpdateMenuCategory(storeID, oldCategory, newCategory
 
 	update := bson.M{
 		"$set": bson.M{
-			"category":   newCategory,
-			"updated_at": time.Now().Format(time.RFC3339),
+			"category":              newCategory,
+			"category_translations": categoryTranslations,
+			"updated_at":            time.Now().Format(time.RFC3339),
 		},
 	}
 

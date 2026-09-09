@@ -47,7 +47,9 @@ func RegisterRoutes(
 	api.HandleFunc("/waiting-list/stream-user", waitingHandler.HandleWaitingItemStream)
 
 	api.HandleFunc("/public/store_ai_context", storeAiContextHandler.HandleGet)
-	api.HandleFunc("/public/ai-chat", AIChatHandler).Methods("POST", "OPTIONS")
+	// - システムプロンプトはクライアントから受け取らず、storeAiContextHandler経由でサーバーが自前で構築する
+	aiChatHandler := NewAIChatHandler(storeAiContextHandler)
+	api.HandleFunc("/public/ai-chat", aiChatHandler.Handle).Methods("POST", "OPTIONS")
 
 	// - メニュー一覧の取得は顧客ウェブも利用するため公開 (更新系は点主アプリ専用ルートで処理)
 	api.HandleFunc("/menu-list", menuHandler.Handle).Methods("GET", "OPTIONS")
@@ -127,6 +129,10 @@ func RegisterRoutes(
 	providerApi.HandleFunc("/provider_menu/category/bulk-update", menuHandler.HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/provider_menu/category/bulk-delete", menuHandler.HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
 	providerApi.HandleFunc("/provider_menu/all/bulk-delete", menuHandler.HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
+
+	// - 自動翻訳プロキシ (メニュー名/カテゴリー名/待機メモ)。GEMINI_API_KEYはサーバー側のみが保持する
+	providerApi.HandleFunc("/provider_translate", HandleTranslate).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_translate/multi", HandleTranslateMulti).Methods("POST", "OPTIONS")
 
 	// Staff Management endpoints
 	providerApi.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")

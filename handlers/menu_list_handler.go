@@ -95,6 +95,7 @@ func (h *MenuListHandler) handleGetMenuList(w http.ResponseWriter, r *http.Reque
 			"is_pre_order_available":   item.IsPreOrderAvailable,
 			"title_translations":       item.TitleTranslations,
 			"description_translations": item.DescriptionTranslations,
+			"category_translations":    item.CategoryTranslations,
 		}
 		response = append(response, menuItem)
 	}
@@ -180,6 +181,7 @@ func (h *MenuListHandler) handleUpdateSingleMenu(w http.ResponseWriter, r *http.
 		"is_pre_order_available":   updatedMenu.IsPreOrderAvailable,
 		"title_translations":       updatedMenu.TitleTranslations,
 		"description_translations": updatedMenu.DescriptionTranslations,
+		"category_translations":    updatedMenu.CategoryTranslations,
 	}
 
 	utils.RespondWithJSON(w, menuItem, http.StatusOK)
@@ -261,6 +263,7 @@ func (h *MenuListHandler) HandleBulkSaveMenuList(w http.ResponseWriter, r *http.
 			"is_pre_order_available":   item.IsPreOrderAvailable,
 			"title_translations":       item.TitleTranslations,
 			"description_translations": item.DescriptionTranslations,
+			"category_translations":    item.CategoryTranslations,
 		}
 		response = append(response, menuItem)
 	}
@@ -287,8 +290,9 @@ func (h *MenuListHandler) HandleBulkUpdateCategory(w http.ResponseWriter, r *htt
 	}
 
 	var reqBody struct {
-		OldCategory string `json:"old_category"`
-		NewCategory string `json:"new_category"`
+		OldCategory          string            `json:"old_category"`
+		NewCategory          string            `json:"new_category"`
+		CategoryTranslations map[string]string `json:"category_translations"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -303,7 +307,7 @@ func (h *MenuListHandler) HandleBulkUpdateCategory(w http.ResponseWriter, r *htt
 		return
 	}
 
-	modifiedCount, err := h.menuRepo.BulkUpdateMenuCategory(storeID, reqBody.OldCategory, reqBody.NewCategory)
+	modifiedCount, err := h.menuRepo.BulkUpdateMenuCategory(storeID, reqBody.OldCategory, reqBody.NewCategory, reqBody.CategoryTranslations)
 	if err != nil {
 		log.Printf("Failed to bulk update categories: %v", err)
 		utils.RespondWithError(w, "Failed to bulk update categories", http.StatusInternalServerError)

@@ -18,4 +18,5 @@ type MenuList struct {
 	IsPreOrderAvailable     bool               `bson:"is_pre_order_available" json:"is_pre_order_available"`
 	TitleTranslations       map[string]string  `bson:"title_translations" json:"title_translations"`
 	DescriptionTranslations map[string]string  `bson:"description_translations" json:"description_translations"`
+	CategoryTranslations    map[string]string  `bson:"category_translations" json:"category_translations"`
 }

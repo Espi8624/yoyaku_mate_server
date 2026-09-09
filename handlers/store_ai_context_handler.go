@@ -66,11 +66,24 @@ func (h *StoreAIContextHandler) HandleGet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 1. 店舗基本情報取得
-	store, err := h.storeRepo.GetStoreData(storeID)
+	response, err := h.BuildContext(storeID)
 	if err != nil {
 		utils.RespondWithError(w, "Store not found", http.StatusNotFound)
 		return
+	}
+
+	utils.RespondWithJSON(w, response, http.StatusOK)
+	log.Printf("[AI Context] Served context for store %s (Wait: %d, Time: %dmin, Menus: %d)",
+		storeID, response.CurrentWaitCount, response.EstimatedWaitTime, len(response.Menus))
+}
+
+// BuildContext AIチャットボット用のリアルタイム店舗コンテキストを構築する。
+// HandleGet (顧客ウェブが直接取得する用) と AIChatHandler (プロンプト構築用、サーバー内部呼び出し) の両方から使う。
+func (h *StoreAIContextHandler) BuildContext(storeID string) (*StoreAIContextResponse, error) {
+	// 1. 店舗基本情報取得
+	store, err := h.storeRepo.GetStoreData(storeID)
+	if err != nil {
+		return nil, fmt.Errorf("store not found: %w", err)
 	}
 
 	// 2. 店舗設定情報取得 (最大待機人数、組あたりの待機時間、営業時間、定休日)
@@ -154,7 +167,5 @@ func (h *StoreAIContextHandler) HandleGet(w http.ResponseWriter, r *http.Request
 		AIAdditionalInfo:        aiAdditionalInfo,
 	}
 
-	// 7. JSONレスポンス送信
-	utils.RespondWithJSON(w, response, http.StatusOK)
-	log.Printf("[AI Context] Served context for store %s (Wait: %d, Time: %dmin, Menus: %d)", storeID, currentWaitCount, totalEstimatedTime, len(menuList))
+	return &response, nil
 }

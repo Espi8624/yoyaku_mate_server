@@ -1,20 +1,24 @@
 package handlers
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"log"
 	"net/http"
-	"os"
+
 	"yoyaku_mate_server/utils"
 )
 
-// AIChatRequest フロントエンドから受け取るリクエスト構造体
+// AIChatRequest フロントエンドから受け取るリクエスト構造体。
+// systemPromptは受け取らない — プロンプト自体はサーバー側(buildChatSystemPrompt)のみが組み立てる。
+// クライアントに任意のsystemPromptを組み立てさせると、APIキーの用途をクライアント側で
+// 好きに書き換えられてしまう(プロンプトインジェクション/キー乱用の穴になる)ため。
 type AIChatRequest struct {
+	StoreID      string `json:"storeId"`
 	UserMessage  string `json:"userMessage"`
-	SystemPrompt string `json:"systemPrompt"`
+	Nationality  string `json:"nationality"`
+	LanguageCode string `json:"languageCode"`
+	CurrentPage  string `json:"currentPage"`
 }
 
 // AIChatResponse フロントエンドへ返すレスポンス構造体
@@ -46,95 +50,64 @@ type GeminiResponse struct {
 	} `json:"candidates"`
 }
 
-// AIChatHandler Gemini APIのプロキシエンドポイント
-// POST /api/public/ai-chat
-func AIChatHandler(w http.ResponseWriter, r *http.Request) {
+// AIChatHandler Gemini APIのプロキシハンドラ。
+// システムプロンプトはstoreAIContextHandler経由でサーバーが自前で構築する
+// (店舗情報/メニュー/待機状況もクライアントから受け取らず、サーバーがDBから直接取得する)。
+type AIChatHandler struct {
+	storeAIContextHandler *StoreAIContextHandler
+}
+
+// NewAIChatHandler AIChatHandlerのコンストラクタ
+func NewAIChatHandler(storeAIContextHandler *StoreAIContextHandler) *AIChatHandler {
+	return &AIChatHandler{storeAIContextHandler: storeAIContextHandler}
+}
+
+// Handle POST /api/public/ai-chat
+func (h *AIChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// リクエストボディのパース
 	var req AIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	defer r.Body.Close()
 
+	if req.StoreID == "" {
+		utils.RespondWithError(w, "storeId is required", http.StatusBadRequest)
+		return
+	}
 	if req.UserMessage == "" {
 		utils.RespondWithError(w, "userMessage is required", http.StatusBadRequest)
 		return
 	}
 
-	// APIキーをサーバーサイドの環境変数から取得 (ブラウザには絶対に露出しない)
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		log.Println("[AIChatHandler] ERROR: GEMINI_API_KEY environment variable is not set")
-		utils.RespondWithError(w, "AI service is not configured", http.StatusInternalServerError)
-		return
-	}
-
-	// Gemini APIへ送るリクエストを構築
-	fullPrompt := req.SystemPrompt + "\n\nお客様: " + req.UserMessage
-	geminiReq := GeminiRequest{
-		Contents: []GeminiContent{
-			{
-				Role:  "user",
-				Parts: []GeminiPart{{Text: fullPrompt}},
-			},
-		},
-	}
-
-	reqBody, err := json.Marshal(geminiReq)
+	// 店舗のリアルタイムコンテキスト (メニュー/待機状況/店舗設定) をサーバー内部で取得。
+	// 取得に失敗しても (例: store_idが不正) チャット自体は継続し、コンテキストなしで応答する
+	ctx, err := h.storeAIContextHandler.BuildContext(req.StoreID)
+	hasContext := err == nil
 	if err != nil {
-		utils.RespondWithError(w, "Failed to build AI request", http.StatusInternalServerError)
-		return
+		log.Printf("[AIChatHandler] Failed to build store context for %s: %v", req.StoreID, err)
 	}
 
-	// Gemini API呼び出し
-	geminiURL := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s",
-		apiKey,
-	)
+	systemPrompt := buildChatSystemPrompt(ctx, hasContext, req.Nationality, req.LanguageCode, req.CurrentPage)
+	fullPrompt := systemPrompt + "\n\nお客様: " + req.UserMessage
 
-	resp, err := http.Post(geminiURL, "application/json", bytes.NewBuffer(reqBody))
+	replyText, err := callGeminiForText(fullPrompt)
 	if err != nil {
-		log.Printf("[AIChatHandler] Gemini API request failed: %v", err)
-		utils.RespondWithError(w, "Failed to reach AI service", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Gemini APIのレート制限エラーを処理
-	if resp.StatusCode == http.StatusTooManyRequests {
-		utils.RespondWithError(w, "AI service is busy. Please try again later.", http.StatusTooManyRequests)
-		return
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("[AIChatHandler] Gemini API returned status %d: %s", resp.StatusCode, string(body))
+		if errors.Is(err, errGeminiRateLimited) {
+			utils.RespondWithError(w, "AI service is busy. Please try again later.", http.StatusTooManyRequests)
+			return
+		}
+		log.Printf("[AIChatHandler] %v", err)
 		utils.RespondWithError(w, "AI service error", http.StatusBadGateway)
 		return
 	}
-
-	// レスポンスのパースと返却
-	var geminiResp GeminiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		utils.RespondWithError(w, "Failed to parse AI response", http.StatusInternalServerError)
-		return
-	}
-
-	replyText := "すみません、うまく聞き取れませんでした。"
-	if len(geminiResp.Candidates) > 0 {
-		// thinking モデルは parts[0] に thought パートが来る場合があるため、
-		// thought フラグが false の最初のテキストパートを実際の返答として使用する
-		for _, part := range geminiResp.Candidates[0].Content.Parts {
-			if !part.Thought && part.Text != "" {
-				replyText = part.Text
-				break
-			}
-		}
+	if replyText == "" {
+		replyText = "すみません、うまく聞き取れませんでした。"
 	}
 
 	utils.RespondWithJSON(w, AIChatResponse{Reply: replyText}, http.StatusOK)
