@@ -113,6 +113,22 @@ func EnsureIndexes() error {
 	}
 	log.Println("Created compound index: idx_store_reg_time on waiting_list")
 
+	// 個別待機アイテムの照会用複合インデックス: store_id + waiting_id
+	// - CreateItemの重複登録チェック、UpdateItemStatus、UpdateWaitingStatusが
+	//   全てこの組み合わせでフィルタしており、待機通知のたびに呼ばれるホットパスのため必須
+	waitingIDIndexModel := mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "store_id", Value: 1},
+			{Key: "waiting_id", Value: 1},
+		},
+		Options: options.Index().SetName("idx_store_waiting_id"),
+	}
+	if _, err := collection.Indexes().CreateOne(ctx, waitingIDIndexModel); err != nil {
+		log.Printf("Failed to create idx_store_waiting_id index: %v", err)
+	} else {
+		log.Println("Created compound index: idx_store_waiting_id on waiting_list")
+	}
+
 	errorLogsCollection := GetCollection(DatabaseName, CollectionErrorLogs)
 	if errorLogsCollection != nil {
 		ttlIndexModel := mongo.IndexModel{

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"yoyaku_mate_server/db"
@@ -26,7 +27,20 @@ const (
 	defaultCutoffMin  = 0
 )
 
+// autoExpireCheckInterval AutoExpireWaitingItemsの最小実行間隔(店舗ごと)
+// - GetWaitingListは通知・ポーリング・SSE初期送信のたびに毎回呼ばれ、以前はその都度
+//   対象0件でもUpdateManyを実行していた。no_showへの遷移は営業日切替の瞬間にしか
+//   発生しないため、この間隔で十分間に合う
+const autoExpireCheckInterval = 1 * time.Minute
+
+var (
+	lastAutoExpireRun   = make(map[string]time.Time)
+	lastAutoExpireRunMu sync.Mutex
+)
+
 // MongoWaitingListRepo 待機リストのMongoDBリポジトリ実装
+// - 呼び出し側は毎回 &MongoWaitingListRepo{} を新規生成するため、上記スロットリング状態は
+//   インスタンスではなくパッケージレベルで保持し、全インスタンスで共有する
 type MongoWaitingListRepo struct{}
 
 // Helper: 店舗の営業開始時間に基づいて、現在の「営業日」の開始時刻(Cutoff)を計算する
@@ -170,6 +184,16 @@ func (r *MongoWaitingListRepo) GetWaitingList(storeID string) ([]models.WaitingL
 
 // AutoExpireWaitingItems 期限切れデータの自動更新
 func (r *MongoWaitingListRepo) AutoExpireWaitingItems(storeID string) error {
+	// - GetWaitingList呼び出しのたびに(対象0件でも)UpdateManyを発行していたのを、
+	//   店舗ごとにautoExpireCheckInterval間隔でスキップするよう間引く
+	lastAutoExpireRunMu.Lock()
+	if last, ok := lastAutoExpireRun[storeID]; ok && time.Since(last) < autoExpireCheckInterval {
+		lastAutoExpireRunMu.Unlock()
+		return nil
+	}
+	lastAutoExpireRun[storeID] = time.Now()
+	lastAutoExpireRunMu.Unlock()
+
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

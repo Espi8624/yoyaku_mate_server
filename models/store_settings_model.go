@@ -11,6 +11,8 @@ type StoreSetting struct {
 	ManagerName string   `bson:"-" json:"manager_name,omitempty"`
 	Settings    Settings `bson:"settings" json:"settings"`
 	UpdatedAt   string   `bson:"updated_at" json:"updated_at"`
+	// BoardKey QRトークン発行(action=qr_token)専用の店舗別シークレット。公開GETには絶対含めない
+	BoardKey *string `bson:"board_key,omitempty" json:"-"`
 }
 
 type Settings struct {

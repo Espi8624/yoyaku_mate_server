@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -143,6 +144,10 @@ func (h *WaitingListHandler) HandlePolling(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !h.hasActiveStaffSession(r) {
+		waitingList = redactContacts(waitingList)
+	}
+
 	utils.RespondWithJSON(w, waitingList, http.StatusOK)
 }
 
@@ -153,6 +158,9 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
+
+	// - 接続時に1回だけスタッフセッションかどうかを判定し、この接続の生存中はその判定を使い回す
+	isStaff := h.hasActiveStaffSession(r)
 
 	// - SSE用ヘッダーを設定
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -190,10 +198,27 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 			})
 			return
 		case msg := <-clientChan:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+			fmt.Fprintf(w, "data: %s\n\n", h.filterStreamMessage(msg, isStaff))
 			w.(http.Flusher).Flush()
 		}
 	}
+}
+
+// filterStreamMessage スタッフ接続以外にはcontact(個人情報)を除去したJSONを返す。
+// ":ping"等の非JSONメッセージ(ハートビート、events/broker.go参照)はパース失敗として原文のまま通す
+func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) string {
+	if isStaff {
+		return msg
+	}
+	var list []models.WaitingList
+	if err := json.Unmarshal([]byte(msg), &list); err != nil {
+		return msg
+	}
+	redacted, err := json.Marshal(redactContacts(list))
+	if err != nil {
+		return msg
+	}
+	return string(redacted)
 }
 
 // HandleWaitingItemStream 個別の待機顧客のリアルタイムステータス変化を監視するSSEを処理
@@ -268,7 +293,37 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 		return
 	}
 
+	// - 有効なスタッフセッション(X-Session-Id)が無い場合は contact(電話番号)を除去したコピーを返す
+	//   注意: 「有効な端末セッションが存在する」ことのみ確認し、当該store_idへのスタッフ権限までは
+	//   検証しない(簡易な公開/非公開の判定に留める、既知の限界)
+	if !h.hasActiveStaffSession(r) {
+		waitingListData = redactContacts(waitingListData)
+	}
+
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
+}
+
+// hasActiveStaffSession X-Session-Idヘッダーの有効セッション有無でスタッフ由来かを簡易判定する
+func (h *WaitingListHandler) hasActiveStaffSession(r *http.Request) bool {
+	sessionID := r.Header.Get("X-Session-Id")
+	if sessionID == "" {
+		return false
+	}
+	session, err := h.sessionRepo.FindBySessionID(sessionID)
+	if err != nil || session == nil {
+		return false
+	}
+	return session.IsActive()
+}
+
+// redactContacts 匿名アクセス向けにcontact(個人情報)を除去したコピーを返す。元スライスは変更しない
+func redactContacts(list []models.WaitingList) []models.WaitingList {
+	redacted := make([]models.WaitingList, len(list))
+	copy(redacted, list)
+	for i := range redacted {
+		redacted[i].Contact = nil
+	}
+	return redacted
 }
 
 // isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
@@ -652,6 +707,16 @@ func (h *WaitingListHandler) handleGetQRToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// - board_key検証: store_idだけでは誰でもトークンを発行できてしまうため、
+	//   点主アプリが認証済みで発行したboard_keyと一致する場合のみ許可する
+	boardKey := r.URL.Query().Get("board_key")
+	settings, err := h.storeRepo.GetSettings(storeID)
+	if err != nil || boardKey == "" || settings.BoardKey == nil ||
+		subtle.ConstantTimeCompare([]byte(boardKey), []byte(*settings.BoardKey)) != 1 {
+		utils.RespondWithError(w, "Invalid board_key", http.StatusForbidden)
+		return
+	}
+
 	// - JST基準の日付 (Dynamic Cutoff)
 	jst := time.FixedZone("JST", 9*60*60)
 	now := time.Now().In(jst)
@@ -694,15 +759,17 @@ func (h *WaitingListHandler) notifyStore(storeID string) {
 	h.broker.Broadcast(storeID, string(jsonData))
 
 	// - 個別待機ユーザー用SSEにもアップデートを送信
-	h.notifyWaitingUsers(storeID)
+	//   (取得済みのwaitingListをそのまま再利用し、接続顧客数分のDB再照会を回避)
+	h.notifyWaitingUsers(storeID, waitingList)
 }
 
 // notifyWaitingUsers 指定店舗の全アクティブな待機顧客にアップデートを送信する
-func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
-	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
-	if err != nil {
-		log.Printf("Error fetching waiting list for notifying users: %v", err)
-		return
+// waitingList: notifyStoreで取得済みのリストを受け取り、顧客ごとのGetWaitingList再照会を避ける
+func (h *WaitingListHandler) notifyWaitingUsers(storeID string, waitingList []models.WaitingList) {
+	// - 店舗設定からチームあたりの時間を一度だけ取得(顧客ごとの再照会を回避)
+	minutesPerTeam := 10
+	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
 	}
 
 	for _, item := range waitingList {
@@ -714,7 +781,7 @@ func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
 		h.userBroker.Mutex.RUnlock()
 
 		if clientsExist {
-			res, err := h.getWaitingUserResponse(storeID, item.WaitingID)
+			res, err := buildWaitingUserResponse(waitingList, item.WaitingID, minutesPerTeam)
 			if err != nil {
 				log.Printf("Error generating response for active client %s: %v", key, err)
 				continue
@@ -731,13 +798,24 @@ func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
 	}
 }
 
-// getWaitingUserResponse 特定の待機アイテムの詳細応答データを構築する
+// getWaitingUserResponse 特定の待機アイテムの詳細応答データを構築する(DBから1回だけ取得)
+// SSE接続開始時の初期データ送信など、単発の照会でのみ使用する
 func (h *WaitingListHandler) getWaitingUserResponse(storeID string, waitingID string) (*WaitingUserResponse, error) {
 	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 	if err != nil {
 		return nil, err
 	}
 
+	minutesPerTeam := 10
+	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+	}
+
+	return buildWaitingUserResponse(waitingList, waitingID, minutesPerTeam)
+}
+
+// buildWaitingUserResponse 取得済みの待機リストから特定顧客向けの応答データを組み立てる(DB非照会)
+func buildWaitingUserResponse(waitingList []models.WaitingList, waitingID string, minutesPerTeam int) (*WaitingUserResponse, error) {
 	var details *models.WaitingList
 	for i := range waitingList {
 		if waitingList[i].WaitingID == waitingID {
@@ -769,12 +847,6 @@ func (h *WaitingListHandler) getWaitingUserResponse(storeID string, waitingID st
 			waitingCount = i
 			break
 		}
-	}
-
-	// - 店舗設定からチームあたりの時間を取得
-	minutesPerTeam := 10
-	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
-		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
 	}
 
 	return &WaitingUserResponse{

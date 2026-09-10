@@ -98,26 +98,55 @@ func (b *Broker) startHeartbeat() {
 	}
 }
 
-// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を即座に削除します
-// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
-func (b *Broker) pingAndClean() {
-	b.Mutex.Lock()
-	defer b.Mutex.Unlock()
+// zombieChannel pingAndClean内でゾンビ判定されたチャネルを削除フェーズまで保持するための記録
+type zombieChannel struct {
+	storeID string
+	ch      chan string
+}
 
+// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を削除します
+// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
+//
+// - 以前は走査中ずっと排他Lockを保持しており、全店舗分のping送信が終わるまでBroadcast(RLock)が
+//   待たされ、店舗数・接続数が増えるほど全店舗の配信が周期的に詰まる原因になっていた。
+// - 送信は非ブロッキング(select-default)でマップを書き換えないため、RLockで走査すれば
+//   Broadcastとは同時実行できる。ゾンビ削除だけを短時間の排他Lockに分離する。
+func (b *Broker) pingAndClean() {
+	b.Mutex.RLock()
+	var zombies []zombieChannel
 	for storeID, clients := range b.Clients {
 		for ch := range clients {
 			select {
 			case ch <- ":ping":
 				// 正常チャネル: keep-aliveを維持
 			default:
-				// チャネルブロック = ゾンビ接続 → 即座に削除
-				delete(clients, ch)
-				delete(b.connectedAt, ch)
-				close(ch)
+				// チャネルブロック = ゾンビ接続 → 削除対象として記録(走査中はまだ削除しない)
+				zombies = append(zombies, zombieChannel{storeID, ch})
 			}
 		}
+	}
+	b.Mutex.RUnlock()
+
+	if len(zombies) == 0 {
+		return
+	}
+
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	for _, z := range zombies {
+		clients, ok := b.Clients[z.storeID]
+		if !ok {
+			continue
+		}
+		// - RUnlockからLock取得までの間にRemoveClientで既に正常削除されている可能性があるため確認
+		if _, exists := clients[z.ch]; !exists {
+			continue
+		}
+		delete(clients, z.ch)
+		delete(b.connectedAt, z.ch)
+		close(z.ch)
 		if len(clients) == 0 {
-			delete(b.Clients, storeID)
+			delete(b.Clients, z.storeID)
 		}
 	}
 }

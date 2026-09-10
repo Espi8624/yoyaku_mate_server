@@ -152,6 +152,8 @@ func main() {
 
 	// Rate Limiting Middleware (5 requests per second per IP)
 	// Burst of 10 to allow parallel requests (like images/css or multiple API calls)
+	// - tollboothはデフォルトで (IP, パス) の組ごとにバケットを分けるため、他エンドポイントとは
+	//   独立してカウントされる(エンドポイント間で予算を共有するわけではない)
 	lmt := tollbooth.NewLimiter(5, nil)
 	lmt.SetBurst(10)
 
@@ -162,7 +164,37 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 	})
 
-	rateLimitedHandler := tollbooth.LimitHandler(lmt, handler)
+	// - リアルタイム待機列エンドポイント(SSE購読・ポーリング)専用の緩いレートリミッター
+	//   同一店舗Wi-Fi/NAT配下では複数客が同一IPとして扱われ、同じパスのバケットを取り合うことになる。
+	//   これら3エンドポイントは書き込みを伴わない読み取り専用のため、上限を引き上げて
+	//   通常利用で429→再接続ループ(体感の「固まり」)が起きるのを防ぐ
+	realtimeLmt := tollbooth.NewLimiter(30, nil)
+	realtimeLmt.SetBurst(60)
+	realtimeLmt.SetMessage(`{"status": "error", "message": "Too Many Requests"}`)
+	realtimeLmt.SetStatusCode(http.StatusTooManyRequests)
+	realtimeLmt.SetOnLimitReached(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+	})
+
+	realtimeQueuePaths := map[string]bool{
+		"/api/waiting-list/stream":      true,
+		"/api/waiting-list/stream-user": true,
+		"/api/waiting-list/poll":        true,
+	}
+
+	rateLimitedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		activeLmt := lmt
+		if realtimeQueuePaths[r.URL.Path] {
+			activeLmt = realtimeLmt
+		}
+		if httpErr := tollbooth.LimitByRequest(activeLmt, w, r); httpErr != nil {
+			activeLmt.ExecOnLimitReached(w, r)
+			w.WriteHeader(httpErr.StatusCode)
+			_, _ = w.Write([]byte(httpErr.Message))
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
 
 	// Start server
 	log.Printf("Server starting on %s...", cfg.Server.Port)

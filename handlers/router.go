@@ -114,6 +114,8 @@ func RegisterRoutes(
 	// - 店舗情報・店舗設定の更新 (GETは公開ルートで処理)
 	providerApi.HandleFunc("/provider_store", storeInfoHandler.UpdateStoreHandler).Methods("PUT", "OPTIONS")
 	providerApi.HandleFunc("/store_settings", storeSettingsHandler.UpdateStoreSettingsHandler).Methods("PUT", "OPTIONS")
+	// - モニターボードのQRトークン発行を認可するための店舗別シークレット。未設定なら初回アクセス時に生成
+	providerApi.HandleFunc("/store_settings/board_key", storeSettingsHandler.GetBoardKeyHandler).Methods("GET", "OPTIONS")
 	providerApi.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/provider_store/license", storeLicenseCallHandler.GetStoreLicenseHandler)
 	providerApi.HandleFunc("/provider_stores/store-list", storeListHandler.GetMyStoresHandler)
