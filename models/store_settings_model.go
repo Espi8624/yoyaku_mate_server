@@ -26,6 +26,10 @@ type Settings struct {
 	// ExcludeManagerFromShiftTable マネージャーをシフト自動配置の対象から除外するか。
 	// 未設定(既存ドキュメント)は false = 除外しない(＝これまで通りマネージャーを含める)
 	ExcludeManagerFromShiftTable bool `bson:"exclude_manager_from_shift_table" json:"exclude_manager_from_shift_table"`
+	// SupportedLanguages メニュー等の自動翻訳対象言語。日本語・英語・韓国語は
+	// クライアント側で常時固定されており、ここには追加で有効化された言語のみが増える想定。
+	// 未設定(既存ドキュメント)はomitemptyで省略され、クライアント側がデフォルト値([ja,en,ko])を補う
+	SupportedLanguages []string `bson:"supported_languages,omitempty" json:"supported_languages,omitempty"`
 }
 
 type StoreDayHours struct {
@@ -56,4 +60,8 @@ type WaitingPolicy struct {
 	EstimatedWaitTime       int  `bson:"estimated_wait_time" json:"estimated_wait_time"`
 	EnableMenuSelection     bool `bson:"enable_menu_selection" json:"enable_menu_selection"`
 	RequireOneMenuPerPerson bool `bson:"require_one_menu_per_person" json:"require_one_menu_per_person"`
+	// ShowMenu 待機画面(QRページ)でのメニュー閲覧表示可否。
+	// ポインタ型なのは、未設定(既存ドキュメント)とfalse明示を区別し、
+	// 未設定時はデフォルトtrue(表示)として扱うため(クライアント側で `?? true` 解決)
+	ShowMenu *bool `bson:"show_menu,omitempty" json:"show_menu,omitempty"`
 }

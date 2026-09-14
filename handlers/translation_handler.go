@@ -167,6 +167,9 @@ func HandleTranslate(w http.ResponseWriter, r *http.Request) {
 // ==========================================================
 
 var geminiLanguageNames = map[string]string{
+	// メニュー入力者が日本語話者とは限らない(外国人スタッフの可能性がある)ため、
+	// 日本語もクライアント側から翻訳対象言語として送られてくることがある
+	"ja":    "Japanese",
 	"en":    "English",
 	"ko":    "Korean",
 	"zh":    "Chinese (Simplified)",
