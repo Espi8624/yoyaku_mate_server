@@ -182,9 +182,22 @@ func main() {
 		"/api/waiting-list/poll":        true,
 	}
 
+	// - 管理者ログインは共有パスワード方式のため、総当たり攻撃を緩和する目的で
+	//   デフォルトより厳しいレートリミットを別途適用する
+	loginLmt := tollbooth.NewLimiter(1, nil)
+	loginLmt.SetBurst(3)
+	loginLmt.SetMessage(`{"status": "error", "message": "Too Many Requests"}`)
+	loginLmt.SetStatusCode(http.StatusTooManyRequests)
+	loginLmt.SetOnLimitReached(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+	})
+
 	rateLimitedHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		activeLmt := lmt
-		if realtimeQueuePaths[r.URL.Path] {
+		switch {
+		case r.URL.Path == "/api/admin/auth/login":
+			activeLmt = loginLmt
+		case realtimeQueuePaths[r.URL.Path]:
 			activeLmt = realtimeLmt
 		}
 		if httpErr := tollbooth.LimitByRequest(activeLmt, w, r); httpErr != nil {

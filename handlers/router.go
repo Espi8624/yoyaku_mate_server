@@ -79,8 +79,14 @@ func RegisterRoutes(
 	// - プロフィール取得。セッション確立前(アプリ起動直後)にも呼ばれるため対象外
 	api.HandleFunc("/provider_user/firebase_uid", userInfoHandler.UserByFirebaseUIDHandler)
 
+	// - 管理者ログインの起点。このエンドポイント自体がセッショントークンを発行するため、
+	//   adminApiの認証ミドルウェアの対象にはできない
+	api.HandleFunc("/admin/auth/login", AdminLoginHandler).Methods("POST", "OPTIONS")
+
 	// Admin endpoints
 	adminApi := api.PathPrefix("/admin").Subrouter()
+	// 共有パスワードログインで発行されたセッショントークンを検証(未認証アクセスを遮断)
+	adminApi.Use(RequireAdminAuthMiddleware)
 	// Admin専用監査ログミドルウェア（MetricsMiddlewareと独立して適用）
 	adminApi.Use(metrics.AuditMiddleware)
 

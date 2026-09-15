@@ -13,5 +13,7 @@
         ],
         "url": "http://localhost:8080"
     },
-    "hmacSecret": "your-random-hmac-security-secret-key"
+    "hmacSecret": "your-random-hmac-security-secret-key",
+    "adminPassword": "your-admin-shared-password",
+    "adminTokenSecret": "your-random-admin-token-signing-secret"
 }

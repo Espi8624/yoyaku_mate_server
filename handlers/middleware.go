@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"yoyaku_mate_server/auth"
+	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 )
@@ -154,6 +155,40 @@ func VerifySessionForUser(w http.ResponseWriter, r *http.Request, repo Middlewar
 		log.Printf("Failed to touch session last_seen: %v", err)
 	}
 	return true
+}
+
+// RequireAdminAuthMiddleware 管理者画面(yoyaku_mate_admin)の共有パスワードログインで発行された
+// 署名付きセッショントークンを検証するミドルウェア。
+// - RequireAuthMiddleware(Firebase個人アカウント)とは別の仕組み: 少人数の共有パスワード運用を想定している
+// - DB/メモリにセッションを保持せず、トークン自体の署名と有効期限だけで検証する(自己検証トークン)
+func RequireAdminAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// - CORSプリフライトは認証情報を伴わないため検証対象外
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if token == authHeader {
+			utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+			return
+		}
+
+		secret := config.Get().AdminTokenSecret
+		if secret == "" || !utils.VerifyAdminSessionToken(secret, token) {
+			utils.RespondWithError(w, "Invalid or expired admin session", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // GetUserFromContext 認証ミドルウェアが格納したユーザー情報をcontextから取り出すヘルパー

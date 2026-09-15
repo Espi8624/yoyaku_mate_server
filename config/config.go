@@ -22,6 +22,10 @@ type Config struct {
 	} `json:"server"`
 	R2         R2Config `json:"r2"`
 	HMACSecret string   `json:"hmacSecret"`
+	// - 管理者画面(yoyaku_mate_admin)の共有ログインパスワード。空の場合はログイン自体を拒否する(安全側デフォルト)
+	AdminPassword string `json:"adminPassword"`
+	// - 管理者セッショントークンの署名鍵。HMACSecretとは用途が異なるため別鍵として分離する
+	AdminTokenSecret string `json:"adminTokenSecret"`
 }
 
 type R2Config struct {
@@ -48,7 +52,9 @@ func Load() Config {
 	// configファイルが存在しない場合(本番コンテナ等)でも、その下の環境変数
 	// オーバーライドは必ず適用したいため、ここでは早期returnせずcfgをデフォルト
 	// 値で初期化しておき、ファイルが読めた場合のみ上書きする
-	cfg := getDefaultConfig()
+	// - ":="で新規宣言すると40行目のパッケージ変数cfgをシャドーイングしてしまい、
+	//   Get()が常にゼロ値を返す不具合になるため、必ず"="で代入する
+	cfg = getDefaultConfig()
 
 	// ローカル起動時は相対パス "config/xxx.json" を先に確認
 	configPath := filepath.Join("config", fileName)
@@ -99,6 +105,14 @@ func Load() Config {
 	if hmacSecret := os.Getenv("HMAC_SECRET"); hmacSecret != "" {
 		cfg.HMACSecret = hmacSecret
 		log.Println("Using HMAC_SECRET from environment variable")
+	}
+	if adminPassword := os.Getenv("ADMIN_PASSWORD"); adminPassword != "" {
+		cfg.AdminPassword = adminPassword
+		log.Println("Using ADMIN_PASSWORD from environment variable")
+	}
+	if adminTokenSecret := os.Getenv("ADMIN_TOKEN_SECRET"); adminTokenSecret != "" {
+		cfg.AdminTokenSecret = adminTokenSecret
+		log.Println("Using ADMIN_TOKEN_SECRET from environment variable")
 	}
 
 	cfg.R2 = R2Config{
