@@ -30,6 +30,10 @@ func RegisterRoutes(
 	// ローカルファイルアップロードの静的ファイルサービングを設定
 	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
+	// - 外部の死活監視サービス(UptimeRobot等)がpingするための無認証ヘルスチェック。
+	//   /api配下ではなくルート直下に置き、業務APIと明確に区別する
+	r.HandleFunc("/health", HealthHandler).Methods("GET")
+
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 

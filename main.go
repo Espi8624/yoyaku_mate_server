@@ -32,6 +32,10 @@ func main() {
 		log.Printf("MongoDB初期化失敗: %v", err)
 	}
 
+	// - エラー率/応答時間/CPU使用率の閾値超過をSlackへ通知するバックグラウンドワーカーを起動
+	//   (SLACK_WEBHOOK_URL未設定時は内部で無効化される)
+	metrics.StartAlertWorker(cfg.SlackWebhookURL)
+
 	// MinIO クライアント初期化
 	// minioClient, err := data.NewMinioClient(
 	// 	"http://localhost:9000",

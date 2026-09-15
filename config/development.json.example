@@ -15,5 +15,6 @@
     },
     "hmacSecret": "your-random-hmac-security-secret-key",
     "adminPassword": "your-admin-shared-password",
-    "adminTokenSecret": "your-random-admin-token-signing-secret"
+    "adminTokenSecret": "your-random-admin-token-signing-secret",
+    "slackWebhookUrl": "https://hooks.slack.com/services/xxx/yyy/zzz"
 }

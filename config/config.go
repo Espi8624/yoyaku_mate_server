@@ -26,6 +26,8 @@ type Config struct {
 	AdminPassword string `json:"adminPassword"`
 	// - 管理者セッショントークンの署名鍵。HMACSecretとは用途が異なるため別鍵として分離する
 	AdminTokenSecret string `json:"adminTokenSecret"`
+	// - 閾値超過アラート通知用のSlack Incoming Webhook URL。空の場合はアラート機能自体を無効化する
+	SlackWebhookURL string `json:"slackWebhookUrl"`
 }
 
 type R2Config struct {
@@ -113,6 +115,10 @@ func Load() Config {
 	if adminTokenSecret := os.Getenv("ADMIN_TOKEN_SECRET"); adminTokenSecret != "" {
 		cfg.AdminTokenSecret = adminTokenSecret
 		log.Println("Using ADMIN_TOKEN_SECRET from environment variable")
+	}
+	if slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL"); slackWebhookURL != "" {
+		cfg.SlackWebhookURL = slackWebhookURL
+		log.Println("Using SLACK_WEBHOOK_URL from environment variable")
 	}
 
 	cfg.R2 = R2Config{
