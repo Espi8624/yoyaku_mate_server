@@ -158,7 +158,7 @@ func (w *AlertWorker) checkCPU() {
 	}
 }
 
-// - クールダウン期間内は同じ種類のアラートを再送しない
+// - クールダウン期間内は同じ種類のアラートを再送しない(閾値監視のような継続的な状態向け)
 func (w *AlertWorker) notify(alertKey, message string) {
 	w.mu.Lock()
 	if last, ok := w.lastSentAt[alertKey]; ok && time.Since(last) < alertCooldown {
@@ -168,13 +168,25 @@ func (w *AlertWorker) notify(alertKey, message string) {
 	w.lastSentAt[alertKey] = time.Now()
 	w.mu.Unlock()
 
+	SendSlackMessage(w.webhookURL, message)
+}
+
+// SendSlackMessage は指定したSlack Incoming Webhook URLへメッセージを送信する。
+// - 店舗の許可証申請通知のような単発イベント通知からも直接呼び出せるよう、
+//   クールダウンを伴わない形でAlertWorkerから切り出している
+// - webhookURLが空の場合は何もしない(機能未設定時の安全側デフォルト)
+func SendSlackMessage(webhookURL, message string) {
+	if webhookURL == "" {
+		return
+	}
+
 	payload, err := json.Marshal(map[string]string{"text": message})
 	if err != nil {
 		log.Printf("Failed to marshal Slack alert payload: %v", err)
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, w.webhookURL, bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("Failed to build Slack alert request: %v", err)
 		return

@@ -84,6 +84,7 @@ func main() {
 		cfg.R2.AssetsBucketName,
 		cfg.R2.AssetsPublicDomain,
 		cfg.R2.BizBucketName,
+		cfg.SlackWebhookURL,
 	)
 
 	// Initialize HTTP mux

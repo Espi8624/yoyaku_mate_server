@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"yoyaku_mate_server/data"
+	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 
@@ -32,10 +34,12 @@ type UploadHandler struct {
 	AssetsBucketName   string
 	AssetsPublicDomain string
 	BizBucketName      string
+	// - 営業許可証の新規申請をSlackへ通知するためのWebhook URL。空の場合は通知しない
+	SlackWebhookURL string
 }
 
 // ハンドラ初期化
-func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket string) *UploadHandler {
+func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
 	return &UploadHandler{
 		Minio:              minio,
 		MenuRepo:           menuRepo,
@@ -45,6 +49,7 @@ func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, use
 		AssetsBucketName:   assetsBucket,
 		AssetsPublicDomain: assetsPublicDomain,
 		BizBucketName:      bizBucket,
+		SlackWebhookURL:    slackWebhookURL,
 	}
 }
 
@@ -97,6 +102,12 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Could not update store information", http.StatusInternalServerError)
 		return
 	}
+
+	// - 審査待ちの新規申請が発生したことをSlackへ通知する(応答を遅らせないよう非同期で送信)
+	go metrics.SendSlackMessage(h.SlackWebhookURL, fmt.Sprintf(
+		":clipboard: 新しい営業許可証の承認リクエストが届きました\n店舗ID: %s\n管理画面のLicense Approvalから確認してください。",
+		storeID,
+	))
 
 	// REST 標準: POST レスポンスに更新後のリソースを返却 (200 OK)
 	utils.RespondWithJSON(w, updatedLicense, http.StatusOK)
