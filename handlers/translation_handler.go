@@ -271,6 +271,7 @@ func buildMultiTranslatePrompt(texts map[string]string, targetLanguages []string
 			"If the input Key starts with \"t_\" (Title), you MUST append the Japanese pronunciation in Romaji separated by \" / \". \n"+
 				"   Format: \"Translated Text / Romaji\". Example: \"Fried Chicken / Karaage\".",
 			"If the input Key starts with \"d_\" (Description), do NOT append Romaji.",
+			"If the input Key starts with \"c_\" (Category name), do NOT append Romaji.",
 		)
 	}
 	rules = append(rules, "Return ONLY the JSON object. No markdown formatting, no code blocks, no intro text.")
