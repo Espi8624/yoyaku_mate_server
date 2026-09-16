@@ -28,7 +28,17 @@ type AIChatResponse struct {
 
 // GeminiRequest Gemini APIへ送るリクエスト構造体
 type GeminiRequest struct {
-	Contents []GeminiContent `json:"contents"`
+	Contents         []GeminiContent   `json:"contents"`
+	GenerationConfig *GenerationConfig `json:"generationConfig,omitempty"`
+}
+
+// GenerationConfig 生成パラメータ (thinking無効化など、呼び出し元ごとに必要な場合のみ設定)
+type GenerationConfig struct {
+	ThinkingConfig *ThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+type ThinkingConfig struct {
+	ThinkingBudget int `json:"thinkingBudget"`
 }
 
 type GeminiContent struct {

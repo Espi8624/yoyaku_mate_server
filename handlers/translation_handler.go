@@ -31,6 +31,12 @@ func callGeminiForText(prompt string) (string, error) {
 		Contents: []GeminiContent{
 			{Role: "user", Parts: []GeminiPart{{Text: prompt}}},
 		},
+		// 翻訳は推論不要な機械的タスクのため、thinkingを無効化して即時応答させる。
+		// 有効のままだと、thinking予算を使い切って最終テキストを一切返さないまま
+		// 応答が返る(結果的に空の翻訳になる)ケースがあった
+		GenerationConfig: &GenerationConfig{
+			ThinkingConfig: &ThinkingConfig{ThinkingBudget: 0},
+		},
 	}
 	reqBody, err := json.Marshal(geminiReq)
 	if err != nil {
@@ -237,16 +243,6 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 		if requested[normalized] {
 			translations[normalized] = transMap
 		}
-	}
-
-	// TODO(debug): 原因調査用の一時ログ。確認後に削除する
-	if len(translations) == 0 {
-		deepMapKeys := make([]string, 0, len(deepMap))
-		for k := range deepMap {
-			deepMapKeys = append(deepMapKeys, k)
-		}
-		log.Printf("[HandleTranslateMulti][debug] empty result. requested=%v deepMapKeys=%v rawResponse=%s",
-			req.TargetLanguages, deepMapKeys, cleanJSON)
 	}
 
 	utils.RespondWithJSON(w, map[string]interface{}{
