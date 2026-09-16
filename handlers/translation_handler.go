@@ -239,6 +239,16 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// TODO(debug): 原因調査用の一時ログ。確認後に削除する
+	if len(translations) == 0 {
+		deepMapKeys := make([]string, 0, len(deepMap))
+		for k := range deepMap {
+			deepMapKeys = append(deepMapKeys, k)
+		}
+		log.Printf("[HandleTranslateMulti][debug] empty result. requested=%v deepMapKeys=%v rawResponse=%s",
+			req.TargetLanguages, deepMapKeys, cleanJSON)
+	}
+
 	utils.RespondWithJSON(w, map[string]interface{}{
 		"translations": translations,
 	}, http.StatusOK)
