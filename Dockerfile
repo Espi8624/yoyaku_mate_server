@@ -31,11 +31,29 @@ COPY --from=build /saboten-server /saboten-server
 # サーバー実行時にこのフォルダから設定ファイルを読み取れる
 COPY --from=build /src/config /config
 
-# Run in non-interactive mode for Infisical install
-# jq 追加 (JSON parse)
+# Infisical CLI (起動時のシークレット注入に使用) と、トークン発行に必要な curl/jq。
+#
+# 以前は Cloudsmith の setup.alpine.sh を `curl ... | bash` して apk 経由で入れていたが、
+# 2026-09-17 にそのスクリプトのURLが予告なく404になりビルドが停止した。
+# さらに `A | B` の終了コードは B のものになるため、curl が 404 で失敗しても
+# 空入力を受けた bash が 0 で終了し、失敗が握り潰されていた。その結果
+# 「infisical (no such package)」という無関係なエラーに化けて原因が見えなくなっていた。
+#
+# 公式リリースのバイナリを**バージョン固定**で取得する。毎ビルド外部の最新物を
+# 取りに行く構成をやめることで、配布側の都合でデプロイが止まるのを防ぐ。
+ARG INFISICAL_VERSION=0.43.132
 RUN apk add --no-cache curl bash jq && \
-    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
-    apk add infisical
+    case "$(uname -m)" in \
+      x86_64) INFISICAL_ARCH=amd64 ;; \
+      aarch64) INFISICAL_ARCH=arm64 ;; \
+      *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -o /tmp/infisical.tar.gz \
+      "https://github.com/Infisical/cli/releases/download/v${INFISICAL_VERSION}/cli_${INFISICAL_VERSION}_linux_${INFISICAL_ARCH}.tar.gz" && \
+    tar -xzf /tmp/infisical.tar.gz -C /tmp infisical && \
+    install -m 0755 /tmp/infisical /usr/local/bin/infisical && \
+    rm -f /tmp/infisical.tar.gz /tmp/infisical && \
+    infisical --version
 
 # 8080portを公開
 EXPOSE 8080
