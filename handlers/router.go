@@ -46,6 +46,9 @@ func RegisterRoutes(
 	//   VerifySessionForUser を呼び分ける
 	api.HandleFunc("/waiting-list", waitingHandler.Handle)
 	api.HandleFunc("/waiting-list/poll", waitingHandler.HandlePolling)
+	// - 顧客1件分の待機情報 (顧客ウェブの初期表示用)。stream-user と同じ応答を返す。
+	//   これが無いと顧客ウェブは待機リスト全件を取得して自分の1件を探すことになる
+	api.HandleFunc("/waiting-list/user", waitingHandler.HandleWaitingUser).Methods("GET", "OPTIONS")
 	// - SSEストリームは店舗単位の公開データ (顧客ウェブも購読する)
 	api.HandleFunc("/waiting-list/stream", waitingHandler.HandleStream)
 	api.HandleFunc("/waiting-list/stream-user", waitingHandler.HandleWaitingItemStream)

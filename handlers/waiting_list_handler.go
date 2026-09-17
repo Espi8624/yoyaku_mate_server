@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -222,6 +223,46 @@ func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) strin
 }
 
 // HandleWaitingItemStream 個別の待機顧客のリアルタイムステータス変化を監視するSSEを処理
+// HandleWaitingUser GET /api/waiting-list/user?store_id=...&waiting_id=...
+//
+// 特定の顧客1件分の待機情報(待ち順・目安時間を含む)を返す。
+// 顧客ウェブの初期表示用。SSE(HandleWaitingItemStream)と同じ
+// getWaitingUserResponse を使うため、初期取得とリアルタイム更新で
+// 応答の形が完全に一致する。
+//
+// - これが無かった間、顧客ウェブは店舗の待機リスト全件を取得して
+//   クライアント側で自分の1件を探していた。待っている客の人数分だけ
+//   転送量が増え、他の客のnotesやmenu_itemsまで配信されていた
+func (h *WaitingListHandler) HandleWaitingUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	storeID := r.URL.Query().Get("store_id")
+	waitingID := r.URL.Query().Get("waiting_id")
+	if storeID == "" || waitingID == "" {
+		utils.RespondWithError(w, "Missing store_id or waiting_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.getWaitingUserResponse(storeID, waitingID)
+	if err != nil {
+		// - データ無し(404)とDB障害(500)を区別する。クライアントは404を
+		//   「登録が存在しない」と解釈してキャンセル画面へ遷移するため、
+		//   一時的な障害を404にしてしまうと誤って登録を失わせることになる
+		if errors.Is(err, errWaitingItemNotFound) {
+			utils.RespondWithError(w, "Waiting item not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to build waiting user response: %v", err)
+		utils.RespondWithError(w, "Failed to fetch waiting item", http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, res, http.StatusOK)
+}
+
 func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	waitingID := r.URL.Query().Get("waiting_id")
@@ -742,6 +783,10 @@ type WaitingUserResponse struct {
 	EstimatedWaitingTime string `json:"estimated_waiting_time"`
 }
 
+// errWaitingItemNotFound 該当の待機データが存在しないことを表す。
+// 呼び出し元が「DB障害(500)」と「データ無し(404)」を区別するために使う
+var errWaitingItemNotFound = errors.New("waiting item not found")
+
 // notifyStore 最新データを取得し、全サブスクライバーにブロードキャストする
 func (h *WaitingListHandler) notifyStore(storeID string) {
 	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
@@ -824,7 +869,7 @@ func buildWaitingUserResponse(waitingList []models.WaitingList, waitingID string
 		}
 	}
 	if details == nil {
-		return nil, fmt.Errorf("waiting item not found")
+		return nil, errWaitingItemNotFound
 	}
 
 	// - アクティブな待機アイテム(waiting, notified)のみを抽出
