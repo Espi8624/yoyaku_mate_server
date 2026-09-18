@@ -25,5 +25,22 @@ primary_region = 'nrt'
   min_machines_running = 0
   processes = ['app']
 
+  # ヘルスチェック。/health はMongoDBへのPingまで確認する (handlers/health_handler.go)
+  #
+  # - これが無い間、fly.ioはマシンが「起動している」ことしか見ておらず、
+  #   DBに繋がっていないマシンにもプロキシがトラフィックを流し続けていた。
+  #   デプロイ時の検証も効かないため、壊れたリリースがそのまま本番に出る
+  # - grace_period は起動シーケンス (Infisicalからのシークレット取得 →
+  #   MongoDB接続、失敗時は5秒間隔で最大5回リトライ) を跨げる長さにする。
+  #   短すぎると正常に起動中のマシンをunhealthyと判定し続けることになる
+  # - マシンレベルのチェックはプロキシのリクエストとして集計されないため、
+  #   auto_stop_machines の停止判定には影響しない
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '40s'
+    method = 'GET'
+    path = '/health'
+
 [[vm]]
   size = 'shared-cpu-1x'
