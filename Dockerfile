@@ -31,38 +31,27 @@ COPY --from=build /saboten-server /saboten-server
 # サーバー実行時にこのフォルダから設定ファイルを読み取れる
 COPY --from=build /src/config /config
 
-# Infisical CLI (起動時のシークレット注入に使用) と、トークン発行に必要な curl/jq。
-#
-# 以前は Cloudsmith の setup.alpine.sh を `curl ... | bash` して apk 経由で入れていたが、
-# 2026-09-17 にそのスクリプトのURLが予告なく404になりビルドが停止した。
-# さらに `A | B` の終了コードは B のものになるため、curl が 404 で失敗しても
-# 空入力を受けた bash が 0 で終了し、失敗が握り潰されていた。その結果
-# 「infisical (no such package)」という無関係なエラーに化けて原因が見えなくなっていた。
-#
-# 公式リリースのバイナリを**バージョン固定**で取得する。毎ビルド外部の最新物を
-# 取りに行く構成をやめることで、配布側の都合でデプロイが止まるのを防ぐ。
-ARG INFISICAL_VERSION=0.43.132
-RUN apk add --no-cache curl bash jq && \
-    case "$(uname -m)" in \
-      x86_64) INFISICAL_ARCH=amd64 ;; \
-      aarch64) INFISICAL_ARCH=arm64 ;; \
-      *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;; \
-    esac && \
-    curl -fsSL -o /tmp/infisical.tar.gz \
-      "https://github.com/Infisical/cli/releases/download/v${INFISICAL_VERSION}/cli_${INFISICAL_VERSION}_linux_${INFISICAL_ARCH}.tar.gz" && \
-    tar -xzf /tmp/infisical.tar.gz -C /tmp infisical && \
-    install -m 0755 /tmp/infisical /usr/local/bin/infisical && \
-    rm -f /tmp/infisical.tar.gz /tmp/infisical && \
-    infisical --version
-
 # 8080portを公開
 EXPOSE 8080
 
-# サーバー実行 (Infisicalを通じて実行, 環境変数で環境を指定)
-# 1. APIを使用してトークン発行(CLIログイン問題回避)
-# 2. 発行されたトークンでrun実行
-CMD sh -c "export INFISICAL_TOKEN=\$(curl --silent --location --request POST 'https://app.infisical.com/api/v1/auth/universal-auth/login' \
-    --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode \"clientId=\${INFISICAL_CLIENT_ID}\" \
-    --data-urlencode \"clientSecret=\${INFISICAL_CLIENT_SECRET}\" | jq -r .accessToken) && \
-    infisical run --token=\${INFISICAL_TOKEN} --projectId=\${INFISICAL_PROJECT_ID} --env=\${INFISICAL_ENV:-dev} -- /saboten-server"
+# サーバー実行。
+#
+# シークレットは Infisical の Fly.io Secret Sync が fly secrets へ push したものを、
+# 通常の環境変数として受け取る。このコンテナは Infisical に一切アクセスしない。
+#
+# 以前はここで毎起動 app.infisical.com へログインしてトークンを取り、
+# `infisical run -- /saboten-server` として起動していた。やめた理由:
+#
+#   - min_machines_running = 0 のためマシンは頻繁に起動し直す。そのたびに外部APIへ
+#     依存しており、Infisical が落ちていればサーバーが起動できなかった
+#   - `curl ... | jq` はパイプの終了コードが jq のものになるため、curl が失敗しても
+#     トークンが "null" のまま処理が進み、失敗が握り潰されていた
+#     (同じ罠でこのファイルは2026-09-17に一度ビルドが停止している)
+#   - CLI の取得でビルドが外部配布物に依存していた
+#
+# Infisical は引き続きシークレットの単一ソースであり、チームのローカル開発も
+# `infisical run` のまま変わらない。変わったのは注入経路だけ。
+#
+# 注意: ca-certificates は上で別途インストールしている。MongoDB Atlas・Gemini・R2 の
+# TLS 接続に必須なので、この行を整理する際に巻き込んで消さないこと。
+CMD ["/saboten-server"]
