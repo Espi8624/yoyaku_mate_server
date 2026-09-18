@@ -165,11 +165,15 @@ func main() {
 	})
 
 	// - ミドルウェアの並び (外側→内側):
-	//     レートリミット → メトリクス → CORS → DB準備確認 → ルーター
+	//     レートリミット → メトリクス → panic復帰 → CORS → DB準備確認 → ルーター
+	//   * panic復帰をメトリクスの内側に置くことで、復帰が書いた500がエラーダッシュボードに計上される。
+	//     外側に置くと、panicしたリクエストが監視上「正常」として消える
 	//   * DB準備確認をCORSの内側に置くことで、503応答にもCORSヘッダが付く。
 	//     外側だとブラウザが本来の503を読めず、原因不明のCORSエラーに化ける
 	handler := metrics.MetricsMiddleware(metrics.GetRequestTracker(), metrics.GetTracker())(
-		c.Handler(handlers.RequireDatabaseMiddleware(r)),
+		handlers.RecoverMiddleware(
+			c.Handler(handlers.RequireDatabaseMiddleware(r)),
+		),
 	)
 
 	// Rate Limiting Middleware (5 requests per second per IP)

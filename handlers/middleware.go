@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/config"
@@ -23,6 +24,78 @@ const ContextKeyUser contextKey = "authenticated_user"
 //     退会直前に発行済みのIDトークンが有効期限(最長1時間)まで通ってしまうため、
 //     Mongo側のstatusを毎リクエスト確認して即座に弾く
 const ErrCodeAccountWithdrawn = "ACCOUNT_WITHDRAWN"
+
+// panicResponseWriter は復帰処理が応答を上書きしてよいかを判断するためのラッパー。
+// 既にヘッダやボディを書き出したあとで500を被せようとすると、
+// net/httpが "superfluous response.WriteHeader" を吐くだけで応答は変わらない
+type panicResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *panicResponseWriter) WriteHeader(code int) {
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *panicResponseWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush SSEハンドラが w.(http.Flusher) で取り出すため、ラッパー側でも実装が必要。
+// 無いとSSE接続が確立した瞬間にpanicする
+func (w *panicResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap http.ResponseController が元のResponseWriterの機能に到達できるようにする
+func (w *panicResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+// RecoverMiddleware ハンドラ内のpanicを捕捉し、500応答とスタックトレースのログに変換するミドルウェア。
+//
+//   - net/http にも既定のrecoverはあるが、応答を一切書かずに接続を閉じるだけ。
+//     クライアントから見ると500ではなく通信エラーになり、原因の切り分けができない。
+//     監視側でも「エラー応答」として集計されないため、障害が数字に現れない
+//   - MetricsMiddlewareの内側に置くこと。ここで書いた500を外側のメトリクスが拾い、
+//     エラーダッシュボードに計上される
+//   - バックグラウンドゴルーチンのpanicはこのミドルウェアの範囲外。そちらは
+//     utils.Go / utils.GoForever が受け持つ
+func RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &panicResponseWriter{ResponseWriter: w}
+
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+
+			// - net/httpの規約上、ErrAbortHandlerは「意図的に応答を打ち切る」合図であり、
+			//   異常ではない。握り潰さずそのまま投げ直す
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+
+			// - スタックトレースはログのみ。応答本文に含めると内部構造が外へ漏れる
+			log.Printf("[panic] %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
+
+			if rw.wroteHeader {
+				// - SSEのように応答が始まっているケース。500を被せることはできないため、
+				//   ここで応答を終える。クライアントは再接続で復帰する
+				return
+			}
+
+			utils.RespondWithError(w, "Internal server error", http.StatusInternalServerError)
+		}()
+
+		next.ServeHTTP(rw, r)
+	})
+}
 
 // RequireDatabaseMiddleware MongoDBへの接続が確立していない間、APIリクエストを503で即座に返すミドルウェア。
 //
