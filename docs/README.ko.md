@@ -72,6 +72,7 @@ docs/
 | [002-active-user-ip-port-issue.ko.md](./troubles/002-active-user-ip-port-issue.ko.md) | 실시간 접속자의 에피메럴 포트 및 IPv6 중복 카운트 방지 해결 과정 |
 | [003-sse-heartbeat-and-zombie-cleanup.ko.md](./troubles/003-sse-heartbeat-and-zombie-cleanup.ko.md) | heartbeat가 데이터 이벤트로 전송되던 문제와, 좀비 커넥션 회수된 채널의 이중 close로 인한 panic |
 | [004-production-readiness-hardening.ko.md](./troubles/004-production-readiness-hardening.ko.md) | 실서비스 대비 점검: 자격증명 로그 출력, goroutine 패닉 보호, 공개 SSE 정보 최소화, HTTP 타임아웃 |
+| [005-availability-and-recovery-hardening.ko.md](./troubles/005-availability-and-recovery-hardening.ko.md) | 가용성·복구 경로 점검: Gemini 호출 타임아웃, fly.io 헬스체크, MongoDB 미연결 시 503과 재연결, 핸들러 패닉 복구 |
 
 ---
 
