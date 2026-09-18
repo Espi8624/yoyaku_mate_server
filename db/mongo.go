@@ -221,20 +221,39 @@ func EnsureIndexes() error {
 	}
 	log.Println("Created compound index: idx_store_reg_time on waiting_list")
 
-	// 個別待機アイテムの照会用複合インデックス: store_id + waiting_id
-	// - CreateItemの重複登録チェック、UpdateItemStatus、UpdateWaitingStatusが
-	//   全てこの組み合わせでフィルタしており、待機通知のたびに呼ばれるホットパスのため必須
+	// 個別待機アイテムの照会用複合インデックス: store_id + waiting_id (ユニーク)
+	//
+	//   - CreateItemの重複登録チェック、UpdateItemStatus、UpdateWaitingStatusが
+	//     全てこの組み合わせでフィルタしており、待機通知のたびに呼ばれるホットパスのため必須
+	//   - ユニーク制約が本体。冪等性の実装は「照会してから挿入」であり原子的でないため、
+	//     ネットワーク再送で2つの要求が同時に届くと両方が「存在しない」を見て両方挿入し、
+	//     客が番号札を2枚受け取る。制約が無ければこれを防ぐ手立てが無い
+	//     (docs/implementation/idempotency.md が防ごうとしていたのはまさにこのケース)
+	//   - 既存の非ユニーク版とは別名にする。同名でオプションだけ変えてCreateOneすると
+	//     IndexOptionsConflict で失敗するため、「新しい方を作ってから古い方を落とす」順にする。
+	//     逆順にすると、切り替えの瞬間だけインデックスが無い時間帯ができる
 	waitingIDIndexModel := mongo.IndexModel{
 		Keys: bson.D{
 			{Key: "store_id", Value: 1},
 			{Key: "waiting_id", Value: 1},
 		},
-		Options: options.Index().SetName("idx_store_waiting_id"),
+		Options: options.Index().SetName("idx_store_waiting_id_unique").SetUnique(true),
 	}
 	if _, err := collection.Indexes().CreateOne(ctx, waitingIDIndexModel); err != nil {
-		log.Printf("Failed to create idx_store_waiting_id index: %v", err)
+		// - 既存データに重複があると作成に失敗する。その場合は古いインデックスを
+		//   落とさずに残す (落としてしまうとホットパスがコレクションスキャンになる)
+		log.Printf("Failed to create idx_store_waiting_id_unique index: %v", err)
 	} else {
-		log.Println("Created compound index: idx_store_waiting_id on waiting_list")
+		log.Println("Created unique compound index: idx_store_waiting_id_unique on waiting_list")
+
+		// - 移行用。非ユニーク版が残っていれば落とす。同じキーのインデックスを
+		//   2つ維持する意味は無く、書き込みのたびに両方が更新されるだけになる
+		if _, dropErr := collection.Indexes().DropOne(ctx, "idx_store_waiting_id"); dropErr != nil {
+			// - 既に落とされている環境では IndexNotFound になる。異常ではない
+			log.Printf("Old idx_store_waiting_id index not dropped (already absent?): %v", dropErr)
+		} else {
+			log.Println("Dropped legacy non-unique index: idx_store_waiting_id on waiting_list")
+		}
 	}
 
 	errorLogsCollection := GetCollection(DatabaseName, CollectionErrorLogs)

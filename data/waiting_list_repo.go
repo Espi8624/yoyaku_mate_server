@@ -12,6 +12,7 @@ import (
 
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -239,7 +240,11 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
 
-	if item.WaitingID != "" {
+	// - クライアントが冪等キーを付けてきたかどうかを、生成で上書きされる前に確定させる。
+	//   これが後段の重複キーエラーの意味を決める (insertループのコメント参照)
+	clientSupplied := item.WaitingID != ""
+
+	if clientSupplied {
 		var existingItem models.WaitingList
 		dupFilter := bson.M{
 			"store_id":   item.StoreID,
@@ -270,11 +275,6 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
 
-	if item.WaitingID == "" {
-		now := time.Now()
-		item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
-	}
-
 	countFilter := bson.M{
 		"store_id": item.StoreID,
 		"status":   bson.M{"$in": []string{"waiting", "notified"}},
@@ -292,30 +292,96 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		item.EstimatedWaitTime = CalculateEstimatedWaitTime(int(activeCount), minutesPerTeam)
 	}
 
-	doc := bson.M{
-		"store_id":            item.StoreID,
-		"waiting_id":          item.WaitingID,
-		"queue_number":        item.QueueNumber,
-		"party_size":          item.PartySize,
-		"registration_time":   item.RegistrationTime,
-		"contact":             item.Contact,
-		"status":              item.Status,
-		"nationality":         item.Nationality,
-		"called_time":         nil,
-		"entry_time":          nil,
-		"notes":               item.Notes,
-		"estimated_wait_time": item.EstimatedWaitTime,
-		"menu_items":          item.MenuItems,
-		"source":              item.Source,
+	// - (store_id, waiting_id) にはユニークインデックスが張られているため、INSERTは
+	//   重複キーエラーで弾かれうる。そのエラーの意味は「誰がwaiting_idを作ったか」で
+	//   正反対になるので、clientSuppliedで分岐する:
+	//
+	//     クライアント生成 = 冪等キー。同じキー = 同じ要求の再送なので既存を返してよい
+	//     サーバー生成     = 単なる衝突。別々の客であり、既存を返すと
+	//                        客Bに客Aの番号札を渡すことになる。IDを振り直す
+	//
+	//   採番(GetNextQueueNumber)はこのループの外で1回だけ済ませてある。
+	//   再試行のたびに採番し直すと、衝突のたびに客に見える欠番ができる
+	for attempt := 1; attempt <= maxInsertAttempts; attempt++ {
+		if !clientSupplied {
+			generatedID, genErr := generateWaitingID()
+			if genErr != nil {
+				return nil, genErr
+			}
+			item.WaitingID = generatedID
+		}
+
+		doc := bson.M{
+			"store_id":            item.StoreID,
+			"waiting_id":          item.WaitingID,
+			"queue_number":        item.QueueNumber,
+			"party_size":          item.PartySize,
+			"registration_time":   item.RegistrationTime,
+			"contact":             item.Contact,
+			"status":              item.Status,
+			"nationality":         item.Nationality,
+			"called_time":         nil,
+			"entry_time":          nil,
+			"notes":               item.Notes,
+			"estimated_wait_time": item.EstimatedWaitTime,
+			"menu_items":          item.MenuItems,
+			"source":              item.Source,
+		}
+
+		result, insertErr := collection.InsertOne(ctx, doc)
+		if insertErr == nil {
+			item.ID = result.InsertedID.(primitive.ObjectID)
+			return &item, nil
+		}
+
+		if !mongo.IsDuplicateKeyError(insertErr) {
+			return nil, fmt.Errorf("failed to insert waiting list item: %v", insertErr)
+		}
+
+		if clientSupplied {
+			// - 冒頭の事前チェックとINSERTの間に同じ冪等キーの要求が割り込んだケース。
+			//   勝った方のレコードを返す (これがまさに二重登録を防いでいる箇所)
+			var existingItem models.WaitingList
+			dupFilter := bson.M{
+				"store_id":   item.StoreID,
+				"waiting_id": item.WaitingID,
+			}
+			if findErr := collection.FindOne(ctx, dupFilter).Decode(&existingItem); findErr != nil {
+				return nil, fmt.Errorf("failed to fetch existing waiting item after duplicate key: %v", findErr)
+			}
+			log.Printf("Concurrent duplicate waiting registration resolved (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
+			return &existingItem, nil
+		}
+
+		log.Printf("Server-generated waiting_id collided, regenerating (%d/%d). store_id: %s, waiting_id: %s",
+			attempt, maxInsertAttempts, item.StoreID, item.WaitingID)
 	}
 
-	result, err := collection.InsertOne(ctx, doc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to insert waiting list item: %v", err)
-	}
-	item.ID = result.InsertedID.(primitive.ObjectID)
+	return nil, fmt.Errorf("failed to insert waiting list item: waiting_idの衝突が%d回続いた", maxInsertAttempts)
+}
 
-	return &item, nil
+// maxInsertAttempts サーバー生成waiting_idが衝突した場合の再試行上限。
+// 乱数6桁を付けている以上ここまで連続することは実質起こらないが、
+// 無限ループにしないための歯止めとして置く
+const maxInsertAttempts = 5
+
+// generateWaitingID はクライアントが冪等キーを送ってこなかった場合のサーバー側フォールバック。
+//
+//   - 以前は "YYYYMMDD-HHMMSS-mmm" とミリ秒までの時刻だけで、同一ミリ秒に登録が重なると
+//     衝突した。ユニークインデックスを張った以上、衝突は登録失敗として表に出る
+//   - crypto/randベースの接尾辞(utils.GenerateRandomString)を付けて衝突を実質無くす。
+//     形式は点主アプリが以前使っていた "YYYYMMDD-HHMMSS-xxxxxx" に揃える
+//   - 時刻はJST。registration_timeと基準を揃えておかないと、ログを突き合わせるときに
+//     同じレコードの時刻が2種類あることになる (fly.ioのコンテナはUTCで動く)
+func generateWaitingID() (string, error) {
+	suffix := utils.GenerateRandomString(6)
+	if suffix == "" {
+		// - GenerateRandomStringはcrypto/randの失敗時に空文字を返す。
+		//   ここで気づかずに進むと、接尾辞なしのIDが量産されて衝突が復活する
+		return "", fmt.Errorf("failed to generate waiting_id suffix")
+	}
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	return time.Now().In(jst).Format("20060102-150405") + "-" + suffix, nil
 }
 
 func (r *MongoWaitingListRepo) GetNextQueueNumber(storeID string) (int, error) {
