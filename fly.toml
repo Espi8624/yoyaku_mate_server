@@ -25,6 +25,23 @@ primary_region = 'nrt'
   min_machines_running = 0
   processes = ['app']
 
+  # 同時接続数の上限。
+  #
+  # - 既定は type="connections" / soft_limit=20 / hard_limit は未設定 = 強制されない。
+  #   マシンが1台の構成では soft_limit は「他のマシンを優先する」という意味しか持たず
+  #   (他に送り先が無いため)、実質的に接続数は無制限だった
+  # - SSEは接続を張りっぱなしにするため、上限が無いと接続が積み上がって
+  #   256MBを食い潰し、OOMによる「静かな再起動」で全店舗のSSEが同時に切れる。
+  #   新規の客を断る方が、全員を落とすよりましなので hard_limit を backstop として置く
+  # - type は connections のまま。SSEが1本の長い接続としてカウントされる方が、
+  #   このアプリの実際の負荷 (接続数がメモリを決める) に近い
+  # - 数値は実測前の暫定値。SSE Status ダッシュボード (/api/admin/metrics/sse-status) で
+  #   実際の同時接続数を見てから調整すること。現状のdevは接続数が少なく測れない
+  [http_service.concurrency]
+    type = 'connections'
+    soft_limit = 200
+    hard_limit = 400
+
   # ヘルスチェック。/health はMongoDBへのPingまで確認する (handlers/health_handler.go)
   #
   # - これが無い間、fly.ioはマシンが「起動している」ことしか見ておらず、
