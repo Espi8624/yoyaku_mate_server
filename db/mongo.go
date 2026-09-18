@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/url"
+	"sync"
 	"time"
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/utils"
@@ -23,7 +24,42 @@ const (
 	CollectionSessions         = "sessions"
 )
 
-var MongoClient *mongo.Client
+// mongoClient は確立済みのMongoDBクライアント。未接続の間はnil。
+//
+//   - 以前は公開変数 MongoClient だったが、再接続ワーカー(StartReconnectWatcher)が
+//     書き込み、全ハンドラが読むようになったためデータ競合になる。
+//     アクセスは必ず Client() / setClient() を通すこと
+var (
+	mongoClient *mongo.Client
+	clientMu    sync.RWMutex
+
+	// connectURI は再接続ワーカーが使う接続文字列。InitMongoDBが記録する
+	connectURI string
+)
+
+// Client は現在のMongoDBクライアントを返す。未接続の場合はnil。
+// 呼び出し側は IsReady() での確認、またはミドルウェアによる遮断を前提とすること
+func Client() *mongo.Client {
+	clientMu.RLock()
+	defer clientMu.RUnlock()
+	return mongoClient
+}
+
+// IsReady はMongoDBクライアントが確立済みかどうかを返す。
+//
+//   - ここで見るのは「クライアントが存在するか」だけで、疎通そのものではない。
+//     疎通が一時的に切れてもドライバが自動で復旧するため、pingの失敗で
+//     IsReadyをfalseにすると健全なリクエストまで巻き添えで503にしてしまう
+//   - 実際の疎通確認は /health (handlers.HealthHandler) の役割として分けている
+func IsReady() bool {
+	return Client() != nil
+}
+
+func setClient(c *mongo.Client) {
+	clientMu.Lock()
+	defer clientMu.Unlock()
+	mongoClient = c
+}
 
 // maskMongoURI は接続文字列から認証情報を伏せた、ログ出力用の文字列を返す。
 //
@@ -51,12 +87,22 @@ func maskMongoURI(uri string) string {
 	return masked.String()
 }
 
+// reconnectInterval は起動時の接続に失敗した場合、再接続ワーカーが次の試行までに空ける間隔
+const reconnectInterval = 30 * time.Second
+
 // Initialize MongoDB connection
 func InitMongoDB(uri string) error {
-	log.Printf("Try mongoDB connect: %s", maskMongoURI(uri))
+	connectURI = uri
+	return connectOnce(5)
+}
+
+// connectOnce は指定回数まで接続とPingを試み、成功したらクライアントを確定させる。
+// attempts回すべて失敗した場合は最後のエラーを返す
+func connectOnce(attempts int) error {
+	log.Printf("Try mongoDB connect: %s", maskMongoURI(connectURI))
 
 	clientOptions := options.Client().
-		ApplyURI(uri).
+		ApplyURI(connectURI).
 		SetConnectTimeout(config.GetMongoTimeout()). // 30秒(production.jsonから設定)
 		SetServerSelectionTimeout(30 * time.Second).
 		SetSocketTimeout(45 * time.Second).
@@ -70,23 +116,29 @@ func InitMongoDB(uri string) error {
 	defer cancel()
 
 	var err error
-	for i := 0; i < 5; i++ {
-		MongoClient, err = mongo.Connect(ctx, clientOptions)
+	for i := 0; i < attempts; i++ {
+		var client *mongo.Client
+		client, err = mongo.Connect(ctx, clientOptions)
 		if err != nil {
-			log.Printf("MongoDB connect failed (%d/5): %v", i+1, err)
+			log.Printf("MongoDB connect failed (%d/%d): %v", i+1, attempts, err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
 		// connect test (Ping)
-		err = MongoClient.Ping(ctx, nil)
+		err = client.Ping(ctx, nil)
 		if err != nil {
-			log.Printf("MongoDB Ping failed (%d/5): %v", i+1, err)
-			MongoClient.Disconnect(ctx)
+			log.Printf("MongoDB Ping failed (%d/%d): %v", i+1, attempts, err)
+			// - Ping失敗したクライアントは破棄する。Disconnectしないとコネクションプールが
+			//   残り、再試行のたびにソケットが積み上がっていく
+			_ = client.Disconnect(ctx)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
+		// - Pingが通ってから初めて公開する。途中で差し込むと、疎通していないクライアントを
+		//   IsReady()がtrueと判定する時間帯ができてしまう
+		setClient(client)
 		log.Println("MongoDB connect success")
 
 		// - インデックス作成はリクエスト処理をブロックしないようバックグラウンドで実行
@@ -102,17 +154,45 @@ func InitMongoDB(uri string) error {
 		return nil
 	}
 
-	log.Println("MongoDB connect failed after 5 attempts")
+	log.Printf("MongoDB connect failed after %d attempts", attempts)
 	return err
+}
+
+// StartReconnectWatcher は起動時の接続に失敗した場合に、バックグラウンドで再接続を試み続ける。
+//
+//   - 以前は起動時に失敗するとクライアントがnilのまま二度と復旧せず、Atlasが復旧しても
+//     再デプロイするまでサービスが戻らなかった
+//   - プロセスを落とす(log.Fatal)選択はしない。マシン1台構成では、Atlasが戻るまで
+//     クラッシュループに入り、再起動のたびに起動シーケンス(シークレット取得を含む)を
+//     やり直すことになる。503を返しながら待ち、復旧した瞬間に自力で戻る方が早い
+//   - 接続確立後の一時的な切断はドライバ自身がトポロジを監視して復旧するため、
+//     ここでは扱わない。このワーカーが面倒を見るのは「一度も繋がっていない」状態だけ
+func StartReconnectWatcher() {
+	utils.GoForever("mongo_reconnect_watcher", func() {
+		for {
+			if IsReady() {
+				return
+			}
+			time.Sleep(reconnectInterval)
+			if IsReady() {
+				return
+			}
+			log.Println("MongoDB未接続のため再接続を試みます")
+			if err := connectOnce(1); err != nil {
+				log.Printf("MongoDB再接続に失敗しました。%v後に再試行します: %v", reconnectInterval, err)
+			}
+		}
+	})
 }
 
 // // MongoDB collection 取得
 func GetCollection(database, collection string) *mongo.Collection {
-	if MongoClient == nil {
+	client := Client()
+	if client == nil {
 		log.Println("MongoDB 클라이언트가 초기화되지 않음")
 		return nil
 	}
-	return MongoClient.Database(database).Collection(collection)
+	return client.Database(database).Collection(collection)
 }
 
 // コレクションのインデックスを作成

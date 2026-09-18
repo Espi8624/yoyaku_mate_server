@@ -34,9 +34,14 @@ func main() {
 	}
 
 	// Initialize MongoDB
+	// - 接続に失敗してもプロセスは落とさない。マシン1台構成でlog.Fatalすると、
+	//   Atlasが復旧するまでクラッシュループに入り、再起動のたびに起動シーケンスを
+	//   やり直すことになる。未接続の間は RequireDatabaseMiddleware が全APIを503で止め、
+	//   再接続ワーカーが復旧を待つ
 	if err := db.InitMongoDB(cfg.MongoDB.URI); err != nil {
-		log.Printf("MongoDB初期化失敗: %v", err)
+		log.Printf("MongoDB初期化失敗 (503を返しながら再接続を試みます): %v", err)
 	}
+	db.StartReconnectWatcher()
 
 	// - エラー率/応答時間/CPU使用率の閾値超過をSlackへ通知するバックグラウンドワーカーを起動
 	//   (SLACK_WEBHOOK_URL未設定時は内部で無効化される)
@@ -159,7 +164,13 @@ func main() {
 		AllowCredentials: true,
 	})
 
-	handler := metrics.MetricsMiddleware(metrics.GetRequestTracker(), metrics.GetTracker())(c.Handler(r))
+	// - ミドルウェアの並び (外側→内側):
+	//     レートリミット → メトリクス → CORS → DB準備確認 → ルーター
+	//   * DB準備確認をCORSの内側に置くことで、503応答にもCORSヘッダが付く。
+	//     外側だとブラウザが本来の503を読めず、原因不明のCORSエラーに化ける
+	handler := metrics.MetricsMiddleware(metrics.GetRequestTracker(), metrics.GetTracker())(
+		c.Handler(handlers.RequireDatabaseMiddleware(r)),
+	)
 
 	// Rate Limiting Middleware (5 requests per second per IP)
 	// Burst of 10 to allow parallel requests (like images/css or multiple API calls)

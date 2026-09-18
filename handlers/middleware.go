@@ -7,6 +7,7 @@ import (
 	"strings"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/config"
+	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 )
@@ -22,6 +23,46 @@ const ContextKeyUser contextKey = "authenticated_user"
 //     退会直前に発行済みのIDトークンが有効期限(最長1時間)まで通ってしまうため、
 //     Mongo側のstatusを毎リクエスト確認して即座に弾く
 const ErrCodeAccountWithdrawn = "ACCOUNT_WITHDRAWN"
+
+// RequireDatabaseMiddleware MongoDBへの接続が確立していない間、APIリクエストを503で即座に返すミドルウェア。
+//
+//   - db.GetCollection は未接続時にnilを返す。リポジトリ層はそれを受け取ってそのまま
+//     collection.Find(...) を呼ぶため、nil参照でpanicになる。呼び出し箇所は100か所を超えており、
+//     全てにnilチェックを足すのは現実的でない。入口の1か所で止めるのが確実で安い
+//   - 客から見た違いも大きい。panicは応答なしの接続断(クライアントには通信エラー)になるが、
+//     503なら「今は使えない」と明示でき、クライアント側も再試行の判断ができる
+//   - 認証ミドルウェアより外側に置くこと。認証自体がユーザー照会でDBを引くため、
+//     内側に置くと認証の時点でpanicする
+//   - ルーターではなくmain.goのハンドラチェーンに掛ける。ルーターに掛けると、
+//     DBを持たないテスト環境では全ルートが503になり、認証・セッション保護を
+//     検証しているルーターテストが素通りしてしまう
+func RequireDatabaseMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// - DBに触れないパス (/health, /uploads) は対象外。
+		//   特に /health は「Pingが実際に通るか」を答える必要があり、
+		//   その手前でこのミドルウェアが503を返してしまうと死活監視の意味が無くなる
+		if !strings.HasPrefix(r.URL.Path, "/api") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// - CORSプリフライトはDBに触れないため通す。ここで503を返すと、
+		//   ブラウザには本来のエラーではなくCORSエラーとして表示され原因が見えなくなる
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !db.IsReady() {
+			// - 再接続ワーカーの試行間隔に合わせ、クライアントに再試行の目安を伝える
+			w.Header().Set("Retry-After", "30")
+			utils.RespondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 // MiddlewareUserRepository 認証ミドルウェアでFirebase UIDに基づいて内部システムのユーザー情報を取得するためのインターフェース
 type MiddlewareUserRepository interface {

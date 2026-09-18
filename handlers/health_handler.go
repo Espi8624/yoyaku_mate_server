@@ -14,7 +14,8 @@ import (
 // - fly.ioのauto_stop_machines設定でマシンが停止していた場合はauto_start_machinesにより
 //   このリクエスト自体がマシンを起こすため、コールドスタート分のレイテンシが乗ることがある
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
-	if db.MongoClient == nil {
+	client := db.Client()
+	if client == nil {
 		utils.RespondWithError(w, "Database client is not initialized", http.StatusServiceUnavailable)
 		return
 	}
@@ -22,7 +23,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	if err := db.MongoClient.Ping(ctx, nil); err != nil {
+	if err := client.Ping(ctx, nil); err != nil {
 		utils.RespondWithError(w, "Database ping failed", http.StatusServiceUnavailable)
 		return
 	}

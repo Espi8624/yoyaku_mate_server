@@ -117,7 +117,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// MongoDB Transaction スタート
-	session, err := db.MongoClient.StartSession()
+	session, err := db.Client().StartSession()
 	if err != nil {
 		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return
@@ -516,7 +516,7 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := db.MongoClient.StartSession()
+	session, err := db.Client().StartSession()
 	if err != nil {
 		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return

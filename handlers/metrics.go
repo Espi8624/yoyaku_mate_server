@@ -583,7 +583,8 @@ func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetDBMetricsHandler は MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
 func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	if db.MongoClient == nil {
+	client := db.Client()
+	if client == nil {
 		utils.RespondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
 		return
 	}
@@ -595,7 +596,7 @@ func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Database Size (dbStats)
 	var dbStats bson.M
-	if err := db.MongoClient.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
+	if err := client.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
 		if dataSize, ok := dbStats["dataSize"]; ok {
 			sizeBytes := toFloat64(dataSize)
 			// Convert bytes to MB and round to 2 decimal places
@@ -607,7 +608,7 @@ func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Active Connections (serverStatus) - 権限がない場合があるため、失敗時は静かにスキップ
 	var serverStatus bson.M
-	if err := db.MongoClient.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
+	if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
 		if conns, ok := serverStatus["connections"].(bson.M); ok {
 			if current, ok := conns["current"]; ok {
 				metricsData.ActiveConnections = toInt64(current)
