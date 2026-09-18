@@ -146,7 +146,7 @@ func (h *WaitingListHandler) HandlePolling(w http.ResponseWriter, r *http.Reques
 	}
 
 	if !h.hasActiveStaffSession(r) {
-		waitingList = redactContacts(waitingList)
+		waitingList = redactForPublic(waitingList)
 	}
 
 	utils.RespondWithJSON(w, waitingList, http.StatusOK)
@@ -177,13 +177,15 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	notify := r.Context().Done()
 
 	// - 接続時に初期データを送信
-	go func() {
+	//   ハンドラ内で起動してもnet/httpのrecoverは効かない(別ゴルーチンのため)ので
+	//   panic保護を挟む。ここが落ちると全店舗のSSEが巻き添えになる
+	utils.Go("sse_stream_initial_data", func() {
 		waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 		if err == nil {
 			jsonData, _ := json.Marshal(waitingList)
 			h.broker.Broadcast(storeID, string(jsonData))
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -216,7 +218,7 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// filterStreamMessage スタッフ接続以外にはcontact(個人情報)を除去したJSONを返す。
+// filterStreamMessage スタッフ接続以外には個人情報を除去したJSONを返す (redactForPublic参照)。
 // ハートビートは呼び出し元で分岐済みのため、ここに来るのは待機リストのJSONのみ
 func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) string {
 	if isStaff {
@@ -226,7 +228,7 @@ func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) strin
 	if err := json.Unmarshal([]byte(msg), &list); err != nil {
 		return msg
 	}
-	redacted, err := json.Marshal(redactContacts(list))
+	redacted, err := json.Marshal(redactForPublic(list))
 	if err != nil {
 		return msg
 	}
@@ -297,14 +299,14 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 	// - 接続終了を監視
 	notify := r.Context().Done()
 
-	// - 接続時に初期データを送信
-	go func() {
+	// - 接続時に初期データを送信 (HandleStreamと同じくpanic保護が必要)
+	utils.Go("sse_user_stream_initial_data", func() {
 		res, err := h.getWaitingUserResponse(storeID, waitingID)
 		if err == nil {
 			jsonData, _ := json.Marshal(res)
 			h.userBroker.Broadcast(key, string(jsonData))
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -357,7 +359,7 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 	//   注意: 「有効な端末セッションが存在する」ことのみ確認し、当該store_idへのスタッフ権限までは
 	//   検証しない(簡易な公開/非公開の判定に留める、既知の限界)
 	if !h.hasActiveStaffSession(r) {
-		waitingListData = redactContacts(waitingListData)
+		waitingListData = redactForPublic(waitingListData)
 	}
 
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
@@ -376,12 +378,25 @@ func (h *WaitingListHandler) hasActiveStaffSession(r *http.Request) bool {
 	return session.IsActive()
 }
 
-// redactContacts 匿名アクセス向けにcontact(個人情報)を除去したコピーを返す。元スライスは変更しない
-func redactContacts(list []models.WaitingList) []models.WaitingList {
+// redactForPublic 匿名アクセス向けに個人情報を除去したコピーを返す。元スライスは変更しない。
+//
+// 店舗単位のSSE(/waiting-list/stream)とポーリングは認証を要求しない公開エンドポイントで、
+// store_id さえ分かれば誰でも購読できる。store_id はQRのURLとモニターボードのURLに
+// 含まれるため、一度QRを読んだ客はその店舗の待機リストを恒久的に購読できてしまう。
+//
+// - contact(電話番号)に加え、notes(客が自由記述した要望)とmenu_items(注文内容)も落とす。
+//   どちらも他人に見せる理由が無く、自由記述は何が書かれるか制御できない
+// - 唯一の公開購読者であるモニターボード(yoyaku_mate/src/containers/board/Board.jsx)は
+//   status / queue_number / waiting_id しか使わないため、これらを落としても表示は壊れない
+// - party_size と nationality は残す。個人を特定する情報ではなく、
+//   落とす範囲を広げるほど未把握の利用箇所を壊すリスクが上がる
+func redactForPublic(list []models.WaitingList) []models.WaitingList {
 	redacted := make([]models.WaitingList, len(list))
 	copy(redacted, list)
 	for i := range redacted {
 		redacted[i].Contact = nil
+		redacted[i].Notes = nil
+		redacted[i].MenuItems = nil
 	}
 	return redacted
 }
@@ -571,10 +586,11 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
 
 	// - DBの一貫性確保のため少し待機してから通知
-	go func() {
+	storeIDForNotify := newWaiting.StoreID
+	utils.Go("waiting_create_notify", func() {
 		time.Sleep(100 * time.Millisecond)
-		h.notifyStore(newWaiting.StoreID)
-	}()
+		h.notifyStore(storeIDForNotify)
+	})
 }
 
 // handleClearWaitingList 待機リストをクリアするリクエストを処理
