@@ -394,11 +394,18 @@ func redactForPublic(list []models.WaitingList) []models.WaitingList {
 	redacted := make([]models.WaitingList, len(list))
 	copy(redacted, list)
 	for i := range redacted {
-		redacted[i].Contact = nil
-		redacted[i].Notes = nil
-		redacted[i].MenuItems = nil
+		redacted[i] = redactItemForPublic(redacted[i])
 	}
 	return redacted
+}
+
+// redactItemForPublic 1件分の個人情報を除去する。
+// 除去対象は redactForPublic と必ず同じにすること (片方だけ増やすと穴になる)
+func redactItemForPublic(item models.WaitingList) models.WaitingList {
+	item.Contact = nil
+	item.Notes = nil
+	item.MenuItems = nil
+	return item
 }
 
 // isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
@@ -435,6 +442,9 @@ func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
 	}
 	return nowMin >= startMin && nowMin < endMin
 }
+
+// maxWaitingIDLength クライアントが送れる waiting_id の最大長
+const maxWaitingIDLength = 64
 
 // handleCreateWaitingList 新しい待機リストアイテムの作成(POST)を処理
 func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
@@ -478,6 +488,18 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 	if newWaiting.PartySize <= 0 {
 		log.Printf("Invalid party_size: %d", newWaiting.PartySize)
 		http.Error(w, "人数が正しくありません。", http.StatusBadRequest)
+		return
+	}
+
+	// - waiting_idはクライアント任意の文字列がそのままユニークキーとしてDBへ入る。
+	//   形式は3クライアントで異なり今後も変わりうるため、形式は見ずに上限だけを課す。
+	//   形式を検証する関数は過去に存在したが、クライアントが形式を変えた後も
+	//   更新されず実態と乖離していた (呼ばれていなかったため誰も気づかなかった)
+	// - 上限の根拠: MongoDBのインデックスキーは約1024バイトが上限で、それを超えると
+	//   挿入が原因の分かりにくい失敗になる。64文字あれば全クライアントの形式に足りる
+	if len(newWaiting.WaitingID) > maxWaitingIDLength {
+		log.Printf("waiting_id too long: %d chars", len(newWaiting.WaitingID))
+		http.Error(w, "waiting_idが正しくありません。", http.StatusBadRequest)
 		return
 	}
 
@@ -583,7 +605,20 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		return
 	}
 
-	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
+	// - ゲスト(QRからのウェブ登録)には個人情報を返さない。
+	//   冪等パスでは「既存レコード」がそのまま返るため、waiting_idを推測して
+	//   投げるだけで他の客のcontact(電話番号)が読めてしまう。時刻ベースのIDは
+	//   推測しやすく、特に旧形式は秒までしか無いため総当たりが現実的だった
+	//   ([004] の公開SSE/ポーリングと同じ対策をこの経路にも入れる)
+	// - 判定は「呼び出し元が認証を通したか」(newWaiting.Source) で行う。
+	//   既存レコード側のsourceで判定すると、他人がapp登録した客の情報が漏れる
+	// - ゲスト自身が困ることは無い。客が必要とするのは waiting_id と番号・目安時間で、
+	//   自分が送った内容は手元にある
+	responseItem := *createdItem
+	if newWaiting.Source == "web" {
+		responseItem = redactItemForPublic(responseItem)
+	}
+	utils.RespondWithJSON(w, responseItem, http.StatusCreated)
 
 	// - DBの一貫性確保のため少し待機してから通知
 	storeIDForNotify := newWaiting.StoreID
