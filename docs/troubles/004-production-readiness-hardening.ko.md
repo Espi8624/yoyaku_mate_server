@@ -180,8 +180,13 @@ IdleTimeout:      120 * time.Second    // keep-alive 대기 중 커넥션 회수
 
 - **메트릭스 버퍼**: 1000건 상한이 있어 스파이크 시에도 OOM되지 않음
 - **타입 단언**: 전부 `switch .(type)` 또는 `, ok`로 가드되어 있음
-- **시크릿 커밋**: 히스토리상으로도 없음
-  (`config.development.json`은 추적되고 있으나 자격증명 미포함)
+- ~~**시크릿 커밋**: 히스토리상으로도 없음
+  (`config.development.json`은 추적되고 있으나 자격증명 미포함)~~
+  → **이 판단은 틀렸다.** 2026-09-18에 [006](./006-committed-credential-in-history.ko.md)에서
+  `config.development.json`에 실제 Atlas 접속 문자열(계정·비밀번호 포함)이 들어간 채
+  커밋되어 있었고, 히스토리 51개 커밋에 남아 있음을 확인했다.
+  당시 점검은 **현재 시점의 파일만 보고** 히스토리를 보지 않았다.
+  삭제(`379d149`)된 파일은 `git ls-files`에도 `git grep`에도 나오지 않는다
 - **`config/config.go`의 로그**: 환경변수의 "이름"만 출력하고 값은 출력하지 않음
 
 ---
