@@ -302,7 +302,7 @@ panic保護を入れたが、**ハンドラ本体は `net/http` 既定のrecover
 | 項目 | 内容 |
 |---|---|
 | Infisicalへの起動時依存 | [`Dockerfile`](../../Dockerfile) のCMDがマシン起動のたびに `app.infisical.com` を叩く。`min_machines_running = 0` のためこれは頻繁に起きる。さらに `curl \| jq` はcurlの失敗を握り潰す ([004](./004-production-readiness-hardening.md) と同じ罠) |
-| 冪等性にユニーク制約が無い | `idx_store_waiting_id` が非ユニークのため、[idempotency](../implementation/idempotency.md) の「照会してからinsert」が同時実行で二重登録を許す |
+| ~~冪等性にユニーク制約が無い~~ → **2026-09-18 解決** | `idx_store_waiting_id_unique` へ移行し、重複キーエラーをIDの出所別に分岐するよう修正。サーバー生成IDにもcrypto/randの接尾辞を付けた。詳細は [idempotency](../implementation/idempotency.md) |
 | リクエストボディのサイズ無制限 | `MaxBytesReader` の使用箇所が0件。256MBのマシンでJSONを無制限にデコードしている |
 | fly.ioプロキシの同時実行数が未設定 | `[http_service.concurrency]` が無い。SSEは接続を保持し続けるため、この値が実質の同時接続上限になる |
 | SSE初期データがBroadcastされている | 1人が接続するたびに同一店舗の全接続へ全件が再送される |

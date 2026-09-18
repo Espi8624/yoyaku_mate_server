@@ -1,90 +1,150 @@
 # 冪等性の実装 (Idempotency)
 
-> 最終更新: 2026-07-10  
-> 関連ファイル: [`data/waiting_list.go`](../../data/waiting_list.go)
+> 最終更新: 2026-09-18
+> 関連ファイル: [`data/waiting_list_repo.go`](../../data/waiting_list_repo.go), [`db/mongo.go`](../../db/mongo.go), [`handlers/waiting_list_handler.go`](../../handlers/waiting_list_handler.go)
 
 ## 問題の背景
 
-モバイル環境では、ネットワークの不安定さにより同一のAPIリクエストが重複して送信される可能性があります。  
+モバイル環境では、ネットワークの不安定さにより同一のAPIリクエストが重複して送信される可能性があります。
 特に待機登録(`POST /api/waiting-list`)において重複登録が発生すると、お客様が2つの整理券を受け取ってしまう致命的なエラーが発生します。
-
-**従来の方式の課題**
-- サーバー側で「同一の顧客であるか」を判断する明確な基準がない
-- ネットワークの再試行時に無条件で新しいレコードが生成される
 
 ---
 
-## 解決方法: クライアント生成の冪等性キー
+## 3つの層で守る
 
-クライアント(FlutterアプリまたはWeb)がリクエスト送信前に **UUID形式の `waiting_id` を直接生成**し、リクエストBodyに含めて送信します。
+冪等性はアプリケーション層だけでは守り切れない。ここでは3つを組み合わせている。
+
+| 層 | 役割 | 無いとどうなるか |
+|---|---|---|
+| ① クライアント生成の冪等キー | 「同じ要求」をサーバーが識別できるようにする | 再送のたびに新しい整理券が出る |
+| ② DBのユニークインデックス | 同時に届いた再送を1件に収束させる | ①をすり抜ける(下記の競合) |
+| ③ 重複キーエラーの出所別分岐 | 「再送」と「別人の衝突」を区別する | 客Bに客Aの整理券を渡す |
+
+---
+
+## ① クライアント生成の冪等性キー
+
+クライアント(顧客ウェブ・点主アプリ)がリクエスト送信前に `waiting_id` を生成し、Bodyに含めて送信する。
+サーバーはまず `(store_id, waiting_id)` で照会し、既にあればそれを返す(ファストパス)。
 
 ```
 クライアント                         サーバー
-   │                                 │
-   │── waiting_id 生成 (UUID) ──→   │
-   │                                 │
-   │── POST /waiting-list ──────────→│
-   │   { waiting_id: "abc-123", ... }│
-   │                                 │── DB照会: waiting_id が存在？
-   │                                 │
-   │   [初回リクエスト]              │── なし → 新規レコード挿入
+   │── waiting_id 生成 ─────────→   │
+   │── POST /waiting-list ──────────→│── DB照会: waiting_id が存在？
+   │   [初回]                        │── なし → 新規レコード挿入
    │←── 201 Created ────────────────│
-   │                                 │
-   │   [重複リクエスト (再試行)]     │── あり → 既存データを返却
+   │   [再試行]                      │── あり → 既存データを返却
    │←── 201 Created (同一データ) ───│  (新規挿入は行わない)
 ```
 
----
+`waiting_id` の形式はクライアントごとに異なり、時期によっても変わってきた。
+**サーバーは形式を検証しない。** 長さの上限(`maxWaitingIDLength` = 64文字)だけを課す。
 
-## 実装コード
-
-```go
-// data/waiting_list.go - CreateWaitingListItem()
-
-// 冪等性の検証: クライアントが waiting_id を送信した場合、重複チェックを実行
-if item.WaitingID != "" {
-    var existingItem models.WaitingList
-    dupFilter := bson.M{
-        "store_id":   item.StoreID,
-        "waiting_id": item.WaitingID,
-    }
-    err := collection.FindOne(ctx, dupFilter).Decode(&existingItem)
-    if err == nil {
-        // 既に存在 → 保存せずに冪等に既存データを返却
-        log.Printf("Duplicate waiting registration detected (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
-        return &existingItem, nil
-    } else if err != mongo.ErrNoDocuments {
-        return nil, fmt.Errorf("failed to check duplicate waiting item: %v", err)
-    }
-}
-```
+> 以前は `utils.IsValidWaitingID` という形式検証関数があったが、削除した。
+> どこからも呼ばれておらず、そのまま気づかれずに実態と乖離していた
+> (現在クライアントが送る23文字形式を弾く状態になっていた)。
+> 形式を検証すると、クライアントが形式を変えるたびに追随が必要になり、
+> 忘れても呼ばれていなければ気づけない。上限だけならクライアントが変わっても壊れない。
 
 ---
 
-## フォールバック(Fallback)処理
-
-クライアントが `waiting_id` を送信しなかった場合(レガシークライアントなど)、  
-サーバー側で現在の時刻を基準にしたIDを生成します。
+## ② DBのユニークインデックス
 
 ```go
-if item.WaitingID == "" {
-    now := time.Now()
-    // Format: YYYYMMDD-HHmmss-SSS
-    item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
+// db/mongo.go - EnsureIndexes()
+Options: options.Index().SetName("idx_store_waiting_id_unique").SetUnique(true)
+```
+
+**①だけでは守れない。** 「照会してから挿入」は原子的ではないため、再送が同時に2つ届くと
+両方が「存在しない」を見て両方が挿入に進む。ネットワーク不安定による再送はまさに同時に届くので、
+①が守ろうとしていたケースそのものですり抜ける。
+
+### 移行時の注意
+
+既存の非ユニーク版 `idx_store_waiting_id` とは**別名**にしてある。
+同名でオプションだけ変えて `CreateOne` すると `IndexOptionsConflict` で失敗する。
+「新しい方を作ってから古い方を落とす」順にしており、逆順にすると切り替えの瞬間だけ
+インデックスが無い時間帯ができる(このキーは待機通知のたびに引かれるホットパス)。
+
+ユニーク化は既存データに重複があると失敗する。その場合は古いインデックスを残したままにする
+(落とすとホットパスがコレクションスキャンになるため)。
+
+---
+
+## ③ 重複キーエラーの出所別分岐
+
+**同じ「重複キーエラー」でも、`waiting_id` を誰が作ったかで意味が正反対になる。**
+
+```go
+// data/waiting_list_repo.go - CreateItem()
+clientSupplied := item.WaitingID != ""   // 生成で上書きされる前に確定させる
+```
+
+| 出所 | 重複キーエラーの意味 | 正しい対応 |
+|---|---|---|
+| クライアント生成 | 同じ冪等キー = **同じ要求の再送** | 既存レコードを返す |
+| サーバー生成 | 単なる衝突 = **別々の客** | IDを振り直して再試行 |
+
+サーバー生成の場合に既存を返してしまうと、**客Bに客Aの整理券を渡す**ことになる。
+二重登録を防ごうとして、より悪い結果を作ることになる。
+
+### 採番はループの外で1回だけ
+
+再試行のたびに `GetNextQueueNumber` を呼ぶと、衝突のたびに番号が飛んで
+**客に見える欠番**ができる。採番はループに入る前に済ませ、ループ内では
+IDの再生成とINSERTだけを行う。
+
+---
+
+## サーバー側フォールバックID
+
+クライアントが `waiting_id` を送ってこなかった場合、サーバーが生成する。
+
+```go
+// 形式: YYYYMMDD-HHMMSS-xxxxxx (JST、末尾はcrypto/randベースの6文字)
+suffix := utils.GenerateRandomString(6)
+return time.Now().In(jst).Format("20060102-150405") + "-" + suffix, nil
+```
+
+以前は `YYYYMMDD-HHMMSS-mmm` とミリ秒までの時刻のみで、**同一ミリ秒に登録が重なると衝突した**。
+ユニークインデックスを張った以上、衝突は静かな二重登録ではなく登録の失敗として表に出る。
+
+`utils.GenerateRandomString` はcrypto/randの失敗時に空文字を返すため、そこでエラーにしている。
+気づかずに進むと接尾辞なしのIDが量産され、衝突が復活する。
+
+> **フォールバックIDは冪等性を保証しない。** 再送のたびに別のIDになるため、
+> 二重登録を防ぐには①が必要である。フォールバックが守るのは「衝突しないこと」だけ。
+
+---
+
+## 冪等パスの応答は伏せ字にする
+
+冪等パスでは**既存レコードがそのまま返る**。つまり `waiting_id` を推測して投げるだけで、
+他の客のレコード(`contact` = 電話番号を含む)が読めてしまう経路になる。
+
+時刻ベースのIDは推測しやすく、特に旧形式は秒までしか無いため総当たりが現実的だった。
+
+```go
+// handlers/waiting_list_handler.go - handleCreateWaitingList()
+responseItem := *createdItem
+if newWaiting.Source == "web" {
+    responseItem = redactItemForPublic(responseItem)
 }
 ```
 
-> **警告: フォールバックIDは冪等性を保証しません。** 完全な保護のためには、クライアント側で必ずUUIDを生成して送信する必要があります。
+判定は**呼び出し元が認証を通したか**(`newWaiting.Source`)で行う。
+既存レコード側の `source` で判定すると、他人がアプリから登録した客の情報が漏れる。
+
+ゲスト自身が困ることは無い。客が必要とするのは `waiting_id` と番号・目安時間であり、
+自分が送った内容は手元にある。
 
 ---
 
 ## DBスキーマ (waiting_list コレクション)
 
 ```
-{ store_id, waiting_id }  →  複合ユニークインデックスを推奨
+{ store_id: 1, waiting_id: 1 }  →  idx_store_waiting_id_unique (unique: true)
 ```
-
-現在はアプリケーションレベルでのみ重複を遮断していますが、DBレベルでユニークインデックスを追加することで、競合状態(Race Condition)まで完全に遮断することが可能です。
 
 ---
 

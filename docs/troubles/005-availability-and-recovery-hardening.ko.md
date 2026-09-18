@@ -300,7 +300,7 @@ if !dbDownLogged.Swap(true) {
 | 항목 | 내용 |
 |---|---|
 | Infisical 기동 시 의존 | [`Dockerfile`](../../Dockerfile)의 CMD가 머신 기동 때마다 `app.infisical.com`을 호출한다. `min_machines_running = 0`이라 이 일이 자주 일어난다. 게다가 `curl \| jq`는 curl의 실패를 삼킨다([004](./004-production-readiness-hardening.ko.md)와 같은 함정) |
-| 멱등성에 유니크 제약이 없음 | `idx_store_waiting_id`가 non-unique라, [idempotency](../implementation/idempotency.ko.md)의 "조회 후 insert"가 동시 실행에서 중복 등록을 허용한다 |
+| ~~멱등성에 유니크 제약이 없음~~ → **2026-09-18 해결** | `idx_store_waiting_id_unique`로 전환하고, 중복키 에러를 ID 출처별로 분기하도록 수정. 서버 생성 ID에도 crypto/rand 접미사를 붙였다. 상세는 [idempotency](../implementation/idempotency.ko.md) |
 | 요청 본문 크기 무제한 | `MaxBytesReader` 사용처가 0건. 256MB 머신에서 JSON을 무제한으로 디코딩하고 있다 |
 | fly.io 프록시 동시 실행 수 미설정 | `[http_service.concurrency]`가 없다. SSE는 접속을 계속 유지하므로 이 값이 실질적인 동시 접속 상한이 된다 |
 | SSE 초기 데이터가 Broadcast됨 | 한 명이 접속할 때마다 같은 매장의 전체 접속자에게 전건이 재전송된다 |
