@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/utils"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"go.mongodb.org/mongo-driver/bson"
@@ -49,7 +50,7 @@ func StartAlertWorker(webhookURL string) *AlertWorker {
 		log.Println("SLACK_WEBHOOK_URL is not set. Alert notifications are disabled.")
 		return w
 	}
-	go w.loop()
+	utils.GoForever("metrics_alert_worker", w.loop)
 	return w
 }
 

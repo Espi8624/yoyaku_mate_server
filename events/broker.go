@@ -3,6 +3,8 @@ package events
 import (
 	"sync"
 	"time"
+
+	"yoyaku_mate_server/utils"
 )
 
 // Broker はSSEクライアントを管理し、メッセージをブロードキャストします
@@ -46,7 +48,7 @@ func GetBroker() *Broker {
 			Clients:     make(map[string]map[chan string]bool),
 			connectedAt: make(map[chan string]time.Time),
 		}
-		go Instance.startHeartbeat()
+		utils.GoForever("sse_broker_heartbeat", Instance.startHeartbeat)
 	})
 	return Instance
 }

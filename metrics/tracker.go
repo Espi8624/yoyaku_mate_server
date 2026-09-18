@@ -8,6 +8,7 @@ import (
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -35,7 +36,7 @@ func GetTracker() *ErrorTracker {
 		tracker = &ErrorTracker{
 			logBuffer: make([]models.ErrorLog, 0, 100),
 		}
-		go tracker.startBatchWorker()
+		utils.GoForever("metrics_error_batch", tracker.startBatchWorker)
 	})
 	return tracker
 }
@@ -125,7 +126,7 @@ func GetRequestTracker() *RequestTracker {
 			logBuffer:   make([]models.RequestLog, 0, 100),
 			activeUsers: make(map[string]time.Time),
 		}
-		go requestTracker.startBatchWorker()
+		utils.GoForever("metrics_request_batch", requestTracker.startBatchWorker)
 	})
 	return requestTracker
 }
@@ -271,7 +272,7 @@ func GetAuditTracker() *AuditTracker {
 		auditTracker = &AuditTracker{
 			logBuffer: make([]models.AuditLog, 0, 100),
 		}
-		go auditTracker.startBatchWorker()
+		utils.GoForever("metrics_audit_batch", auditTracker.startBatchWorker)
 	})
 	return auditTracker
 }
