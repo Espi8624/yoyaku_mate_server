@@ -100,6 +100,27 @@ func (b *WaitingUserBroker) Broadcast(key string, message string) {
 }
 
 // startHeartbeat は30秒周期でpingAndCleanを実行するバックグラウンドゴルーチンです
+// SendTo は指定した1つのクライアントにのみメッセージを送ります。
+// 詳細は Broker.SendTo のコメントを参照 (closeされたチャネルへ送らないための
+// ロックと登録確認が要点)
+func (b *WaitingUserBroker) SendTo(key string, clientChan chan string, message string) {
+	b.Mutex.RLock()
+	defer b.Mutex.RUnlock()
+
+	clients, ok := b.Clients[key]
+	if !ok {
+		return
+	}
+	if !clients[clientChan] {
+		return
+	}
+
+	select {
+	case clientChan <- message:
+	default:
+	}
+}
+
 func (b *WaitingUserBroker) startHeartbeat() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()

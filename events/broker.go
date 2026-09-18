@@ -105,6 +105,34 @@ func (b *Broker) Broadcast(storeID string, message string) {
 	}
 }
 
+// SendTo は指定した1つのクライアントにのみメッセージを送ります。
+//
+//   - 接続直後の初期データのような「その接続だけが必要とするもの」に使う。
+//     Broadcastで送ると同じ店舗の全接続に全件が再送され、客が1人接続するたびに
+//     既存の全員へ配信が飛ぶ (接続数に比例して転送量が膨らむ)
+//   - clientChanは RemoveClient / pingAndClean によってcloseされうる。closeされた
+//     チャネルへの送信はpanicになるため、必ずロックを取り、まだ登録されているかを
+//     確認してから送る。両者はcloseの前に排他Lockを取るので、RLock中は閉じられない
+func (b *Broker) SendTo(storeID string, clientChan chan string, message string) {
+	b.Mutex.RLock()
+	defer b.Mutex.RUnlock()
+
+	clients, ok := b.Clients[storeID]
+	if !ok {
+		return
+	}
+	if !clients[clientChan] {
+		// - 既に回収済み。closeされている可能性があるため送ってはならない
+		return
+	}
+
+	select {
+	case clientChan <- message:
+	default:
+		// - 受信側が詰まっている。初期データは次の更新で上書きされるため落としてよい
+	}
+}
+
 // startHeartbeat は30秒周期でpingAndCleanを実行するバックグラウンドゴルーチンです
 func (b *Broker) startHeartbeat() {
 	ticker := time.NewTicker(30 * time.Second)

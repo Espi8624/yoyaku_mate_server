@@ -179,11 +179,14 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	// - 接続時に初期データを送信
 	//   ハンドラ内で起動してもnet/httpのrecoverは効かない(別ゴルーチンのため)ので
 	//   panic保護を挟む。ここが落ちると全店舗のSSEが巻き添えになる
+	// - 送り先はこの接続だけ (SendTo)。以前はBroadcastしており、客が1人接続するたびに
+	//   同じ店舗の全接続へ全件が再送されていた。接続数に比例して転送量が増えるため、
+	//   混むほど遅くなる構造になっていた
 	utils.Go("sse_stream_initial_data", func() {
 		waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 		if err == nil {
 			jsonData, _ := json.Marshal(waitingList)
-			h.broker.Broadcast(storeID, string(jsonData))
+			h.broker.SendTo(storeID, clientChan, string(jsonData))
 		}
 	})
 
@@ -300,11 +303,13 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 	notify := r.Context().Done()
 
 	// - 接続時に初期データを送信 (HandleStreamと同じくpanic保護が必要)
+	// - 送り先はこの接続だけ。こちらのキーは (店舗ID:待機ID) なので通常は1接続だが、
+	//   客が複数タブを開いていると全タブに再送されることになる
 	utils.Go("sse_user_stream_initial_data", func() {
 		res, err := h.getWaitingUserResponse(storeID, waitingID)
 		if err == nil {
 			jsonData, _ := json.Marshal(res)
-			h.userBroker.Broadcast(key, string(jsonData))
+			h.userBroker.SendTo(key, clientChan, string(jsonData))
 		}
 	})
 

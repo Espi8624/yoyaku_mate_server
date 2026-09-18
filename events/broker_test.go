@@ -92,3 +92,75 @@ func TestRemoveClientDeletesEmptyStoreKey(t *testing.T) {
 		t.Fatal("接続時刻の記録が残っている")
 	}
 }
+
+// TestSendToOnlyReachesTargetClient は初期データが接続元にだけ届くことを検証する。
+//
+// 以前はBroadcastで送っており、客が1人接続するたびに同じ店舗の全接続へ
+// 全件が再送されていた。接続数に比例して転送量が増えるため、混むほど遅くなる
+func TestSendToOnlyReachesTargetClient(t *testing.T) {
+	b := newTestBroker()
+	target := make(chan string, 1)
+	other := make(chan string, 1)
+	b.AddClient("store-1", target)
+	b.AddClient("store-1", other)
+
+	b.SendTo("store-1", target, "initial")
+
+	select {
+	case got := <-target:
+		if got != "initial" {
+			t.Errorf("届いた内容が違う: %q", got)
+		}
+	default:
+		t.Fatal("接続元に初期データが届いていない")
+	}
+
+	select {
+	case got := <-other:
+		t.Errorf("無関係の接続にまで配信された: %q", got)
+	default:
+		// 期待通り
+	}
+}
+
+// TestSendToAfterRemoveDoesNotPanic は回収済みチャネルへの送信でpanicしないことを検証する。
+//
+// 初期データは別ゴルーチンで送るため、その間に客が画面を閉じると
+// RemoveClient がチャネルをcloseする。closeされたチャネルへの送信はpanicになる。
+// utils.Go のpanic保護でプロセスは落ちないが、切断のたびにスタックトレースが積み上がる
+func TestSendToAfterRemoveDoesNotPanic(t *testing.T) {
+	b := newTestBroker()
+	ch := make(chan string, 1)
+	b.AddClient("store-1", ch)
+	b.RemoveClient("store-1", ch) // ここで close される
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("回収済みチャネルへの送信でpanicした: %v", rec)
+		}
+	}()
+	b.SendTo("store-1", ch, "initial")
+}
+
+// TestSendToFullChannelDoesNotBlock は受信側が詰まっていても送信側が止まらないことを検証する。
+//
+// ブロックすると、初期データ用のゴルーチンが客の切断まで解放されない
+func TestSendToFullChannelDoesNotBlock(t *testing.T) {
+	b := newTestBroker()
+	ch := make(chan string, 1)
+	b.AddClient("store-1", ch)
+	ch <- "既に詰まっている"
+
+	done := make(chan struct{})
+	go func() {
+		b.SendTo("store-1", ch, "initial")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// 期待通り
+	case <-time.After(time.Second):
+		t.Fatal("詰まったチャネルへの送信でブロックした")
+	}
+}
