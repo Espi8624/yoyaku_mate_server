@@ -97,6 +97,62 @@ func RecoverMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// リクエストボディの上限。
+//
+//   - 上限が無いと、1リクエストのデコードだけでメモリを食い潰せる。このアプリは
+//     shared-cpu-1x / 256MB の1台構成であり、OOMはfly.ioの「静かな再起動」として現れる。
+//     全店舗のSSE接続が同時に切れ、原因もログに残りにくい
+//   - 形式ではなくサイズだけを見る。どのエンドポイントがどんなJSONを受けるかは
+//     変わっていくが、「常識的な上限」は変わらない
+const (
+	// maxJSONBodyBytes 通常のJSON APIの上限。
+	// 最大はメニューの一括保存 (menu-list/bulk-save) で、1品につき
+	// タイトル/説明/カテゴリーの翻訳を11言語分持つ。数百品の店舗でも十分収まる余裕を取る
+	maxJSONBodyBytes = 4 << 20 // 4MiB
+
+	// maxUploadBodyBytes 画像・営業許可証アップロードの上限。
+	// ハンドラ側の ParseMultipartForm(10MiB) はメモリ上限であってリクエスト全体の
+	// 上限ではないため、それを超える分をここで止める
+	maxUploadBodyBytes = 12 << 20 // 12MiB
+)
+
+// isUploadPath はマルチパートアップロードを受けるパスかどうかを返す
+func isUploadPath(path string) bool {
+	return path == "/api/stores/upload-license" || strings.HasSuffix(path, "/image")
+}
+
+// LimitRequestBodyMiddleware リクエストボディにサイズ上限を課すミドルウェア。
+//
+//   - Content-Length が分かっていて超過している場合は、読む前に413で返す。
+//     巨大なボディを最後まで受け取ってから弾くのでは帯域と時間を浪費する
+//   - Content-Length を信用できない場合 (chunked、詐称) のために MaxBytesReader も併用する。
+//     こちらは読み取り時にエラーになるため、ハンドラのデコード失敗として現れる
+func LimitRequestBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// - ボディを伴わないメソッドは対象外。特にSSE(GET)は接続が長く、
+		//   ここでラップしても意味が無い
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+		default:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		limit := int64(maxJSONBodyBytes)
+		if isUploadPath(r.URL.Path) {
+			limit = maxUploadBodyBytes
+		}
+
+		if r.ContentLength > limit {
+			utils.RespondWithError(w, "Request body is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // RequireDatabaseMiddleware MongoDBへの接続が確立していない間、APIリクエストを503で即座に返すミドルウェア。
 //
 //   - db.GetCollection は未接続時にnilを返す。リポジトリ層はそれを受け取ってそのまま

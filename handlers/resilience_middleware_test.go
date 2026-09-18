@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,6 +82,95 @@ func TestRecoverMiddleware(t *testing.T) {
 			panic(http.ErrAbortHandler)
 		}))
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/waiting-list", nil))
+	})
+}
+
+// TestLimitRequestBodyMiddleware リクエストボディの上限が効くことを確認する
+//
+// 上限が無いと1リクエストのデコードだけでメモリを食い潰せる。
+// shared-cpu-1x / 256MB の1台構成では、OOMは「静かな再起動」として現れ、
+// 全店舗のSSE接続が同時に切れる
+func TestLimitRequestBodyMiddleware(t *testing.T) {
+	echo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			// - MaxBytesReader は読み取り時にエラーを返す。ハンドラから見ると
+			//   デコード失敗として現れる経路
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	post := func(path string, size int) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(make([]byte, size)))
+		req.ContentLength = int64(size)
+		return req
+	}
+
+	t.Run("上限内のJSONは通る", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		LimitRequestBodyMiddleware(echo).ServeHTTP(rec, post("/api/waiting-list", 1024))
+		if rec.Code != http.StatusOK {
+			t.Errorf("通常のリクエストが弾かれた: status=%d", rec.Code)
+		}
+	})
+
+	t.Run("上限超過のJSONは413で止まる", func(t *testing.T) {
+		// - Content-Lengthが分かっている場合は読む前に弾く。
+		//   最後まで受け取ってから弾くのでは帯域と時間を浪費する
+		rec := httptest.NewRecorder()
+		LimitRequestBodyMiddleware(echo).ServeHTTP(rec, post("/api/waiting-list", maxJSONBodyBytes+1))
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("413が返っていない: status=%d", rec.Code)
+		}
+	})
+
+	t.Run("アップロードはJSONより大きい上限が使われる", func(t *testing.T) {
+		// - ハンドラ側の ParseMultipartForm(10MiB) を通せる余地を残す。
+		//   JSONと同じ上限にすると正規の画像アップロードが壊れる
+		size := maxJSONBodyBytes + 1
+		for _, path := range []string{
+			"/api/stores/upload-license",
+			"/api/provider_user/image",
+			"/api/provider_menu/abc/image",
+		} {
+			rec := httptest.NewRecorder()
+			LimitRequestBodyMiddleware(echo).ServeHTTP(rec, post(path, size))
+			if rec.Code != http.StatusOK {
+				t.Errorf("%s: 正規のアップロードが弾かれた: status=%d", path, rec.Code)
+			}
+		}
+	})
+
+	t.Run("アップロードでも上限を超えれば413", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		LimitRequestBodyMiddleware(echo).ServeHTTP(rec, post("/api/provider_user/image", maxUploadBodyBytes+1))
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("413が返っていない: status=%d", rec.Code)
+		}
+	})
+
+	t.Run("Content-Lengthを詐称してもMaxBytesReaderが止める", func(t *testing.T) {
+		// - chunkedや詐称でContent-Lengthが当てにならない場合の受け皿。
+		//   ここが無いと、上の事前チェックを迂回して無制限に読めてしまう
+		body := bytes.NewReader(make([]byte, maxJSONBodyBytes+1))
+		req := httptest.NewRequest(http.MethodPost, "/api/waiting-list", body)
+		req.ContentLength = -1 // 不明として扱わせる
+
+		rec := httptest.NewRecorder()
+		LimitRequestBodyMiddleware(echo).ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			t.Error("上限を超えたボディが最後まで読めてしまった")
+		}
+	})
+
+	t.Run("GETは対象外", func(t *testing.T) {
+		// - SSE(GET)は接続が長く、ここでラップする意味が無い
+		rec := httptest.NewRecorder()
+		LimitRequestBodyMiddleware(echo).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/waiting-list/stream", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GETが弾かれた: status=%d", rec.Code)
+		}
 	})
 }
 

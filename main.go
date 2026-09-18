@@ -165,14 +165,20 @@ func main() {
 	})
 
 	// - ミドルウェアの並び (外側→内側):
-	//     レートリミット → メトリクス → panic復帰 → CORS → DB準備確認 → ルーター
+	//     レートリミット → メトリクス → panic復帰 → CORS → ボディ上限 → DB準備確認 → ルーター
 	//   * panic復帰をメトリクスの内側に置くことで、復帰が書いた500がエラーダッシュボードに計上される。
 	//     外側に置くと、panicしたリクエストが監視上「正常」として消える
 	//   * DB準備確認をCORSの内側に置くことで、503応答にもCORSヘッダが付く。
 	//     外側だとブラウザが本来の503を読めず、原因不明のCORSエラーに化ける
+	//   * ボディ上限もCORSの内側。413にCORSヘッダが付かないと、ブラウザには
+	//     「大きすぎる」ではなくCORSエラーとして見える
 	handler := metrics.MetricsMiddleware(metrics.GetRequestTracker(), metrics.GetTracker())(
 		handlers.RecoverMiddleware(
-			c.Handler(handlers.RequireDatabaseMiddleware(r)),
+			c.Handler(
+				handlers.LimitRequestBodyMiddleware(
+					handlers.RequireDatabaseMiddleware(r),
+				),
+			),
 		),
 	)
 
