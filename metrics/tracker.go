@@ -19,6 +19,35 @@ var (
 	once    sync.Once
 )
 
+// dbDownLogged 「DB未接続のため保存を見送っている」旨を既にログへ出したかどうか。
+// 3つのトラッカーで共有し、状態が変わったときだけ記録する
+var dbDownLogged atomic.Bool
+
+// skipFlushWhileDBDown はMongoDBが未接続の間、バッチ保存を丸ごと見送るべきかを返す。
+//
+//   - db.GetCollection は未接続時にnilを返す。ErrorTrackerのflushはそれをnilチェックせず
+//     InsertManyを呼んでおり、DBが落ちている間は5秒ごとにpanicしていた。
+//     utils.GoForeverが復帰させるためプロセスは死なないが、fly.ioのログに
+//     5秒おきにスタックトレースが積み上がり、本当の障害原因が埋もれる
+//   - バッファを取り出す**前**に判定するのが要点。従来のnilチェックは
+//     バッファを空にした後に置かれていたため、DBが落ちている間のログは
+//     復旧しても戻らず捨てられていた。ここで見送れば、溜めたまま復旧を待てる
+//   - バッファはいずれも1,000件で頭打ちになるため、待っている間にメモリを食い潰すことはない
+//   - ログは状態が変わったときだけ出す。3つのワーカーが5秒周期で回るため、
+//     毎回出すと分あたり数十行になり、スタックトレースと同じように本当の原因を埋めてしまう
+func skipFlushWhileDBDown() bool {
+	if db.IsReady() {
+		if dbDownLogged.Swap(false) {
+			log.Println("MongoDBへ再接続しました。メトリクスのバッチ保存を再開します")
+		}
+		return false
+	}
+	if !dbDownLogged.Swap(true) {
+		log.Println("MongoDB未接続のため、メトリクスのバッチ保存を見送ります (復旧後にまとめて保存されます)")
+	}
+	return true
+}
+
 // - サーバー内で発生したエラーのカウントを一時的に集計し、詳細ログをメモリにバッファリングして非同期でバッチ保存するための構造体
 type ErrorTracker struct {
 	Count500 int64
@@ -75,12 +104,17 @@ func (t *ErrorTracker) startBatchWorker() {
 }
 
 func (t *ErrorTracker) flush() {
+	// - DB未接続時はバッファを抱えたまま何もしない (詳細は skipFlushWhileDBDown 参照)
+	if skipFlushWhileDBDown() {
+		return
+	}
+
 	t.mu.Lock()
 	if len(t.logBuffer) == 0 {
 		t.mu.Unlock()
 		return
 	}
-	
+
 	logsToInsert := make([]interface{}, len(t.logBuffer))
 	for i, logItem := range t.logBuffer {
 		logsToInsert[i] = logItem
@@ -183,6 +217,11 @@ func (t *RequestTracker) startBatchWorker() {
 
 // - メモリバッファの内容をMongoDBへバルクインサートし、完了後にバッファを初期化
 func (t *RequestTracker) flush() {
+	// - DB未接続時はバッファを抱えたまま何もしない (詳細は skipFlushWhileDBDown 参照)
+	if skipFlushWhileDBDown() {
+		return
+	}
+
 	t.mu.Lock()
 	if len(t.logBuffer) == 0 {
 		t.cleanupActiveUsers()
@@ -299,6 +338,11 @@ func (t *AuditTracker) startBatchWorker() {
 
 // - メモリバッファの内容をMongoDBの audit_logs コレクションに BulkInsert 後、バッファを初期化
 func (t *AuditTracker) flush() {
+	// - DB未接続時はバッファを抱えたまま何もしない (詳細は skipFlushWhileDBDown 参照)
+	if skipFlushWhileDBDown() {
+		return
+	}
+
 	t.mu.Lock()
 	if len(t.logBuffer) == 0 {
 		t.mu.Unlock()
