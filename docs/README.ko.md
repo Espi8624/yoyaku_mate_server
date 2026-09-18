@@ -70,6 +70,7 @@ docs/
 |------|------|
 | [001-lessons-learned.ko.md](./troubles/001-lessons-learned.ko.md) | Goroutine 리크, Rate Limiter 조정 등 개발 과정 회고 |
 | [002-active-user-ip-port-issue.ko.md](./troubles/002-active-user-ip-port-issue.ko.md) | 실시간 접속자의 에피메럴 포트 및 IPv6 중복 카운트 방지 해결 과정 |
+| [003-sse-heartbeat-and-zombie-cleanup.ko.md](./troubles/003-sse-heartbeat-and-zombie-cleanup.ko.md) | heartbeat가 데이터 이벤트로 전송되던 문제와, 좀비 커넥션 회수된 채널의 이중 close로 인한 panic |
 
 ---
 
