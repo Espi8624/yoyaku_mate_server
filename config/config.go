@@ -100,9 +100,14 @@ func Load() Config {
 		cfg.Server.Port = serverPort
 		log.Println("Using SERVER_PORT from environment variable")
 	}
-	if serverURL := os.Getenv("SERVER_URL"); serverURL != "" {
-		cfg.Server.URL = serverURL
-		log.Println("Using SERVER_URL from environment variable")
+	// - 環境変数名は API_URL。以前は SERVER_URL を読んでいたが、Infisical 側は
+	//   API_URL という名前で管理されており、名前が食い違っていたため
+	//   この値は実際には一度も注入されていなかった (常に既定値のままだった)
+	// - 名前を揃えるにあたり、より直感的な API_URL の側に寄せた。
+	//   SERVER_URL はどこからも設定されていなかったため、互換のための読み替えは置かない
+	if apiURL := os.Getenv("API_URL"); apiURL != "" {
+		cfg.Server.URL = apiURL
+		log.Println("Using API_URL from environment variable")
 	}
 	if hmacSecret := os.Getenv("HMAC_SECRET"); hmacSecret != "" {
 		cfg.HMACSecret = hmacSecret
