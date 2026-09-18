@@ -198,15 +198,26 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 				ClientIP:  r.RemoteAddr,
 			})
 			return
-		case msg := <-clientChan:
-			fmt.Fprintf(w, "data: %s\n\n", h.filterStreamMessage(msg, isStaff))
+		case msg, ok := <-clientChan:
+			// - pingAndCleanにゾンビ判定されてチャネルがcloseされると、受信は
+			//   ゼロ値を即座に返し続ける。放置するとこのループがCPUを焼き続けるため畳む
+			if !ok {
+				return
+			}
+			if msg == events.HeartbeatMessage {
+				// - keep-aliveはSSEコメントとして送る。データイベントにすると
+				//   クライアントがJSONとしてパースを試みることになる
+				fmt.Fprintf(w, "%s\n\n", msg)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", h.filterStreamMessage(msg, isStaff))
+			}
 			w.(http.Flusher).Flush()
 		}
 	}
 }
 
 // filterStreamMessage スタッフ接続以外にはcontact(個人情報)を除去したJSONを返す。
-// ":ping"等の非JSONメッセージ(ハートビート、events/broker.go参照)はパース失敗として原文のまま通す
+// ハートビートは呼び出し元で分岐済みのため、ここに来るのは待機リストのJSONのみ
 func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) string {
 	if isStaff {
 		return msg
@@ -308,8 +319,16 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 				ClientIP:  r.RemoteAddr,
 			})
 			return
-		case msg := <-clientChan:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+		case msg, ok := <-clientChan:
+			// - HandleStreamと同じ理由: closeされたチャネルでの空回りを防ぐ
+			if !ok {
+				return
+			}
+			if msg == events.HeartbeatMessage {
+				fmt.Fprintf(w, "%s\n\n", msg)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+			}
 			w.(http.Flusher).Flush()
 		}
 	}

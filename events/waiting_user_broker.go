@@ -63,13 +63,21 @@ func (b *WaitingUserBroker) RemoveClient(key string, clientChan chan string) {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
 
-	if clients, ok := b.Clients[key]; ok {
-		delete(clients, clientChan)
-		delete(b.connectedAt, clientChan)
-		close(clientChan)
-		if len(clients) == 0 {
-			delete(b.Clients, key)
-		}
+	clients, ok := b.Clients[key]
+	if !ok {
+		return
+	}
+	// - pingAndCleanにゾンビ判定されて既に回収(close)済みのチャネルを
+	//   もう一度closeするとpanicになる (events/broker.goのRemoveClientと同じ理由)
+	if _, exists := clients[clientChan]; !exists {
+		return
+	}
+
+	delete(clients, clientChan)
+	delete(b.connectedAt, clientChan)
+	close(clientChan)
+	if len(clients) == 0 {
+		delete(b.Clients, key)
 	}
 }
 
@@ -100,7 +108,7 @@ func (b *WaitingUserBroker) startHeartbeat() {
 }
 
 // pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を削除します
-// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
+// 送出するのはHeartbeatMessageセンチネルで、SSEコメント行への変換はハンドラ側が行います
 //
 // - 以前は走査中ずっと排他Lockを保持しており、全待機顧客分のping送信が終わるまでBroadcast(RLock)が
 //   待たされていた。notifyWaitingUsersが待機顧客ごとにBroadcastを呼ぶホットパスであるため、
@@ -113,7 +121,7 @@ func (b *WaitingUserBroker) pingAndClean() {
 	for key, clients := range b.Clients {
 		for ch := range clients {
 			select {
-			case ch <- ":ping":
+			case ch <- HeartbeatMessage:
 				// 正常チャネル: keep-aliveを維持
 			default:
 				// チャネルブロック = ゾンビ接続 → 削除対象として記録(走査中はまだ削除しない)

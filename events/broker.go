@@ -27,6 +27,12 @@ type BrokerStats struct {
 	AvgUptimeSeconds float64
 }
 
+// HeartbeatMessage はkeep-alive兼ゾンビ接続検知のためにブローカーが流すセンチネル。
+// SSEハンドラ側でコメント行(":ping\n\n")として書き出すこと。
+// データイベント("data: :ping")として送るとクライアントがJSONとしてパースを試みるため、
+// 各クライアントが個別に除外処理を持つ羽目になる
+const HeartbeatMessage = ":ping"
+
 var (
 	// シングルトンインスタンス
 	Instance *Broker
@@ -62,13 +68,22 @@ func (b *Broker) RemoveClient(storeID string, clientChan chan string) {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
 
-	if clients, ok := b.Clients[storeID]; ok {
-		delete(clients, clientChan)
-		delete(b.connectedAt, clientChan)
-		close(clientChan)
-		if len(clients) == 0 {
-			delete(b.Clients, storeID)
-		}
+	clients, ok := b.Clients[storeID]
+	if !ok {
+		return
+	}
+	// - pingAndCleanにゾンビ判定されて既に回収(close)済みのチャネルを
+	//   もう一度closeするとpanicになる。同じ店舗に他のクライアントが
+	//   残っているとマップ自体は存在するため、チャネル単位で登録を確認する
+	if _, exists := clients[clientChan]; !exists {
+		return
+	}
+
+	delete(clients, clientChan)
+	delete(b.connectedAt, clientChan)
+	close(clientChan)
+	if len(clients) == 0 {
+		delete(b.Clients, storeID)
 	}
 }
 
@@ -105,7 +120,7 @@ type zombieChannel struct {
 }
 
 // pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を削除します
-// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
+// 送出するのはHeartbeatMessageセンチネルで、SSEコメント行への変換はハンドラ側が行います
 //
 // - 以前は走査中ずっと排他Lockを保持しており、全店舗分のping送信が終わるまでBroadcast(RLock)が
 //   待たされ、店舗数・接続数が増えるほど全店舗の配信が周期的に詰まる原因になっていた。
@@ -117,7 +132,7 @@ func (b *Broker) pingAndClean() {
 	for storeID, clients := range b.Clients {
 		for ch := range clients {
 			select {
-			case ch <- ":ping":
+			case ch <- HeartbeatMessage:
 				// 正常チャネル: keep-aliveを維持
 			default:
 				// チャネルブロック = ゾンビ接続 → 削除対象として記録(走査中はまだ削除しない)
