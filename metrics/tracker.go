@@ -325,3 +325,16 @@ func (t *AuditTracker) flush() {
 		log.Printf("Failed to bulk insert audit logs: %v", err)
 	}
 }
+
+// FlushAll はメモリ上に滞留している全トラッカーのログをMongoDBへ書き出す。
+//
+// - バッチワーカーは5秒周期のため、シャットダウン時にこれを呼ばないと
+//   最大5秒ぶんのエラーログ・リクエストログ・監査ログが失われる。
+//   監査ログは「誰が何をしたか」の記録なので、落としてよいものではない
+// - 各トラッカーがまだ初期化されていない場合、Get系が初期化してから
+//   空のバッファをflushするだけで副作用は無い
+func FlushAll() {
+	GetTracker().flush()
+	GetRequestTracker().flush()
+	GetAuditTracker().flush()
+}
