@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"log"
+	"net/url"
 	"time"
 	"yoyaku_mate_server/config"
+	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -23,9 +25,35 @@ const (
 
 var MongoClient *mongo.Client
 
+// maskMongoURI は接続文字列から認証情報を伏せた、ログ出力用の文字列を返す。
+//
+// - 以前はURIをそのままログへ出しており、fly.ioのログにDBのユーザー名と
+//   パスワードが平文で残り続けていた。ログは保管され、アプリの閲覧権限が
+//   あれば誰でも読めるため、認証情報の置き場所としては最悪に近い
+// - 解析できなかった場合はURIを一切出さない。原文へフォールバックすると
+//   「伏せ字にしたつもりが出ている」という最も危険な状態になる
+func maskMongoURI(uri string) string {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "(URIの解析に失敗したため非表示)"
+	}
+
+	masked := *parsed
+	if parsed.User != nil {
+		// - "***" のような記号はパーセントエンコードされて "%2A%2A%2A" になり
+		//   ログが読みづらくなるため、エンコード対象にならない英字を使う
+		masked.User = url.User("REDACTED")
+	}
+	// - 現状のクエリはauthSource等だが、将来認証情報が混ざっても漏れないよう落とす。
+	//   接続先の特定にはスキーム+ホスト+DB名があれば足りる
+	masked.RawQuery = ""
+
+	return masked.String()
+}
+
 // Initialize MongoDB connection
 func InitMongoDB(uri string) error {
-	log.Printf("Try mongoDB connect: %s", uri)
+	log.Printf("Try mongoDB connect: %s", maskMongoURI(uri))
 
 	clientOptions := options.Client().
 		ApplyURI(uri).
@@ -64,12 +92,12 @@ func InitMongoDB(uri string) error {
 		// - インデックス作成はリクエスト処理をブロックしないようバックグラウンドで実行
 		//   (Fly.ioのコールドスタート時、起動からリスニング開始までの時間を最短化するため。
 		//    以前は同期実行しており、10個超のインデックスを順次作成する間ProxyがTimeoutしていた)
-		go func() {
+		utils.Go("mongo_ensure_indexes", func() {
 			if err := EnsureIndexes(); err != nil {
 				log.Printf("Failed to create indexes: %v", err)
 				// Index creation failure should not stop server startup, but warn loudly
 			}
-		}()
+		})
 
 		return nil
 	}
