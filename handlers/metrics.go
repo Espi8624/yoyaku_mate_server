@@ -64,7 +64,20 @@ func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
 		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
 		SetLimit(50) // fetch latest 50 logs
 
-	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+	// - 既定では SSE_DISCONNECT を除外する。
+	//   正常な切断 (客が画面を閉じた) は接続1本につき1件記録されるため件数が圧倒的に多く、
+	//   最新50件がこれで埋まって本当の500がウィンドウの外へ押し出される。
+	//   障害時に最初に開く画面がノイズで埋まっているのが一番困る
+	// - 件数自体はサマリ (GetErrorMetricsHandler の CountSSE) で見えるため、
+	//   ここで省いても情報は失われない
+	// - ?error_type= を付ければその種別だけを返す。SSE_DISCONNECT を明示指定すれば
+	//   切断だけを追うこともできる (error_type には idx_error_type がある)
+	filter := bson.M{"error_type": bson.M{"$ne": "SSE_DISCONNECT"}}
+	if errorType := r.URL.Query().Get("error_type"); errorType != "" {
+		filter = bson.M{"error_type": errorType}
+	}
+
+	cursor, err := collection.Find(ctx, filter, findOptions)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to fetch error logs", http.StatusInternalServerError)
 		return
