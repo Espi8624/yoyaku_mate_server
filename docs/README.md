@@ -72,6 +72,7 @@ docs/
 | [001-lessons-learned.md](./troubles/001-lessons-learned.md) | Goroutineリーク、Rate Limiter調整など開発プロセスの振り返り |
 | [002-active-user-ip-port-issue.md](./troubles/002-active-user-ip-port-issue.md) | リアルタイム接続者のエフェメラルポートおよびIPv6重複カウント防止解決プロセス |
 | [003-sse-heartbeat-and-zombie-cleanup.md](./troubles/003-sse-heartbeat-and-zombie-cleanup.md) | heartbeatがデータイベントとして配信されていた問題と、ゾンビ接続回収済みチャネルの二重closeによるpanic |
+| [004-production-readiness-hardening.md](./troubles/004-production-readiness-hardening.md) | 本番運用に向けた点検: 認証情報のログ出力、ゴルーチンのpanic保護、公開SSEの情報最小化、HTTPタイムアウト |
 
 ---
 
