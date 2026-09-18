@@ -303,7 +303,7 @@ panic保護を入れたが、**ハンドラ本体は `net/http` 既定のrecover
 |---|---|
 | Infisicalへの起動時依存 | [`Dockerfile`](../../Dockerfile) のCMDがマシン起動のたびに `app.infisical.com` を叩く。`min_machines_running = 0` のためこれは頻繁に起きる。さらに `curl \| jq` はcurlの失敗を握り潰す ([004](./004-production-readiness-hardening.md) と同じ罠) |
 | ~~冪等性にユニーク制約が無い~~ → **2026-09-18 解決** | `idx_store_waiting_id_unique` へ移行し、重複キーエラーをIDの出所別に分岐するよう修正。サーバー生成IDにもcrypto/randの接尾辞を付けた。詳細は [idempotency](../implementation/idempotency.md) |
-| リクエストボディのサイズ無制限 | `MaxBytesReader` の使用箇所が0件。256MBのマシンでJSONを無制限にデコードしている |
-| fly.ioプロキシの同時実行数が未設定 | `[http_service.concurrency]` が無い。SSEは接続を保持し続けるため、この値が実質の同時接続上限になる |
-| SSE初期データがBroadcastされている | 1人が接続するたびに同一店舗の全接続へ全件が再送される |
-| 正常切断がエラーとして記録される | `SSE_DISCONNECT` が `error_logs` に入るため、エラー率ベースのアラートが機能しにくい |
+| ~~リクエストボディのサイズ無制限~~ → **2026-09-18 解決** | JSON 4MiB / アップロード 12MiB の上限を課すミドルウェアを追加。Content-Length既知なら読む前に413、不明なら MaxBytesReader で止める |
+| ~~fly.ioプロキシの同時実行数が未設定~~ → **2026-09-18 解決** | 既定は soft_limit=20 だが hard_limit は未設定 = 強制されず、1台構成では実質無制限だった (当初「26接続目から繋がらない」と書いたのは誤り)。OOMのbackstopとして hard_limit=400 を置いた。数値は実測前の暫定値 |
+| ~~SSE初期データがBroadcastされている~~ → **2026-09-18 解決** | Broker/WaitingUserBroker に SendTo を追加し接続元にだけ送る。closeされたチャネルへ送らないようロック下で登録を確認する |
+| ~~正常切断がエラーとして記録される~~ → **2026-09-18 一部解決 / 前提が誤り** | アラートのエラー率は `request_logs` の status_code から算出し、SSEのパスは request ログの対象外なので**アラートは汚染されていなかった**。実際に困るのはエラーログ一覧で、最新50件が切断で埋まり本当の500が押し出されていた。一覧から既定で除外した (記録自体は SSE 監視のため継続) |

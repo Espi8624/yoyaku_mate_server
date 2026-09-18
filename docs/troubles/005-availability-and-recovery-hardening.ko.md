@@ -301,7 +301,7 @@ if !dbDownLogged.Swap(true) {
 |---|---|
 | Infisical 기동 시 의존 | [`Dockerfile`](../../Dockerfile)의 CMD가 머신 기동 때마다 `app.infisical.com`을 호출한다. `min_machines_running = 0`이라 이 일이 자주 일어난다. 게다가 `curl \| jq`는 curl의 실패를 삼킨다([004](./004-production-readiness-hardening.ko.md)와 같은 함정) |
 | ~~멱등성에 유니크 제약이 없음~~ → **2026-09-18 해결** | `idx_store_waiting_id_unique`로 전환하고, 중복키 에러를 ID 출처별로 분기하도록 수정. 서버 생성 ID에도 crypto/rand 접미사를 붙였다. 상세는 [idempotency](../implementation/idempotency.ko.md) |
-| 요청 본문 크기 무제한 | `MaxBytesReader` 사용처가 0건. 256MB 머신에서 JSON을 무제한으로 디코딩하고 있다 |
-| fly.io 프록시 동시 실행 수 미설정 | `[http_service.concurrency]`가 없다. SSE는 접속을 계속 유지하므로 이 값이 실질적인 동시 접속 상한이 된다 |
-| SSE 초기 데이터가 Broadcast됨 | 한 명이 접속할 때마다 같은 매장의 전체 접속자에게 전건이 재전송된다 |
-| 정상 종료가 에러로 기록됨 | `SSE_DISCONNECT`가 `error_logs`에 들어가서 에러율 기반 알림이 제 기능을 하기 어렵다 |
+| ~~요청 본문 크기 무제한~~ → **2026-09-18 해결** | JSON 4MiB / 업로드 12MiB 상한 미들웨어 추가. Content-Length를 알면 읽기 전 413, 모르면 MaxBytesReader로 차단 |
+| ~~fly.io 프록시 동시 실행 수 미설정~~ → **2026-09-18 해결** | 기본값은 soft_limit=20이지만 hard_limit은 미설정 = 강제되지 않아, 1대 구성에서는 사실상 무제한이었다 ("26번째 접속부터 막힌다"고 쓴 것은 오류). OOM backstop으로 hard_limit=400을 두었다. 수치는 실측 전 잠정값 |
+| ~~SSE 초기 데이터가 Broadcast됨~~ → **2026-09-18 해결** | Broker/WaitingUserBroker에 SendTo를 추가해 접속 당사자에게만 전송. 닫힌 채널로 보내지 않도록 락 하에서 등록 여부를 확인한다 |
+| ~~정상 종료가 에러로 기록됨~~ → **2026-09-18 일부 해결 / 전제가 오류** | 알림 에러율은 `request_logs`의 status_code로 계산하고 SSE 경로는 request 로깅 대상 외라 **알림은 오염되지 않았다**. 실제 문제는 에러 로그 목록으로, 최신 50건이 끊김으로 차서 진짜 500이 밀려나고 있었다. 목록에서 기본 제외했다 (기록 자체는 SSE 모니터링용으로 유지) |
