@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"yoyaku_mate_server/utils"
 )
@@ -20,8 +22,30 @@ import (
 
 var errGeminiRateLimited = errors.New("gemini API rate limited")
 
-// callGeminiForText Gemini APIを呼び出し、生成されたテキスト部分のみを返す共通ヘルパー
-func callGeminiForText(prompt string) (string, error) {
+// geminiTimeout Gemini API 1回の呼び出しに許す上限時間。
+//
+//   - 以前は http.Post (= http.DefaultClient) を使っており、タイムアウトが「無制限」だった。
+//     Geminiが応答を返さないと、そのリクエストはゴルーチンとfly.ioプロキシの接続枠を
+//     永久に掴んだままになる。呼び出し元の1つ /api/public/ai-chat は無認証の公開
+//     エンドポイントであり、マシン1台・256MB構成ではこれがサービス全体の停止に直結する
+//   - 両方の呼び出し経路とも ThinkingBudget: 0 (推論無効) のため通常は数秒で返る。
+//     15秒は「遅いが正常」を切り捨てない範囲での上限
+const geminiTimeout = 15 * time.Second
+
+// geminiErrorBodyLimit エラー応答の本文をログ用に読み取る上限。
+// 原因の特定にはこれだけあれば足り、巨大な応答でメモリを踏まれることもない
+const geminiErrorBodyLimit = 8 << 10 // 8KiB
+
+// geminiClient Gemini API専用のHTTPクライアント。
+// パッケージレベルで1つだけ持ち、コネクションプールを使い回す
+// (リクエストごとに生成すると毎回TCP+TLSハンドシェイクからやり直しになる)
+var geminiClient = &http.Client{Timeout: geminiTimeout}
+
+// callGeminiForText Gemini APIを呼び出し、生成されたテキスト部分のみを返す共通ヘルパー。
+//
+// ctx には呼び出し元のリクエストコンテキスト (r.Context()) を渡すこと。
+// 客がチャット画面を閉じた時点でGemini呼び出しも中断され、無駄な待ちと課金が発生しない
+func callGeminiForText(ctx context.Context, prompt string) (string, error) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
 		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
@@ -43,12 +67,19 @@ func callGeminiForText(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to build AI request: %w", err)
 	}
 
-	geminiURL := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s",
-		apiKey,
-	)
+	// - APIキーはクエリパラメータ(?key=)ではなくヘッダで渡す。
+	//   net/httpの通信エラーは *url.Error として「URL全体」をメッセージに含むため、
+	//   クエリに載せるとタイムアウト1回ごとにAPIキーがログへ平文で流れ出る
+	const geminiURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-	resp, err := http.Post(geminiURL, "application/json", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to build AI request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", apiKey)
+
+	resp, err := geminiClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to reach AI service: %w", err)
 	}
@@ -58,7 +89,7 @@ func callGeminiForText(prompt string) (string, error) {
 		return "", errGeminiRateLimited
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, geminiErrorBodyLimit))
 		return "", fmt.Errorf("gemini API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -157,7 +188,7 @@ func HandleTranslate(w http.ResponseWriter, r *http.Request) {
 		targetLang, req.Text,
 	)
 
-	translated, err := callGeminiForText(prompt)
+	translated, err := callGeminiForText(r.Context(), prompt)
 	if err != nil {
 		respondGeminiError(w, "HandleTranslate", err)
 		return
@@ -213,7 +244,7 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 
 	prompt := buildMultiTranslatePrompt(req.Texts, req.TargetLanguages, req.SmartMenuMode)
 
-	responseText, err := callGeminiForText(prompt)
+	responseText, err := callGeminiForText(r.Context(), prompt)
 	if err != nil {
 		respondGeminiError(w, "HandleTranslateMulti", err)
 		return

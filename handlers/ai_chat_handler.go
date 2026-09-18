@@ -97,16 +97,18 @@ func (h *AIChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// 店舗のリアルタイムコンテキスト (メニュー/待機状況/店舗設定) をサーバー内部で取得。
 	// 取得に失敗しても (例: store_idが不正) チャット自体は継続し、コンテキストなしで応答する
-	ctx, err := h.storeAIContextHandler.BuildContext(req.StoreID)
+	// - storeCtx は店舗情報であって context.Context ではない。Gemini呼び出しに渡すのは
+	//   リクエストのコンテキスト (r.Context()) の方なので、名前で取り違えないようにする
+	storeCtx, err := h.storeAIContextHandler.BuildContext(req.StoreID)
 	hasContext := err == nil
 	if err != nil {
 		log.Printf("[AIChatHandler] Failed to build store context for %s: %v", req.StoreID, err)
 	}
 
-	systemPrompt := buildChatSystemPrompt(ctx, hasContext, req.Nationality, req.LanguageCode, req.CurrentPage)
+	systemPrompt := buildChatSystemPrompt(storeCtx, hasContext, req.Nationality, req.LanguageCode, req.CurrentPage)
 	fullPrompt := systemPrompt + "\n\nお客様: " + req.UserMessage
 
-	replyText, err := callGeminiForText(fullPrompt)
+	replyText, err := callGeminiForText(r.Context(), fullPrompt)
 	if err != nil {
 		if errors.Is(err, errGeminiRateLimited) {
 			utils.RespondWithError(w, "AI service is busy. Please try again later.", http.StatusTooManyRequests)
