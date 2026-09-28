@@ -8,7 +8,10 @@ import (
 // TestMaskMongoURI は接続文字列がログへ出る際に認証情報が残らないことを検証する。
 // このマスキングが外れるとfly.ioのログにDBのパスワードが平文で蓄積される
 func TestMaskMongoURI(t *testing.T) {
-	const password = "s3cr3tP4ssw0rd"
+	// - テスト専用のダミー値。実在する認証情報ではない
+	// - 以前は "s3cr3tP4ssw0rd" としていたが、本物らしい形のため秘密情報スキャナ
+	//   (GitGuardian) に検知され、人が見ても実パスワードと紛らわしかった
+	const password = "not-a-real-password"
 
 	tests := []struct {
 		name string
