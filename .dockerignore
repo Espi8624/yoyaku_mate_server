@@ -27,3 +27,24 @@
 
 # secret key
 fly.toml
+
+# ローカル専用の設定ファイル・認証情報 (イメージへ絶対に入れない)
+# - Dockerfile は config/ を丸ごと /config へコピーするため、ここで除外しないと
+#   ローカルから flyctl deploy した際に .gitignore 済みのこれらがイメージへ焼き込まれる
+#   (GitHub Actions はチェックアウトからビルドするので元々含まれない。ローカル配備だけの穴)
+# - さらに GO_ENV 未設定の本番は /config/development.json を基本設定として読むため、
+#   環境変数が1つ欠けただけで本番が開発DBへ黙って接続する状態になっていた
+# - 本番の設定は全て環境変数 (Infisical → fly secrets) から受け取る
+config/*.json
+!config/*.json.example
+**/serviceAccountKey.json
+**/.infisical.json
+
+# ローカルのビルド成果物・ビルドに不要なもの (ビルドコンテキストの肥大化防止)
+yoyaku_mate_server
+tmp_server
+.git
+.github
+graphify-out
+docs
+fly.prod.toml
