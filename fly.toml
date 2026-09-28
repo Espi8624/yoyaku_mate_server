@@ -1,7 +1,9 @@
-# fly.toml app configuration file generated for saboten-server on 2025-10-23T22:38:17+09:00
+# 開発アプリ (rusui-dev) の fly.io 設定
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# - develop への push で GitHub Actions が自動デプロイする (.github/workflows/fly-deploy-dev.yml)
+# - 本番 (rusui-prod) は fly.prod.toml。本番へは必ず flyctl deploy -c fly.prod.toml で出すこと
+#   引数なしの flyctl deploy はどのブランチから実行しても、ここにある rusui-dev に出る
+# - See https://fly.io/docs/reference/configuration/
 
 app = 'rusui-dev'
 primary_region = 'nrt'
@@ -47,8 +49,8 @@ primary_region = 'nrt'
   # - これが無い間、fly.ioはマシンが「起動している」ことしか見ておらず、
   #   DBに繋がっていないマシンにもプロキシがトラフィックを流し続けていた。
   #   デプロイ時の検証も効かないため、壊れたリリースがそのまま本番に出る
-  # - grace_period は起動シーケンス (Infisicalからのシークレット取得 →
-  #   MongoDB接続、失敗時は5秒間隔で最大5回リトライ) を跨げる長さにする。
+  # - grace_period は起動時のMongoDB接続 (失敗時は5秒間隔で最大5回リトライし、
+  #   その後 ListenAndServe) を跨げる長さにする。
   #   短すぎると正常に起動中のマシンをunhealthyと判定し続けることになる
   # - マシンレベルのチェックはプロキシのリクエストとして集計されないため、
   #   auto_stop_machines の停止判定には影響しない

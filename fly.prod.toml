@@ -1,0 +1,64 @@
+# 本番アプリ (rusui-prod) の fly.io 設定
+#
+# デプロイ: flyctl deploy -c fly.prod.toml
+#
+# - 開発用 (rusui-dev) は fly.toml。デプロイ先をブランチではなく -c フラグで明示的に選ぶ
+#   以前は main / develop のどちらでも fly.toml が rusui-dev を指しており、
+#   main から flyctl deploy すると「失敗」ではなく「開発サーバーへ古いコードを上書き」していた
+# - dev との差分は下記3点のみ。それ以外の変更は fly.toml と揃えること
+#   1. app 名
+#   2. 常時1台起動 (auto_stop_machines = 'off' / min_machines_running = 1)
+#   3. (今後) 実測に基づく concurrency の調整
+# - マシン台数は必ず1台。SSEブローカーがインメモリのpub/subのため、2台にすると
+#   別マシンに繋がった端末へイベントが届かなくなる (flyctl scale count 1 を維持)
+
+app = 'rusui-prod'
+primary_region = 'nrt'
+
+[build]
+  [build.args]
+    GO_VERSION = '1.23.0'
+
+[env]
+  PORT = '8080'
+
+
+[dns]
+  nameservers = ["8.8.8.8", "8.8.4.4"]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # 常時起動。
+  #
+  # - dev (min_machines_running = 0) で実測したところ、停止中のマシンを起こす最初の
+  #   リクエストに約7.7秒かかった。QRを読んだ最初の客を7秒待たせることになる
+  # - auto-start で起きる場合は grace_period が効かないようで、起動中にヘルスチェックが
+  #   1回失敗する。常時起動ならこの経路自体が発生しない
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  # 同時接続数の上限。考え方は fly.toml と同じ (OOMによる全店舗SSE同時切断の backstop)
+  #
+  # - 数値は実測前の暫定値。本番の SSE Status ダッシュボード
+  #   (/api/admin/metrics/sse-status) で実際の同時接続数とメモリを見てから調整すること
+  [http_service.concurrency]
+    type = 'connections'
+    soft_limit = 200
+    hard_limit = 400
+
+  # ヘルスチェック。/health はMongoDBへのPingまで確認する (handlers/health_handler.go)
+  #
+  # - grace_period は起動時のMongoDB接続 (失敗時は5秒間隔で最大5回リトライし、
+  #   その後 ListenAndServe) を跨げる長さにする
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '40s'
+    method = 'GET'
+    path = '/health'
+
+[[vm]]
+  size = 'shared-cpu-1x'
