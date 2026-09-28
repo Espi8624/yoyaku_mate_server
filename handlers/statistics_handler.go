@@ -36,7 +36,10 @@ func NewStatisticsHandler(userRepo StatsUserRepository, storeRepo StatsStoreRepo
 	return &StatisticsHandler{userRepo: userRepo, storeRepo: storeRepo}
 }
 
-// HandleGet は店舗の統計情報を取得するリクエストを処理します
+// 曜日別集計のラベル（Mongoの $dayOfWeek は 1=日曜〜7=土曜）
+var weekdayLabels = [7]string{"日", "月", "火", "水", "木", "金", "土"}
+
+// HandleGet は店舗の統計情報（今日 or 今週固定）を取得するリクエストを処理します
 func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -76,16 +79,11 @@ func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = "auto"
+	if period != "weekly" {
+		period = "auto" // "今日" がデフォルト。今日/今週以外は受け付けない
 	}
 
-	// 統計情報の計算
-	dateStr := r.URL.Query().Get("date")
-	startDateStr := r.URL.Query().Get("start_date")
-	endDateStr := r.URL.Query().Get("end_date")
-
-	stats, err := h.CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr)
+	stats, err := h.CalculateStatistics(storeID, period)
 	if err != nil {
 		log.Printf("Failed to calculate statistics for store %s: %v", storeID, err)
 		utils.RespondWithError(w, "Failed to calculate statistics", http.StatusInternalServerError)
@@ -95,7 +93,9 @@ func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, stats, http.StatusOK)
 }
 
-func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startDateStr, endDateStr string) (*models.StatisticsResponse, error) {
+// CalculateStatistics は period="auto"(今日を時間帯別) / "weekly"(今週を曜日別、常に直近の週固定)
+// のいずれかで統計を集計する。過去の期間を指定して遡ることはできない。
+func (h *StatisticsHandler) CalculateStatistics(storeID, period string) (*models.StatisticsResponse, error) {
 	// 店舗情報の取得（タイムゾーン確認のため）
 	store, err := h.storeRepo.GetStoreData(storeID)
 	locationName := "Asia/Tokyo"
@@ -103,7 +103,6 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 		locationName = store.Timezone
 	}
 
-	// タイムゾーンのロード
 	loc, err := time.LoadLocation(locationName)
 	if err != nil {
 		log.Printf("Failed to load location '%s', defaulting to Asia/Tokyo: %v", locationName, err)
@@ -111,182 +110,103 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 		locationName = "Asia/Tokyo"
 	}
 
+	now := time.Now().In(loc)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+	var startCurrent, endCurrent, startPrev time.Time
+	if period == "weekly" {
+		// 直近の日曜日〜土曜日（今週）固定。前週も同じ幅で比較する
+		sunday := today.AddDate(0, 0, -int(today.Weekday()))
+		startCurrent = sunday
+		endCurrent = sunday.AddDate(0, 0, 7)
+		startPrev = sunday.AddDate(0, 0, -7)
+	} else {
+		startCurrent = today
+		endCurrent = today.AddDate(0, 0, 1)
+		startPrev = today.AddDate(0, 0, -1)
+	}
+
 	collection := db.GetCollection(db.DatabaseName, db.CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var now time.Time
-	if dateStr != "" {
-		parsed, err := time.ParseInLocation("2006-01-02", dateStr, loc)
-		if err != nil {
-			log.Printf("Invalid date format: %s. Defaulting to now.", dateStr)
-			now = time.Now().In(loc)
-		} else {
-			now = parsed
-		}
-	} else {
-		now = time.Now().In(loc)
-	}
-
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-
-	// 日付範囲設定
-	var startDate time.Time
-	var endDate time.Time
-	var prevStartDate time.Time
-	var dateFormat string
-
-	// Explicit Date Range Check
-	isExplicitRange := false
-	if startDateStr != "" && endDateStr != "" {
-		s, err1 := time.ParseInLocation("2006-01-02", startDateStr, loc)
-		e, err2 := time.ParseInLocation("2006-01-02", endDateStr, loc)
-		if err1 == nil && err2 == nil {
-			startDate = s
-			// End date from frontend is typically inclusive (e.g. 2024-01-27 to 2024-02-02).
-			// Backend logic treats endDate as exclusive upper bound ($lt).
-			// So we need to add 1 day to the parsed end date.
-			// Example: "2026-02-02" -> Parse -> 00:00:00. AddDate(0,0,1) -> Feb 3 00:00:00.
-			// Range: [Feb 2 00:00, Feb 3 00:00). Correct.
-			endDate = e.AddDate(0, 0, 1)
-
-			// Calculate duration for previous period
-			// duration := endDate.Sub(startDate) // This includes the +1 day adjustment
-			// Wait, let's look at logic.
-			// Current: [Start, End).
-			// Prev: [Start - duration, Start).
-			// Example: Weekly. Start=Jan 27, End=Feb 3 (inclusive logic). Duration = 7 days.
-			// Prev Start = Jan 27 - 7 days = Jan 20.
-			// Range: [Jan 20, Jan 27). Correct.
-			durationDays := int(endDate.Sub(startDate).Hours() / 24)
-			prevStartDate = startDate.AddDate(0, 0, -durationDays)
-
-			isExplicitRange = true
-
-			// Date Format determination based on period
-			if period == "yearly" {
-				dateFormat = "%Y-%m"
-			} else {
-				dateFormat = "%Y-%m-%d"
-			}
-		}
-	}
-
-	if !isExplicitRange {
-		switch period {
-		case "weekly":
-			// 過去7日間 (今日含む)
-			startDate = today.AddDate(0, 0, -6)
-			endDate = today.AddDate(0, 0, 1)
-			prevStartDate = startDate.AddDate(0, 0, -7)
-			dateFormat = "%Y-%m-%d"
-		case "monthly":
-			startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
-			endDate = startDate.AddDate(0, 1, 0)
-			prevStartDate = startDate.AddDate(0, -1, 0)
-			dateFormat = "%Y-%m-%d"
-		case "yearly":
-			startDate = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
-			endDate = startDate.AddDate(1, 0, 0)
-			prevStartDate = startDate.AddDate(-1, 0, 0)
-			dateFormat = "%Y-%m"
-		default: // "auto"
-			// デフォルト（今日）
-			startDate = today
-			endDate = today.AddDate(0, 0, 1)
-			// 1日前と比較
-			prevStartDate = today.AddDate(0, 0, -1)
-			dateFormat = "%Y-%m-%d"
-		}
-	}
-
-	// 1. 期間全体の統計データ (チャートデータ + 合計数)
-	// フィルタ開始日を「前期間の開始日」に設定して、両方の期間のデータを取得する
-	// フィルタ終了日を「現在の期間の終了日」に設定する
-	startFilter := prevStartDate.Format("2006-01-02T15:04:05.000")
-	endFilter := endDate.Format("2006-01-02T15:04:05.000")
-
+	layout := "2006-01-02T15:04:05.000"
 	matchStage := bson.D{{Key: "$match", Value: bson.D{
 		{Key: "store_id", Value: storeID},
 		{Key: "registration_time", Value: bson.D{
-			{Key: "$gte", Value: startFilter},
-			{Key: "$lt", Value: endFilter},
+			{Key: "$gte", Value: startPrev.Format(layout)},
+			{Key: "$lt", Value: endCurrent.Format(layout)},
 		}},
 	}}}
 
 	addFieldsStage := bson.D{{Key: "$addFields", Value: bson.D{
 		{Key: "reg_date_obj", Value: bson.D{
-			{Key: "$dateFromString", Value: bson.D{
-				{Key: "dateString", Value: "$registration_time"},
-			}},
+			{Key: "$dateFromString", Value: bson.D{{Key: "dateString", Value: "$registration_time"}}},
 		}},
 		{Key: "entry_date_obj", Value: bson.D{
 			{Key: "$cond", Value: bson.A{
 				bson.D{{Key: "$ne", Value: bson.A{"$entry_time", nil}}},
-				bson.D{{Key: "$dateFromString", Value: bson.D{
-					{Key: "dateString", Value: "$entry_time"},
-				}}},
+				bson.D{{Key: "$dateFromString", Value: bson.D{{Key: "dateString", Value: "$entry_time"}}}},
 				nil,
 			}},
 		}},
 	}}}
 
-	// 詳細データ集計パイプライン
+	// バケットキー: autoは時間帯(0-23), weeklyは曜日(1=日〜7=土)
+	var bucketExpr bson.D
+	if period == "weekly" {
+		bucketExpr = bson.D{{Key: "$dayOfWeek", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}
+	} else {
+		bucketExpr = bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}
+	}
+
+	// ステータス別(current/prev)にバケット集計するfacetを組み立てるヘルパー
+	bucketFacet := func(status string, from, to time.Time) bson.A {
+		return bson.A{
+			bson.D{{Key: "$match", Value: bson.D{
+				{Key: "status", Value: status},
+				{Key: "registration_time", Value: bson.D{
+					{Key: "$gte", Value: from.Format(layout)},
+					{Key: "$lt", Value: to.Format(layout)},
+				}},
+			}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: bucketExpr},
+				{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			}}},
+		}
+	}
+
 	facetStage := bson.D{{Key: "$facet", Value: bson.D{
-		// A. チャート用データ（日別/月別グルーピング）
-		{Key: "chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "no_show_chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "cancelled_chart_data", Value: bson.A{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "group_key", Value: bson.D{{Key: "$dateToString", Value: bson.D{{Key: "format", Value: dateFormat}, {Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$group_key"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
-			}}},
-		}},
+		{Key: "visitor_current", Value: bucketFacet("completed", startCurrent, endCurrent)},
+		{Key: "visitor_prev", Value: bucketFacet("completed", startPrev, startCurrent)},
+		{Key: "cancelled_current", Value: bucketFacet("cancelled", startCurrent, endCurrent)},
+		{Key: "cancelled_prev", Value: bucketFacet("cancelled", startPrev, startCurrent)},
+		{Key: "no_show_current", Value: bucketFacet("no_show", startCurrent, endCurrent)},
+		{Key: "no_show_prev", Value: bucketFacet("no_show", startPrev, startCurrent)},
 
-		// B. ハイライト用集計 (期間全体)
-		// 今回（現在の期間）の統計: >= startDate AND < endDate
-		{Key: "stats_current", Value: bson.A{
+		// ハイライト用の期間合計 (現在の期間)
+		{Key: "totals_current", Value: bson.A{
 			bson.D{{Key: "$match", Value: bson.D{
 				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: endDate.Format("2006-01-02T15:04:05.000")},
+					{Key: "$gte", Value: startCurrent.Format(layout)},
+					{Key: "$lt", Value: endCurrent.Format(layout)},
 				}},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: nil},
 				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
+				{Key: "total_cancelled", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
+				{Key: "total_no_show", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
 				{Key: "total_count", Value: bson.D{{Key: "$sum", Value: 1}}},
-				{Key: "no_show_cancel_count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$in", Value: bson.A{"$status", bson.A{"no_show", "cancelled"}}}}, 1, 0}}}}}},
 			}}},
 		}},
-		// 前回（前の期間）の統計: >= prevStartDate AND < startDate
-		{Key: "stats_prev", Value: bson.A{
+		// 前期間(前日 or 前週)の来店者数のみ（成長率算出用）
+		{Key: "totals_prev", Value: bson.A{
 			bson.D{{Key: "$match", Value: bson.D{
 				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
+					{Key: "$gte", Value: startPrev.Format(layout)},
+					{Key: "$lt", Value: startCurrent.Format(layout)},
 				}},
 			}}},
 			bson.D{{Key: "$group", Value: bson.D{
@@ -294,11 +214,10 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
 			}}},
 		}},
-
-		// C. 平均待ち時間 (現在の期間)
+		// 平均待ち時間 (現在の期間)
 		{Key: "wait_times_current", Value: bson.A{
 			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
+				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startCurrent.Format(layout)}, {Key: "$lt", Value: endCurrent.Format(layout)}}},
 				{Key: "status", Value: "completed"},
 				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
 			}}},
@@ -308,38 +227,6 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 			bson.D{{Key: "$group", Value: bson.D{
 				{Key: "_id", Value: nil},
 				{Key: "avg_wait", Value: bson.D{{Key: "$avg", Value: "$wait_duration"}}},
-			}}},
-		}},
-
-		// D. 時間帯別データ (現在 vs 前回の集計)
-		// 時間ごとの傾向を見るために、期間内の全データの時間を集計する
-		{Key: "hourly_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startDate.Format("2006-01-02T15:04:05.000")}}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$hour"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		{Key: "hourly_prev", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: prevStartDate.Format("2006-01-02T15:04:05.000")},
-					{Key: "$lt", Value: startDate.Format("2006-01-02T15:04:05.000")},
-				}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "hour", Value: bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}},
-				{Key: "status", Value: 1},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$hour"},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
 			}}},
 		}},
 	}}}
@@ -360,247 +247,81 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period, dateStr, startD
 		result = results[0]
 	}
 
-	response := &models.StatisticsResponse{}
+	response := &models.StatisticsResponse{Period: period}
 
-	// --- 1. 訪問者統計の集計 ---
-	var currentTotal, prevTotal int
-
-	// 初期値は0
-	currentTotal = 0
-	prevTotal = 0
-
-	// 'stats_current' のパース
-	if statsCur, ok := result["stats_current"].(bson.A); ok && len(statsCur) > 0 {
-		sMap := statsCur[0].(bson.M)
-		if val, ok := sMap["total_visitors"].(int32); ok {
-			currentTotal = int(val)
+	// バケット数とラベル生成（autoは24時間、weeklyは7曜日）
+	bucketCount := 24
+	if period == "weekly" {
+		bucketCount = 7
+	}
+	labelFor := func(bucketIndex int) string {
+		if period == "weekly" {
+			return weekdayLabels[bucketIndex]
 		}
+		return time.Date(0, 1, 1, bucketIndex, 0, 0, 0, time.UTC).Format("15")
 	}
-	// 'stats_prev' のパース
-	if statsPrev, ok := result["stats_prev"].(bson.A); ok && len(statsPrev) > 0 {
-		sMap := statsPrev[0].(bson.M)
-		if val, ok := sMap["total_visitors"].(int32); ok {
-			prevTotal = int(val)
-		}
-	}
-
-	// 日次（auto）の場合、昨日や先週の同曜日の具体的なカウントも必要ですが、
-	// UIモデル（VisitorStats struct）は少し固定されています。
-	// フロントエンドは日次ビューの比較用に「昨日」と「先週同曜日」を具体的に使用します。
-	// 月次/週次の場合、「昨日」は通常「前期間」にマッピングされます。
-	// マッピング:
-	// Today -> 今回の期間の合計
-	// Yesterday -> 前回の期間の合計
-	// LastWeekSameDay -> 0 (集計ビューでは計算負荷削減のため計算しない、または前期間にマッピング)
-
-	// 注意: periodが 'auto' (日次) の場合、上記のロジックで 'stats_current' は今日の分、
-	// 'stats_prev' は昨日の分として計算されるため、問題ありません。
-
-	response.VisitorStats = models.VisitorStats{
-		Today:           currentTotal,
-		Yesterday:       prevTotal,
-		LastWeekSameDay: 0, // Not calculated for aggregate view to save query complexity
-		WowGrowthRate:   0, // Not calculated
-		DodGrowthRate:   CalculateGrowthRate(currentTotal, prevTotal),
-	}
-
-	// --- 2. チャートデータ ---
-	chartMap := make(map[string]int)
-	if charts, ok := result["chart_data"].(bson.A); ok {
-		for _, c := range charts {
-			cMap := c.(bson.M)
-			key := cMap["_id"].(string)
-			count := int(cMap["count"].(int32))
-			chartMap[key] = count
-		}
-	}
-	noShowChartMap := make(map[string]int)
-	if nsCharts, ok := result["no_show_chart_data"].(bson.A); ok {
-		for _, c := range nsCharts {
-			cMap := c.(bson.M)
-			key := cMap["_id"].(string)
-			count := int(cMap["count"].(int32))
-			noShowChartMap[key] = count
-		}
-	}
-	cancelledChartMap := make(map[string]int)
-	if cancelCharts, ok := result["cancelled_chart_data"].(bson.A); ok {
-		for _, c := range cancelCharts {
-			cMap := c.(bson.M)
-			key := cMap["_id"].(string)
-			count := int(cMap["count"].(int32))
-			cancelledChartMap[key] = count
-		}
-	}
-
-	// 日付の欠落を埋める
-	response.ChartData = make([]models.ChartData, 0)
-	response.NoShowChartData = make([]models.ChartData, 0)
-	response.CancelledChartData = make([]models.ChartData, 0)
-
-	// Initialize Totals
-	totalCancelled := 0
-	totalNoShow := 0
-
-	// ループ処理 (週間/月間/年間/日次)
-	// 日付範囲に基づいてループ回数を決定する
-	daysDiff := int(endDate.Sub(startDate).Hours() / 24)
-	if daysDiff <= 0 {
-		daysDiff = 1 // 最低1日
-	}
-
-	if period == "yearly" {
-		// 年次は月ごとのループ (最大12ヶ月)
-		// Explicit range (year) will span 12 months usually.
-		for i := 0; i < 12; i++ {
-			// Monthly iteration
-			// Note: d calculation needs careful handling if startDate is not Jan 1.
-			// But typically yearly view starts at Jan 1.
-			// If explicit range is used, startDate might be strictly defined.
-			d := startDate.AddDate(0, i, 0) // Add months
-			key := d.Format("2006-01")
-
-			valNoShow := noShowChartMap[key]
-			valCancelled := cancelledChartMap[key]
-			totalNoShow += valNoShow
-			totalCancelled += valCancelled
-
-			// Previous Period Logic for Year:
-			// Compare with Same Month Last Year.
-			prevD := d.AddDate(-1, 0, 0)
-			prevKey := prevD.Format("2006-01")
-			label := d.Format("1") + "月"
-
-			response.ChartData = append(response.ChartData, models.ChartData{
-				Label: label, Value: chartMap[key], PrevValue: chartMap[prevKey],
-			})
-			response.NoShowChartData = append(response.NoShowChartData, models.ChartData{
-				Label: label, Value: valNoShow, PrevValue: noShowChartMap[prevKey],
-			})
-			response.CancelledChartData = append(response.CancelledChartData, models.ChartData{
-				Label: label, Value: valCancelled, PrevValue: cancelledChartMap[prevKey],
-			})
-		}
-	} else {
-		// Weekly, Monthly, Auto -> Daily iteration
-		for i := 0; i < daysDiff; i++ {
-			d := startDate.AddDate(0, 0, i) // Add days
-			key := d.Format("2006-01-02")
-
-			valNoShow := noShowChartMap[key]
-			valCancelled := cancelledChartMap[key]
-			totalNoShow += valNoShow
-			totalCancelled += valCancelled
-
-			// Previous Period Logic:
-			// "Previous" depends on context.
-			// If Weekly -> prev is 7 days ago? Or user defined prevStartDate?
-			// Since we calculated chartMap and prevChartMap based on prevStartDate...
-			// BUT chart logic specifically generates `prevKey` to lookup in `chartMap`.
-			// The `chartMap` contains BOTH current and previous data?
-			// NO. `chartMap` comes from `facet -> chart_data` which ONLY looks at `prevStartDate`... wait.
-			// Let's re-read the pipeline logic.
-
-			// Pipeline 'chart_data' facet:
-			// $project -> dateToString. matchStage (outer) filters >= prevStartDate.
-			// So `chartMap` contains keys for BOTH [prevStart, Start) AND [Start, End).
-
-			// So `PrevValue` lookup needs to find the key corresponding to "Previous Equivalent Day".
-			// Rule:
-			// If Weekly/Daily/Auto: Previous = d - 7 days? Or d - duration?
-			// Standard practice: Weekly -> -7 days. Monthly -> -1 Month?
-			// Auto -> -1 day?
-
-			var prevD time.Time
-			if period == "monthly" {
-				prevD = d.AddDate(0, -1, 0)
-			} else if period == "weekly" {
-				prevD = d.AddDate(0, 0, -7)
-			} else {
-				// Auto or Custom
-				// Default to -1 day if strict "Daily" comparison,
-				// BUT commonly users want "Same day last week" for trends?
-				// Let's stick to simple logic:
-				// If Weekly -> -7. If Monthly -> -1 Month.
-				// Else (Auto) -> -1 Day (Yesterday).
-				prevD = d.AddDate(0, 0, -1)
+	// Mongoの $dayOfWeek は1始まり(1=日)なので、weeklyの場合は-1して0始まりに揃える
+	toBucketMap := func(facetName string) map[int]int {
+		m := make(map[int]int)
+		if arr, ok := result[facetName].(bson.A); ok {
+			for _, item := range arr {
+				im := item.(bson.M)
+				id := int(im["_id"].(int32))
+				if period == "weekly" {
+					id -= 1
+				}
+				m[id] = int(im["count"].(int32))
 			}
-			prevKey := prevD.Format("2006-01-02")
-
-			label := d.Format("2") // 日
-
-			response.ChartData = append(response.ChartData, models.ChartData{
-				Label: label, Value: chartMap[key], PrevValue: chartMap[prevKey],
-			})
-			response.NoShowChartData = append(response.NoShowChartData, models.ChartData{
-				Label: label, Value: valNoShow, PrevValue: noShowChartMap[prevKey],
-			})
-			response.CancelledChartData = append(response.CancelledChartData, models.ChartData{
-				Label: label, Value: valCancelled, PrevValue: cancelledChartMap[prevKey],
+		}
+		return m
+	}
+	buildChart := func(currentFacet, prevFacet string) []models.ChartData {
+		curMap := toBucketMap(currentFacet)
+		prevMap := toBucketMap(prevFacet)
+		chart := make([]models.ChartData, 0, bucketCount)
+		for i := 0; i < bucketCount; i++ {
+			chart = append(chart, models.ChartData{
+				Label:     labelFor(i),
+				Value:     curMap[i],
+				PrevValue: prevMap[i],
 			})
 		}
+		return chart
 	}
 
-	// Assign calculated totals
-	response.TotalCancelled = totalCancelled
-	response.TotalNoShow = totalNoShow
+	response.VisitorChart = buildChart("visitor_current", "visitor_prev")
+	response.CancelledChart = buildChart("cancelled_current", "cancelled_prev")
+	response.NoShowChart = buildChart("no_show_current", "no_show_prev")
 
-	// --- 3. 時間帯別データ (期間合計) ---
-	var hourlyData []models.HourlyData
-	hourlyMap := make(map[int]int)
-	hourlyPrevMap := make(map[int]int)
-
-	if hourly, ok := result["hourly_current"].(bson.A); ok {
-		for _, h := range hourly {
-			hMap := h.(bson.M)
-			hour := int(hMap["_id"].(int32))
-			count := int(hMap["count"].(int32))
-			hourlyMap[hour] = count
-		}
+	// --- ハイライト集計 ---
+	visitorTotal, cancelledTotal, noShowTotal, totalCount := 0, 0, 0, 0
+	if arr, ok := result["totals_current"].(bson.A); ok && len(arr) > 0 {
+		m := arr[0].(bson.M)
+		visitorTotal = int(m["total_visitors"].(int32))
+		cancelledTotal = int(m["total_cancelled"].(int32))
+		noShowTotal = int(m["total_no_show"].(int32))
+		totalCount = int(m["total_count"].(int32))
 	}
-	if hourlyPrev, ok := result["hourly_prev"].(bson.A); ok {
-		for _, h := range hourlyPrev {
-			hMap := h.(bson.M)
-			hour := int(hMap["_id"].(int32))
-			count := int(hMap["count"].(int32))
-			hourlyPrevMap[hour] = count
-		}
+	prevVisitorTotal := 0
+	if arr, ok := result["totals_prev"].(bson.A); ok && len(arr) > 0 {
+		m := arr[0].(bson.M)
+		prevVisitorTotal = int(m["total_visitors"].(int32))
 	}
 
-	for i := 0; i < 24; i++ {
-		hourlyData = append(hourlyData, models.HourlyData{
-			Hour:      i,
-			Count:     hourlyMap[i],
-			PrevCount: hourlyPrevMap[i],
-		})
+	response.VisitorTotal = visitorTotal
+	response.CancelledTotal = cancelledTotal
+	response.NoShowTotal = noShowTotal
+	response.VisitorGrowthRate = CalculateGrowthRate(visitorTotal, prevVisitorTotal)
+	if totalCount > 0 {
+		response.NoShowRate = (float64(cancelledTotal+noShowTotal) / float64(totalCount)) * 100
 	}
-	response.HourlyCongestion = hourlyData
 
-	// --- 4. 待ち時間 & 5. No Show率 (集計) ---
-	if waitTimes, ok := result["wait_times_current"].(bson.A); ok && len(waitTimes) > 0 {
-		wMap := waitTimes[0].(bson.M)
-		if avg, ok := wMap["avg_wait"].(float64); ok {
+	response.AverageWaitTime = "--分"
+	if arr, ok := result["wait_times_current"].(bson.A); ok && len(arr) > 0 {
+		m := arr[0].(bson.M)
+		if avg, ok := m["avg_wait"].(float64); ok {
 			response.WaitTimeSeconds = int(avg)
 			response.AverageWaitTime = utils.FormatDuration(int(avg))
-		}
-	} else {
-		response.AverageWaitTime = "--分"
-	}
-
-	if statusStats, ok := result["stats_current"].(bson.A); ok && len(statusStats) > 0 { // stats_current にはステータスカウントが含まれる
-		sMap := statusStats[0].(bson.M)
-		total := 0
-		if t, ok := sMap["total_count"].(int32); ok {
-			total = int(t)
-		}
-
-		noShowCancel := 0
-		if n, ok := sMap["no_show_cancel_count"].(int32); ok {
-			noShowCancel = int(n)
-		}
-
-		if total > 0 {
-			response.NoShowRate = (float64(noShowCancel) / float64(total)) * 100
 		}
 	}
 

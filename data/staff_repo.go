@@ -77,6 +77,24 @@ func (r *MongoStaffRepo) CheckStoreStaffExists(userID primitive.ObjectID, storeI
 	return count > 0, nil
 }
 
+// MarkStoreStaffWithdrawnByUserID 指定ユーザーの店舗スタッフ所属情報を全てWITHDRAWNにする
+// (会員退会時に使用)。削除はせず残すことで、店舗のスタッフ一覧に「退会済み」として
+// 表示され続け、マネージャーが後から連絡先を確認できるようにする。
+// スタッフは複数店舗に所属し得るため、該当ユーザーの全ドキュメントを対象にする
+func (r *MongoStaffRepo) MarkStoreStaffWithdrawnByUserID(userID primitive.ObjectID) error {
+	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	update := bson.M{"$set": bson.M{"status": models.StaffStatusWithdrawn}}
+	_, err := collection.UpdateMany(ctx, bson.M{"user_id": userID}, update)
+	if err != nil {
+		log.Printf("Failed to mark store_staff_info withdrawn for user '%s': %v", userID.Hex(), err)
+		return err
+	}
+	return nil
+}
+
 func (r *MongoStaffRepo) CreateStoreStaffInfo(info models.StoreStaffInfo) error {
 	collection := db.GetCollection(DatabaseName, CollectionStoreStaffInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -108,17 +126,22 @@ func (r *MongoStaffRepo) GetStoreStaffByStoreID(storeID string) ([]map[string]in
 		}}},
 		{{Key: "$unwind", Value: "$user_details"}},
 		{{Key: "$project", Value: bson.M{
-			"_id":          1,
-			"user_id":      1,
-			"store_id":     1,
-			"role":         1,
-			"status":       1,
-			"permissions":  1,
-			"created_at":   1,
-			"updated_at":   1,
-			"availability": 1,
-			"user_name":    "$user_details.user_name",
-			"email":        "$user_details.email",
+			"_id":               1,
+			"user_id":           1,
+			"store_id":          1,
+			"role":              1,
+			"status":            1,
+			"has_been_approved": 1,
+			"permissions":       1,
+			"created_at":        1,
+			"updated_at":        1,
+			"availability":      1,
+			"user_name":         "$user_details.user_name",
+			"email":             "$user_details.email",
+			// 退会済み(WITHDRAWN)スタッフでもマネージャーが連絡できるよう、
+			// 電話番号・住所も併せて取得する
+			"phone":   "$user_details.phone",
+			"address": "$user_details.address",
 		}}},
 	}
 
@@ -148,12 +171,16 @@ func (r *MongoStaffRepo) UpdateStoreStaffStatus(staffID string, status string) e
 		return err
 	}
 
-	update := bson.M{
-		"$set": bson.M{
-			"status":     status,
-			"updated_at": time.Now(),
-		},
+	setFields := bson.M{
+		"status":     status,
+		"updated_at": time.Now(),
 	}
+	// 承認された事実は取り消し後も残す(REJECTEDが「申請却下」か「承認取り消し」かを
+	// クライアント側で区別するために使う。一度trueになったら以後falseへは戻さない)
+	if status == models.StaffStatusApproved {
+		setFields["has_been_approved"] = true
+	}
+	update := bson.M{"$set": setFields}
 
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objID}, update)
 	if err != nil {

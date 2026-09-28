@@ -3,6 +3,8 @@ package events
 import (
 	"sync"
 	"time"
+
+	"yoyaku_mate_server/utils"
 )
 
 // Broker はSSEクライアントを管理し、メッセージをブロードキャストします
@@ -27,6 +29,12 @@ type BrokerStats struct {
 	AvgUptimeSeconds float64
 }
 
+// HeartbeatMessage はkeep-alive兼ゾンビ接続検知のためにブローカーが流すセンチネル。
+// SSEハンドラ側でコメント行(":ping\n\n")として書き出すこと。
+// データイベント("data: :ping")として送るとクライアントがJSONとしてパースを試みるため、
+// 各クライアントが個別に除外処理を持つ羽目になる
+const HeartbeatMessage = ":ping"
+
 var (
 	// シングルトンインスタンス
 	Instance *Broker
@@ -40,7 +48,7 @@ func GetBroker() *Broker {
 			Clients:     make(map[string]map[chan string]bool),
 			connectedAt: make(map[chan string]time.Time),
 		}
-		go Instance.startHeartbeat()
+		utils.GoForever("sse_broker_heartbeat", Instance.startHeartbeat)
 	})
 	return Instance
 }
@@ -62,13 +70,22 @@ func (b *Broker) RemoveClient(storeID string, clientChan chan string) {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
 
-	if clients, ok := b.Clients[storeID]; ok {
-		delete(clients, clientChan)
-		delete(b.connectedAt, clientChan)
-		close(clientChan)
-		if len(clients) == 0 {
-			delete(b.Clients, storeID)
-		}
+	clients, ok := b.Clients[storeID]
+	if !ok {
+		return
+	}
+	// - pingAndCleanにゾンビ判定されて既に回収(close)済みのチャネルを
+	//   もう一度closeするとpanicになる。同じ店舗に他のクライアントが
+	//   残っているとマップ自体は存在するため、チャネル単位で登録を確認する
+	if _, exists := clients[clientChan]; !exists {
+		return
+	}
+
+	delete(clients, clientChan)
+	delete(b.connectedAt, clientChan)
+	close(clientChan)
+	if len(clients) == 0 {
+		delete(b.Clients, storeID)
 	}
 }
 
@@ -88,6 +105,34 @@ func (b *Broker) Broadcast(storeID string, message string) {
 	}
 }
 
+// SendTo は指定した1つのクライアントにのみメッセージを送ります。
+//
+//   - 接続直後の初期データのような「その接続だけが必要とするもの」に使う。
+//     Broadcastで送ると同じ店舗の全接続に全件が再送され、客が1人接続するたびに
+//     既存の全員へ配信が飛ぶ (接続数に比例して転送量が膨らむ)
+//   - clientChanは RemoveClient / pingAndClean によってcloseされうる。closeされた
+//     チャネルへの送信はpanicになるため、必ずロックを取り、まだ登録されているかを
+//     確認してから送る。両者はcloseの前に排他Lockを取るので、RLock中は閉じられない
+func (b *Broker) SendTo(storeID string, clientChan chan string, message string) {
+	b.Mutex.RLock()
+	defer b.Mutex.RUnlock()
+
+	clients, ok := b.Clients[storeID]
+	if !ok {
+		return
+	}
+	if !clients[clientChan] {
+		// - 既に回収済み。closeされている可能性があるため送ってはならない
+		return
+	}
+
+	select {
+	case clientChan <- message:
+	default:
+		// - 受信側が詰まっている。初期データは次の更新で上書きされるため落としてよい
+	}
+}
+
 // startHeartbeat は30秒周期でpingAndCleanを実行するバックグラウンドゴルーチンです
 func (b *Broker) startHeartbeat() {
 	ticker := time.NewTicker(30 * time.Second)
@@ -98,26 +143,55 @@ func (b *Broker) startHeartbeat() {
 	}
 }
 
-// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を即座に削除します
-// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
-func (b *Broker) pingAndClean() {
-	b.Mutex.Lock()
-	defer b.Mutex.Unlock()
+// zombieChannel pingAndClean内でゾンビ判定されたチャネルを削除フェーズまで保持するための記録
+type zombieChannel struct {
+	storeID string
+	ch      chan string
+}
 
+// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を削除します
+// 送出するのはHeartbeatMessageセンチネルで、SSEコメント行への変換はハンドラ側が行います
+//
+// - 以前は走査中ずっと排他Lockを保持しており、全店舗分のping送信が終わるまでBroadcast(RLock)が
+//   待たされ、店舗数・接続数が増えるほど全店舗の配信が周期的に詰まる原因になっていた。
+// - 送信は非ブロッキング(select-default)でマップを書き換えないため、RLockで走査すれば
+//   Broadcastとは同時実行できる。ゾンビ削除だけを短時間の排他Lockに分離する。
+func (b *Broker) pingAndClean() {
+	b.Mutex.RLock()
+	var zombies []zombieChannel
 	for storeID, clients := range b.Clients {
 		for ch := range clients {
 			select {
-			case ch <- ":ping":
+			case ch <- HeartbeatMessage:
 				// 正常チャネル: keep-aliveを維持
 			default:
-				// チャネルブロック = ゾンビ接続 → 即座に削除
-				delete(clients, ch)
-				delete(b.connectedAt, ch)
-				close(ch)
+				// チャネルブロック = ゾンビ接続 → 削除対象として記録(走査中はまだ削除しない)
+				zombies = append(zombies, zombieChannel{storeID, ch})
 			}
 		}
+	}
+	b.Mutex.RUnlock()
+
+	if len(zombies) == 0 {
+		return
+	}
+
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	for _, z := range zombies {
+		clients, ok := b.Clients[z.storeID]
+		if !ok {
+			continue
+		}
+		// - RUnlockからLock取得までの間にRemoveClientで既に正常削除されている可能性があるため確認
+		if _, exists := clients[z.ch]; !exists {
+			continue
+		}
+		delete(clients, z.ch)
+		delete(b.connectedAt, z.ch)
+		close(z.ch)
 		if len(clients) == 0 {
-			delete(b.Clients, storeID)
+			delete(b.Clients, z.storeID)
 		}
 	}
 }

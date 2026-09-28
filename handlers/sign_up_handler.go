@@ -75,6 +75,27 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 本人情報(生年月日・住所)の必須フィールド検証 (建物名のみ任意)
+	if req.Birthdate == "" || req.ZipCode == "" || req.Prefecture == "" || req.City == "" || req.Address == "" {
+		utils.RespondWithError(w, "Missing required personal info fields (birthdate/address)", http.StatusBadRequest)
+		return
+	}
+
+	// 生年月日の形式検証 + 満年齢が労働基準法上の最低就労年齢(満15歳)以上か確認
+	birthdate, err := time.Parse("2006-01-02", req.Birthdate)
+	if err != nil {
+		utils.RespondWithError(w, "Invalid birthdate format (expected YYYY-MM-DD)", http.StatusBadRequest)
+		return
+	}
+	if birthdate.After(time.Now()) {
+		utils.RespondWithError(w, "Birthdate cannot be in the future", http.StatusBadRequest)
+		return
+	}
+	if calculateAge(birthdate) < 15 {
+		utils.RespondWithError(w, "Applicant must be at least 15 years old", http.StatusBadRequest)
+		return
+	}
+
 	// 権限検証
 	if req.Role != "manager" && req.Role != "staff" {
 		utils.RespondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
@@ -96,7 +117,7 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// MongoDB Transaction スタート
-	session, err := db.MongoClient.StartSession()
+	session, err := db.Client().StartSession()
 	if err != nil {
 		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return
@@ -108,9 +129,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 		userCollection := db.GetCollection(DatabaseName, UsersCollection)
 		storeCollection := db.GetCollection(DatabaseName, StoresCollection)
 
-		// ユーザー中腹確認 (FirebaseUID, メールアドレス, 個人電話番号)
+		// ユーザー重複確認 (FirebaseUID, メールアドレス, 個人電話番号)。
+		// 退会済み(WITHDRAWN)アカウントは対象から除外する: 退会は連絡先を残す
+		// ソフトデリートのため、同じメール/電話番号で改めて新規登録できてよい
+		// (Firebase Auth側のアカウントは退会時に削除済みなので衝突しない)
 		var existingUser models.User
 		err := userCollection.FindOne(sessCtx, bson.M{
+			"status": bson.M{"$ne": models.UserStatusWithdrawn},
 			"$or": []bson.M{
 				{"firebase_uid": req.FirebaseUID},
 				{"email": req.Email},
@@ -136,6 +161,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 				if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
 					return nil, fmt.Errorf("invalid store phone number format (e.g., 02-123-4567)")
 				}
+				// 業種タグ必須検証
+				if req.StoreCategory == nil || *req.StoreCategory == "" {
+					return nil, fmt.Errorf("business category is required")
+				}
+				if !models.IsValidStoreCategory(*req.StoreCategory) {
+					return nil, fmt.Errorf("Invalid business category")
+				}
 
 				// 店舗電話番号重複検査
 				count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
@@ -147,16 +179,17 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				createdStore := models.Store{
-					ID:         primitive.NewObjectID(),
-					StoreName:  *req.StoreName,
-					Address:    *req.StoreAddress,
-					Building:   utils.GetStringPointerValue(req.StoreBuilding, ""),
-					ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
-					Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
-					City:       utils.GetStringPointerValue(req.StoreCity, ""),
-					Phone:      *req.StoreTelNumber,
-					StoreID:    primitive.NewObjectID().Hex(),
-					UserID:     newUserID,
+					ID:               primitive.NewObjectID(),
+					StoreName:        *req.StoreName,
+					BusinessCategory: *req.StoreCategory,
+					Address:          *req.StoreAddress,
+					Building:         utils.GetStringPointerValue(req.StoreBuilding, ""),
+					ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
+					Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
+					City:             utils.GetStringPointerValue(req.StoreCity, ""),
+					Phone:            *req.StoreTelNumber,
+					StoreID:          primitive.NewObjectID().Hex(),
+					UserID:           newUserID,
 				}
 
 				_, err = storeCollection.InsertOne(sessCtx, createdStore)
@@ -264,6 +297,12 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			Email:            req.Email,
 			Phone:            req.PhoneNumber,
 			Role:             req.Role,
+			Birthdate:        req.Birthdate,
+			ZipCode:          req.ZipCode,
+			Prefecture:       req.Prefecture,
+			City:             req.City,
+			Address:          req.Address,
+			Building:         req.Building,
 			StoreID:          storeIdForUser, // 空文字の場合はomitemptyで無視、または空文字として保存
 			TermsAgreed:      req.TermsAgreed,
 			TermsAgreedAt:    termsAgreedAt,
@@ -271,7 +310,9 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 			PrivacyAgreedAt:  privacyAgreedAt,
 		}
 
-		// ユーザー生成
+		// ユーザー生成 (退会済みアカウントと同じメール/電話番号でも、別ドキュメント・
+		// 別UIDの新規ユーザーとして作成する。退会済みの古いドキュメントはそのまま
+		// 履歴として残る)
 		_, err = userCollection.InsertOne(sessCtx, newUser)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create user: %w", err)
@@ -324,6 +365,18 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	utils.RespondWithJSON(w, result, http.StatusCreated)
 }
 
+// calculateAge 生年月日から満年齢を計算する(誕生日を迎えているかどうかを考慮)
+func calculateAge(birthdate time.Time) int {
+	now := time.Now()
+	age := now.Year() - birthdate.Year()
+	// 今年の誕生日がまだ来ていない場合は1歳引く
+	if now.Month() < birthdate.Month() ||
+		(now.Month() == birthdate.Month() && now.Day() < birthdate.Day()) {
+		age--
+	}
+	return age
+}
+
 func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -364,8 +417,13 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 1. MongoDB check
+	// 退会済み(WITHDRAWN)アカウントは、同じメールアドレスでの新規登録を
+	// 妨げないよう件数から除外する(退会は連絡先を残すソフトデリートのため)
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	count, err := userCollection.CountDocuments(r.Context(), bson.M{"email": req.Email})
+	count, err := userCollection.CountDocuments(r.Context(), bson.M{
+		"email":  req.Email,
+		"status": bson.M{"$ne": models.UserStatusWithdrawn},
+	})
 	if err != nil {
 		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -374,6 +432,7 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	// 2. Firebase Auth check
 	// MongoDBに存在しない場合でもFirebaseに存在する可能性があるため、チェックする
 	// ただし、メール未認証のアカウントは再登録を許可する
+	// (退会済みアカウントのFirebaseユーザーは退会時に既に削除済みのため、ここには残らない)
 	firebaseUserRecord, firebaseErr := auth.GetUserByEmail(r.Context(), req.Email)
 	firebaseExists := (firebaseErr == nil)
 
@@ -418,8 +477,12 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, "Invalid phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
+	// 退会済み(WITHDRAWN)アカウントは、同じ電話番号での新規登録を妨げないよう除外する
 	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	count, err := userCollection.CountDocuments(r.Context(), bson.M{"phone": req.PhoneNumber})
+	count, err := userCollection.CountDocuments(r.Context(), bson.M{
+		"phone":  req.PhoneNumber,
+		"status": bson.M{"$ne": models.UserStatusWithdrawn},
+	})
 	if err != nil {
 		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -453,7 +516,7 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := db.MongoClient.StartSession()
+	session, err := db.Client().StartSession()
 	if err != nil {
 		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return
@@ -488,6 +551,13 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
 			return nil, fmt.Errorf("invalid store phone number format")
 		}
+		// 業種タグ必須検証
+		if req.StoreCategory == nil || *req.StoreCategory == "" {
+			return nil, fmt.Errorf("business category is required")
+		}
+		if !models.IsValidStoreCategory(*req.StoreCategory) {
+			return nil, fmt.Errorf("invalid business category")
+		}
 		count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
 		if err != nil {
 			return nil, fmt.Errorf("database error during store phone check: %w", err)
@@ -498,16 +568,17 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 		// 新しい店舗データ生成
 		newStore := models.Store{
-			ID:         primitive.NewObjectID(),
-			StoreName:  *req.StoreName,
-			Address:    *req.StoreAddress,
-			Building:   utils.GetStringPointerValue(req.StoreBuilding, ""), // New
-			ZipCode:    utils.GetStringPointerValue(req.StoreZipCode, ""),
-			Prefecture: utils.GetStringPointerValue(req.StorePrefecture, ""),
-			City:       utils.GetStringPointerValue(req.StoreCity, ""),
-			Phone:      *req.StoreTelNumber,
-			StoreID:    primitive.NewObjectID().Hex(),
-			UserID:     existingUser.ID,
+			ID:               primitive.NewObjectID(),
+			StoreName:        *req.StoreName,
+			BusinessCategory: *req.StoreCategory,
+			Address:          *req.StoreAddress,
+			Building:         utils.GetStringPointerValue(req.StoreBuilding, ""), // New
+			ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
+			Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
+			City:             utils.GetStringPointerValue(req.StoreCity, ""),
+			Phone:            *req.StoreTelNumber,
+			StoreID:          primitive.NewObjectID().Hex(),
+			UserID:           existingUser.ID,
 		}
 		_, err = storeCollection.InsertOne(sessCtx, newStore)
 		if err != nil {
@@ -579,6 +650,8 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, err.Error(), http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "already exists") {
 			utils.RespondWithError(w, err.Error(), http.StatusConflict)
+		} else if strings.Contains(err.Error(), "required") || strings.Contains(strings.ToLower(err.Error()), "invalid") {
+			utils.RespondWithError(w, err.Error(), http.StatusBadRequest)
 		} else {
 			utils.RespondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
 		}

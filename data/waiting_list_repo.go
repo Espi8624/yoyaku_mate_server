@@ -7,10 +7,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -20,16 +22,35 @@ import (
 
 const CollectionCounters = "counters"
 
+// 店舗設定が信頼できない場合(取得失敗・形式不正)に使う安全なデフォルトカットオフ時刻
+const (
+	defaultCutoffHour = 4
+	defaultCutoffMin  = 0
+)
+
+// autoExpireCheckInterval AutoExpireWaitingItemsの最小実行間隔(店舗ごと)
+// - GetWaitingListは通知・ポーリング・SSE初期送信のたびに毎回呼ばれ、以前はその都度
+//   対象0件でもUpdateManyを実行していた。no_showへの遷移は営業日切替の瞬間にしか
+//   発生しないため、この間隔で十分間に合う
+const autoExpireCheckInterval = 1 * time.Minute
+
+var (
+	lastAutoExpireRun   = make(map[string]time.Time)
+	lastAutoExpireRunMu sync.Mutex
+)
+
 // MongoWaitingListRepo 待機リストのMongoDBリポジトリ実装
+// - 呼び出し側は毎回 &MongoWaitingListRepo{} を新規生成するため、上記スロットリング状態は
+//   インスタンスではなくパッケージレベルで保持し、全インスタンスで共有する
 type MongoWaitingListRepo struct{}
 
 // Helper: 店舗の営業開始時間に基づいて、現在の「営業日」の開始時刻(Cutoff)を計算する
 func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Time) time.Time {
-	defaultCutoff := time.Date(now.Year(), now.Month(), now.Day(), 4, 0, 0, 0, now.Location())
+	defaultCutoff := time.Date(now.Year(), now.Month(), now.Day(), defaultCutoffHour, defaultCutoffMin, 0, 0, now.Location())
 	storeRepo := &MongoStoreRepo{}
 	settings, err := storeRepo.GetSettings(storeID)
 	if err != nil {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
@@ -38,7 +59,7 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 	if settings.Settings.Is24Hours {
 		resetParts := strings.Split(settings.Settings.ResetTime, ":")
 		if len(resetParts) != 2 {
-			resetParts = []string{"06", "00"}
+			resetParts = []string{fmt.Sprintf("%02d", defaultCutoffHour), fmt.Sprintf("%02d", defaultCutoffMin)}
 		}
 		resetHour, _ := strconv.Atoi(resetParts[0])
 		resetMin, _ := strconv.Atoi(resetParts[1])
@@ -49,10 +70,12 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 		return cutoffTime
 	}
 
-	weekday := now.Weekday().String()
+	// now.Weekday().String()は"Monday"のように先頭大文字だが、DBのoperating_hoursキーは
+	// "monday"のように小文字保存されているため、そのままでは常にマップ参照が失敗していた
+	weekday := strings.ToLower(now.Weekday().String())
 	dayHours, ok := settings.Settings.OperatingHours[weekday]
 	if !ok || dayHours.Start == "" {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
@@ -60,7 +83,7 @@ func (r *MongoWaitingListRepo) GetBusinessDayCutoff(storeID string, now time.Tim
 
 	parts := strings.Split(dayHours.Start, ":")
 	if len(parts) != 2 {
-		if now.Hour() < 4 {
+		if now.Hour() < defaultCutoffHour {
 			return defaultCutoff.AddDate(0, 0, -1)
 		}
 		return defaultCutoff
@@ -162,6 +185,16 @@ func (r *MongoWaitingListRepo) GetWaitingList(storeID string) ([]models.WaitingL
 
 // AutoExpireWaitingItems 期限切れデータの自動更新
 func (r *MongoWaitingListRepo) AutoExpireWaitingItems(storeID string) error {
+	// - GetWaitingList呼び出しのたびに(対象0件でも)UpdateManyを発行していたのを、
+	//   店舗ごとにautoExpireCheckInterval間隔でスキップするよう間引く
+	lastAutoExpireRunMu.Lock()
+	if last, ok := lastAutoExpireRun[storeID]; ok && time.Since(last) < autoExpireCheckInterval {
+		lastAutoExpireRunMu.Unlock()
+		return nil
+	}
+	lastAutoExpireRun[storeID] = time.Now()
+	lastAutoExpireRunMu.Unlock()
+
 	collection := db.GetCollection(DatabaseName, CollectionWaitingList)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -207,7 +240,11 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		return nil, fmt.Errorf("party_size must be greater than 0")
 	}
 
-	if item.WaitingID != "" {
+	// - クライアントが冪等キーを付けてきたかどうかを、生成で上書きされる前に確定させる。
+	//   これが後段の重複キーエラーの意味を決める (insertループのコメント参照)
+	clientSupplied := item.WaitingID != ""
+
+	if clientSupplied {
 		var existingItem models.WaitingList
 		dupFilter := bson.M{
 			"store_id":   item.StoreID,
@@ -238,11 +275,6 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		item.RegistrationTime = now.Format("2006-01-02T15:04:05.000+09:00")
 	}
 
-	if item.WaitingID == "" {
-		now := time.Now()
-		item.WaitingID = now.Format("20060102-150405") + "-" + fmt.Sprintf("%03d", now.Nanosecond()/1e6)
-	}
-
 	countFilter := bson.M{
 		"store_id": item.StoreID,
 		"status":   bson.M{"$in": []string{"waiting", "notified"}},
@@ -260,30 +292,96 @@ func (r *MongoWaitingListRepo) CreateItem(item models.WaitingList) (*models.Wait
 		item.EstimatedWaitTime = CalculateEstimatedWaitTime(int(activeCount), minutesPerTeam)
 	}
 
-	doc := bson.M{
-		"store_id":            item.StoreID,
-		"waiting_id":          item.WaitingID,
-		"queue_number":        item.QueueNumber,
-		"party_size":          item.PartySize,
-		"registration_time":   item.RegistrationTime,
-		"contact":             item.Contact,
-		"status":              item.Status,
-		"nationality":         item.Nationality,
-		"called_time":         nil,
-		"entry_time":          nil,
-		"notes":               item.Notes,
-		"estimated_wait_time": item.EstimatedWaitTime,
-		"menu_items":          item.MenuItems,
-		"source":              item.Source,
+	// - (store_id, waiting_id) にはユニークインデックスが張られているため、INSERTは
+	//   重複キーエラーで弾かれうる。そのエラーの意味は「誰がwaiting_idを作ったか」で
+	//   正反対になるので、clientSuppliedで分岐する:
+	//
+	//     クライアント生成 = 冪等キー。同じキー = 同じ要求の再送なので既存を返してよい
+	//     サーバー生成     = 単なる衝突。別々の客であり、既存を返すと
+	//                        客Bに客Aの番号札を渡すことになる。IDを振り直す
+	//
+	//   採番(GetNextQueueNumber)はこのループの外で1回だけ済ませてある。
+	//   再試行のたびに採番し直すと、衝突のたびに客に見える欠番ができる
+	for attempt := 1; attempt <= maxInsertAttempts; attempt++ {
+		if !clientSupplied {
+			generatedID, genErr := generateWaitingID()
+			if genErr != nil {
+				return nil, genErr
+			}
+			item.WaitingID = generatedID
+		}
+
+		doc := bson.M{
+			"store_id":            item.StoreID,
+			"waiting_id":          item.WaitingID,
+			"queue_number":        item.QueueNumber,
+			"party_size":          item.PartySize,
+			"registration_time":   item.RegistrationTime,
+			"contact":             item.Contact,
+			"status":              item.Status,
+			"nationality":         item.Nationality,
+			"called_time":         nil,
+			"entry_time":          nil,
+			"notes":               item.Notes,
+			"estimated_wait_time": item.EstimatedWaitTime,
+			"menu_items":          item.MenuItems,
+			"source":              item.Source,
+		}
+
+		result, insertErr := collection.InsertOne(ctx, doc)
+		if insertErr == nil {
+			item.ID = result.InsertedID.(primitive.ObjectID)
+			return &item, nil
+		}
+
+		if !mongo.IsDuplicateKeyError(insertErr) {
+			return nil, fmt.Errorf("failed to insert waiting list item: %v", insertErr)
+		}
+
+		if clientSupplied {
+			// - 冒頭の事前チェックとINSERTの間に同じ冪等キーの要求が割り込んだケース。
+			//   勝った方のレコードを返す (これがまさに二重登録を防いでいる箇所)
+			var existingItem models.WaitingList
+			dupFilter := bson.M{
+				"store_id":   item.StoreID,
+				"waiting_id": item.WaitingID,
+			}
+			if findErr := collection.FindOne(ctx, dupFilter).Decode(&existingItem); findErr != nil {
+				return nil, fmt.Errorf("failed to fetch existing waiting item after duplicate key: %v", findErr)
+			}
+			log.Printf("Concurrent duplicate waiting registration resolved (idempotent). store_id: %s, waiting_id: %s", item.StoreID, item.WaitingID)
+			return &existingItem, nil
+		}
+
+		log.Printf("Server-generated waiting_id collided, regenerating (%d/%d). store_id: %s, waiting_id: %s",
+			attempt, maxInsertAttempts, item.StoreID, item.WaitingID)
 	}
 
-	result, err := collection.InsertOne(ctx, doc)
-	if err != nil {
-		return nil, fmt.Errorf("failed to insert waiting list item: %v", err)
-	}
-	item.ID = result.InsertedID.(primitive.ObjectID)
+	return nil, fmt.Errorf("failed to insert waiting list item: waiting_idの衝突が%d回続いた", maxInsertAttempts)
+}
 
-	return &item, nil
+// maxInsertAttempts サーバー生成waiting_idが衝突した場合の再試行上限。
+// 乱数6桁を付けている以上ここまで連続することは実質起こらないが、
+// 無限ループにしないための歯止めとして置く
+const maxInsertAttempts = 5
+
+// generateWaitingID はクライアントが冪等キーを送ってこなかった場合のサーバー側フォールバック。
+//
+//   - 以前は "YYYYMMDD-HHMMSS-mmm" とミリ秒までの時刻だけで、同一ミリ秒に登録が重なると
+//     衝突した。ユニークインデックスを張った以上、衝突は登録失敗として表に出る
+//   - crypto/randベースの接尾辞(utils.GenerateRandomString)を付けて衝突を実質無くす。
+//     形式は点主アプリが以前使っていた "YYYYMMDD-HHMMSS-xxxxxx" に揃える
+//   - 時刻はJST。registration_timeと基準を揃えておかないと、ログを突き合わせるときに
+//     同じレコードの時刻が2種類あることになる (fly.ioのコンテナはUTCで動く)
+func generateWaitingID() (string, error) {
+	suffix := utils.GenerateRandomString(6)
+	if suffix == "" {
+		// - GenerateRandomStringはcrypto/randの失敗時に空文字を返す。
+		//   ここで気づかずに進むと、接尾辞なしのIDが量産されて衝突が復活する
+		return "", fmt.Errorf("failed to generate waiting_id suffix")
+	}
+	jst := time.FixedZone("Asia/Tokyo", 9*60*60)
+	return time.Now().In(jst).Format("20060102-150405") + "-" + suffix, nil
 }
 
 func (r *MongoWaitingListRepo) GetNextQueueNumber(storeID string) (int, error) {

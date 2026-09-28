@@ -64,6 +64,15 @@ type ErrorRecorder interface {
 	RecordError(errLog models.ErrorLog)
 }
 
+// - SSEストリームエンドポイントはクライアントが切断するまでハンドラーがブロックし続けるため、
+//   time.Since(start)がそのまま接続の生存時間(数分〜数時間)になってしまい、
+//   応答時間の平均/p95/p99やアラート閾値判定を無意味な値で汚染する。
+//   これらのパスは応答時間の記録対象から除外する(リクエスト数/エラー率はSSE Status画面側で別途把握できる)
+var longLivedStreamPaths = map[string]bool{
+	"/api/waiting-list/stream":      true,
+	"/api/waiting-list/stream-user": true,
+}
+
 // - すべてのAPIリクエストの応答時間を測定し、詳細リクエストログとエラーログを収集してトラッカーへ伝達するミドルウェア
 // - /api/admin/metrics 配下はモニタリング用ポーリングのため、ログ記録対象から除外する
 // - reqTracker/errTracker は外部（main.go）から注入し、シングルトンへの直接依存を排除してテスト可能にする
@@ -72,6 +81,12 @@ func MetricsMiddleware(reqTracker RequestRecorder, errTracker ErrorRecorder) fun
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// - 管理ダッシュボードのポーリングリクエスト自体が統計を汚染しないよう除外
 			if strings.HasPrefix(r.URL.Path, "/api/admin/metrics") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// - 長時間接続を維持するSSEストリームは応答時間の計測対象外(上記コメント参照)
+			if longLivedStreamPaths[r.URL.Path] {
 				next.ServeHTTP(w, r)
 				return
 			}

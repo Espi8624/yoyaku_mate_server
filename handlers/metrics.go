@@ -64,7 +64,20 @@ func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
 		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
 		SetLimit(50) // fetch latest 50 logs
 
-	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+	// - 既定では SSE_DISCONNECT を除外する。
+	//   正常な切断 (客が画面を閉じた) は接続1本につき1件記録されるため件数が圧倒的に多く、
+	//   最新50件がこれで埋まって本当の500がウィンドウの外へ押し出される。
+	//   障害時に最初に開く画面がノイズで埋まっているのが一番困る
+	// - 件数自体はサマリ (GetErrorMetricsHandler の CountSSE) で見えるため、
+	//   ここで省いても情報は失われない
+	// - ?error_type= を付ければその種別だけを返す。SSE_DISCONNECT を明示指定すれば
+	//   切断だけを追うこともできる (error_type には idx_error_type がある)
+	filter := bson.M{"error_type": bson.M{"$ne": "SSE_DISCONNECT"}}
+	if errorType := r.URL.Query().Get("error_type"); errorType != "" {
+		filter = bson.M{"error_type": errorType}
+	}
+
+	cursor, err := collection.Find(ctx, filter, findOptions)
 	if err != nil {
 		utils.RespondWithError(w, "Failed to fetch error logs", http.StatusInternalServerError)
 		return
@@ -583,7 +596,8 @@ func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetDBMetricsHandler は MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
 func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	if db.MongoClient == nil {
+	client := db.Client()
+	if client == nil {
 		utils.RespondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
 		return
 	}
@@ -595,7 +609,7 @@ func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Database Size (dbStats)
 	var dbStats bson.M
-	if err := db.MongoClient.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
+	if err := client.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
 		if dataSize, ok := dbStats["dataSize"]; ok {
 			sizeBytes := toFloat64(dataSize)
 			// Convert bytes to MB and round to 2 decimal places
@@ -607,7 +621,7 @@ func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Active Connections (serverStatus) - 権限がない場合があるため、失敗時は静かにスキップ
 	var serverStatus bson.M
-	if err := db.MongoClient.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
+	if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
 		if conns, ok := serverStatus["connections"].(bson.M); ok {
 			if current, ok := conns["current"]; ok {
 				metricsData.ActiveConnections = toInt64(current)

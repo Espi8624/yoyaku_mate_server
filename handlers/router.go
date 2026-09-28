@@ -30,6 +30,10 @@ func RegisterRoutes(
 	// ローカルファイルアップロードの静的ファイルサービングを設定
 	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 
+	// - 外部の死活監視サービス(UptimeRobot等)がpingするための無認証ヘルスチェック。
+	//   /api配下ではなくルート直下に置き、業務APIと明確に区別する
+	r.HandleFunc("/health", HealthHandler).Methods("GET")
+
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
 
@@ -42,12 +46,17 @@ func RegisterRoutes(
 	//   VerifySessionForUser を呼び分ける
 	api.HandleFunc("/waiting-list", waitingHandler.Handle)
 	api.HandleFunc("/waiting-list/poll", waitingHandler.HandlePolling)
+	// - 顧客1件分の待機情報 (顧客ウェブの初期表示用)。stream-user と同じ応答を返す。
+	//   これが無いと顧客ウェブは待機リスト全件を取得して自分の1件を探すことになる
+	api.HandleFunc("/waiting-list/user", waitingHandler.HandleWaitingUser).Methods("GET", "OPTIONS")
 	// - SSEストリームは店舗単位の公開データ (顧客ウェブも購読する)
 	api.HandleFunc("/waiting-list/stream", waitingHandler.HandleStream)
 	api.HandleFunc("/waiting-list/stream-user", waitingHandler.HandleWaitingItemStream)
 
 	api.HandleFunc("/public/store_ai_context", storeAiContextHandler.HandleGet)
-	api.HandleFunc("/public/ai-chat", AIChatHandler).Methods("POST", "OPTIONS")
+	// - システムプロンプトはクライアントから受け取らず、storeAiContextHandler経由でサーバーが自前で構築する
+	aiChatHandler := NewAIChatHandler(storeAiContextHandler)
+	api.HandleFunc("/public/ai-chat", aiChatHandler.Handle).Methods("POST", "OPTIONS")
 
 	// - メニュー一覧の取得は顧客ウェブも利用するため公開 (更新系は点主アプリ専用ルートで処理)
 	api.HandleFunc("/menu-list", menuHandler.Handle).Methods("GET", "OPTIONS")
@@ -77,8 +86,14 @@ func RegisterRoutes(
 	// - プロフィール取得。セッション確立前(アプリ起動直後)にも呼ばれるため対象外
 	api.HandleFunc("/provider_user/firebase_uid", userInfoHandler.UserByFirebaseUIDHandler)
 
+	// - 管理者ログインの起点。このエンドポイント自体がセッショントークンを発行するため、
+	//   adminApiの認証ミドルウェアの対象にはできない
+	api.HandleFunc("/admin/auth/login", AdminLoginHandler).Methods("POST", "OPTIONS")
+
 	// Admin endpoints
 	adminApi := api.PathPrefix("/admin").Subrouter()
+	// 共有パスワードログインで発行されたセッショントークンを検証(未認証アクセスを遮断)
+	adminApi.Use(RequireAdminAuthMiddleware)
 	// Admin専用監査ログミドルウェア（MetricsMiddlewareと独立して適用）
 	adminApi.Use(metrics.AuditMiddleware)
 
@@ -105,13 +120,15 @@ func RegisterRoutes(
 	providerApi.Use(RequireAuthMiddleware(userRepo))
 	providerApi.Use(RequireSessionMiddleware(sessionRepo))
 
-	// - ユーザー情報 (個人情報保護: GET/PUT ともに認証が必要)
-	providerApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "OPTIONS")
+	// - ユーザー情報 (個人情報保護: GET/PUT/DELETE ともに認証が必要。DELETEは会員退会)
+	providerApi.HandleFunc("/provider_user", userInfoHandler.HandleUser).Methods("GET", "PUT", "DELETE", "OPTIONS")
 	providerApi.HandleFunc("/provider_user/image", uploadHandler.UploadUserImage).Methods("POST", "OPTIONS")
 
 	// - 店舗情報・店舗設定の更新 (GETは公開ルートで処理)
 	providerApi.HandleFunc("/provider_store", storeInfoHandler.UpdateStoreHandler).Methods("PUT", "OPTIONS")
 	providerApi.HandleFunc("/store_settings", storeSettingsHandler.UpdateStoreSettingsHandler).Methods("PUT", "OPTIONS")
+	// - モニターボードのQRトークン発行を認可するための店舗別シークレット。未設定なら初回アクセス時に生成
+	providerApi.HandleFunc("/store_settings/board_key", storeSettingsHandler.GetBoardKeyHandler).Methods("GET", "OPTIONS")
 	providerApi.HandleFunc("/provider_store/{storeId}/image", uploadHandler.UploadStoreImage).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/provider_store/license", storeLicenseCallHandler.GetStoreLicenseHandler)
 	providerApi.HandleFunc("/provider_stores/store-list", storeListHandler.GetMyStoresHandler)
@@ -127,6 +144,10 @@ func RegisterRoutes(
 	providerApi.HandleFunc("/provider_menu/category/bulk-update", menuHandler.HandleBulkUpdateCategory).Methods("POST", "OPTIONS")
 	providerApi.HandleFunc("/provider_menu/category/bulk-delete", menuHandler.HandleBulkDeleteCategory).Methods("DELETE", "OPTIONS")
 	providerApi.HandleFunc("/provider_menu/all/bulk-delete", menuHandler.HandleBulkDeleteAllMenus).Methods("DELETE", "OPTIONS")
+
+	// - 自動翻訳プロキシ (メニュー名/カテゴリー名/待機メモ)。GEMINI_API_KEYはサーバー側のみが保持する
+	providerApi.HandleFunc("/provider_translate", HandleTranslate).Methods("POST", "OPTIONS")
+	providerApi.HandleFunc("/provider_translate/multi", HandleTranslateMulti).Methods("POST", "OPTIONS")
 
 	// Staff Management endpoints
 	providerApi.HandleFunc("/stores/{storeId}/staff", storeStaffHandler.GetStoreStaffHandler).Methods("GET", "OPTIONS")

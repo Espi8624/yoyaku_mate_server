@@ -22,6 +22,12 @@ type Config struct {
 	} `json:"server"`
 	R2         R2Config `json:"r2"`
 	HMACSecret string   `json:"hmacSecret"`
+	// - 管理者画面(yoyaku_mate_admin)の共有ログインパスワード。空の場合はログイン自体を拒否する(安全側デフォルト)
+	AdminPassword string `json:"adminPassword"`
+	// - 管理者セッショントークンの署名鍵。HMACSecretとは用途が異なるため別鍵として分離する
+	AdminTokenSecret string `json:"adminTokenSecret"`
+	// - 閾値超過アラート通知用のSlack Incoming Webhook URL。空の場合はアラート機能自体を無効化する
+	SlackWebhookURL string `json:"slackWebhookUrl"`
 }
 
 type R2Config struct {
@@ -45,6 +51,13 @@ func Load() Config {
 
 	fileName := env + ".json"
 
+	// configファイルが存在しない場合(本番コンテナ等)でも、その下の環境変数
+	// オーバーライドは必ず適用したいため、ここでは早期returnせずcfgをデフォルト
+	// 値で初期化しておき、ファイルが読めた場合のみ上書きする
+	// - ":="で新規宣言すると40行目のパッケージ変数cfgをシャドーイングしてしまい、
+	//   Get()が常にゼロ値を返す不具合になるため、必ず"="で代入する
+	cfg = getDefaultConfig()
+
 	// ローカル起動時は相対パス "config/xxx.json" を先に確認
 	configPath := filepath.Join("config", fileName)
 	f, err := os.Open(configPath)
@@ -56,24 +69,25 @@ func Load() Config {
 		var openErr error
 		f, openErr = os.Open(fallbackPath)
 		if openErr != nil {
-			log.Printf("Warning: Could not open config file at fallback path '%s', using default config. Error: %v", fallbackPath, openErr)
-			return getDefaultConfig()
+			log.Printf("Warning: Could not open config file at fallback path '%s'. Using default config as base; environment variables (Infisical等)で上書きします。 Error: %v", fallbackPath, openErr)
+			f = nil
+		} else {
+			configPath = fallbackPath
 		}
-		configPath = fallbackPath
-	}
-	defer f.Close()
-
-	log.Printf("Using config file: %s", configPath)
-
-	var cfg Config
-	decoder := json.NewDecoder(f)
-	err = decoder.Decode(&cfg)
-	if err != nil {
-		log.Printf("Warning: Could not decode config file, using defaults. Error: %v", err)
-		return getDefaultConfig()
 	}
 
-	// Environment variables override
+	if f != nil {
+		defer f.Close()
+		log.Printf("Using config file: %s", configPath)
+
+		decoder := json.NewDecoder(f)
+		if decodeErr := decoder.Decode(&cfg); decodeErr != nil {
+			log.Printf("Warning: Could not decode config file, using defaults. Error: %v", decodeErr)
+			cfg = getDefaultConfig()
+		}
+	}
+
+	// Environment variables override (configファイルの有無に関わらず常に適用)
 	if mongoURI := os.Getenv("MONGODB_URI"); mongoURI != "" {
 		cfg.MongoDB.URI = mongoURI
 		log.Println("Using MONGODB_URI from environment variable")
@@ -86,13 +100,30 @@ func Load() Config {
 		cfg.Server.Port = serverPort
 		log.Println("Using SERVER_PORT from environment variable")
 	}
-	if serverURL := os.Getenv("SERVER_URL"); serverURL != "" {
-		cfg.Server.URL = serverURL
-		log.Println("Using SERVER_URL from environment variable")
+	// - 環境変数名は API_URL。以前は SERVER_URL を読んでいたが、Infisical 側は
+	//   API_URL という名前で管理されており、名前が食い違っていたため
+	//   この値は実際には一度も注入されていなかった (常に既定値のままだった)
+	// - 名前を揃えるにあたり、より直感的な API_URL の側に寄せた。
+	//   SERVER_URL はどこからも設定されていなかったため、互換のための読み替えは置かない
+	if apiURL := os.Getenv("API_URL"); apiURL != "" {
+		cfg.Server.URL = apiURL
+		log.Println("Using API_URL from environment variable")
 	}
 	if hmacSecret := os.Getenv("HMAC_SECRET"); hmacSecret != "" {
 		cfg.HMACSecret = hmacSecret
 		log.Println("Using HMAC_SECRET from environment variable")
+	}
+	if adminPassword := os.Getenv("ADMIN_PASSWORD"); adminPassword != "" {
+		cfg.AdminPassword = adminPassword
+		log.Println("Using ADMIN_PASSWORD from environment variable")
+	}
+	if adminTokenSecret := os.Getenv("ADMIN_TOKEN_SECRET"); adminTokenSecret != "" {
+		cfg.AdminTokenSecret = adminTokenSecret
+		log.Println("Using ADMIN_TOKEN_SECRET from environment variable")
+	}
+	if slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL"); slackWebhookURL != "" {
+		cfg.SlackWebhookURL = slackWebhookURL
+		log.Println("Using SLACK_WEBHOOK_URL from environment variable")
 	}
 
 	cfg.R2 = R2Config{

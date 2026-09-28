@@ -13,6 +13,7 @@ import (
 type StoreSettingsRepository interface {
 	GetSettings(storeID string) (*models.StoreSetting, error)
 	UpsertStoreSettings(storeID string, reqBody map[string]interface{}) error
+	GetOrCreateBoardKey(storeID string) (string, error)
 }
 
 // StoreSettingsHandler 店舗設定関連のHTTPリクエストを処理するハンドラ
@@ -93,4 +94,40 @@ func (h *StoreSettingsHandler) UpdateStoreSettingsHandler(w http.ResponseWriter,
 	}
 
 	utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
+}
+
+// GetBoardKeyHandler board_keyの取得(未設定なら生成) - 認証必須、当該店舗の権限チェックあり
+// GET /api/store_settings/board_key?store_id=xxx
+func (h *StoreSettingsHandler) GetBoardKeyHandler(w http.ResponseWriter, r *http.Request) {
+	storeID := r.URL.Query().Get("store_id")
+	if storeID == "" {
+		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// - ミドルウェアで格納された認証済みユーザーを取得
+	authUser, ok := GetUserFromContext(r.Context())
+	if !ok {
+		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// - 権限チェック: マネージャーまたは承認済みスタッフのみ取得可能
+	hasPermission, err := h.userRepo.CheckStorePermission(authUser.ID, storeID, authUser.Role, "")
+	if err != nil {
+		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		return
+	}
+	if !hasPermission {
+		utils.RespondWithError(w, "この店舗の設定を取得する権限がありません。", http.StatusForbidden)
+		return
+	}
+
+	boardKey, err := h.storeRepo.GetOrCreateBoardKey(storeID)
+	if err != nil {
+		utils.RespondWithError(w, "Failed to get board key", http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, map[string]string{"board_key": boardKey}, http.StatusOK)
 }

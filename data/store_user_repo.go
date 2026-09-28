@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -17,10 +18,58 @@ import (
 
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/utils"
 )
 
 // MongoStoreRepo 店舗情報のMongoDBリポジトリ実装
+// - 呼び出し側は毎回 &MongoStoreRepo{} を新規生成するため、キャッシュはインスタンスではなく
+//   パッケージレベルで保持し、全インスタンスで共有する
 type MongoStoreRepo struct{}
+
+// settingsCacheTTL GetSettingsの短期キャッシュ有効期間
+// - 待機列の状態変更1回でGetSettingsが2〜4回呼ばれており(minutesPerTeam取得など)、
+//   その都度Mongoへ問い合わせるのは無駄が大きい。設定変更頻度は低いため、短いTTLで十分
+const settingsCacheTTL = 5 * time.Second
+
+var (
+	settingsCache   = make(map[string]cachedStoreSettings)
+	settingsCacheMu sync.RWMutex
+)
+
+type cachedStoreSettings struct {
+	settings  *models.StoreSetting
+	expiresAt time.Time
+}
+
+func getCachedSettings(storeID string) (*models.StoreSetting, bool) {
+	settingsCacheMu.RLock()
+	defer settingsCacheMu.RUnlock()
+
+	entry, ok := settingsCache[storeID]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.settings, true
+}
+
+func setCachedSettings(storeID string, settings *models.StoreSetting) {
+	settingsCacheMu.Lock()
+	defer settingsCacheMu.Unlock()
+
+	settingsCache[storeID] = cachedStoreSettings{
+		settings:  settings,
+		expiresAt: time.Now().Add(settingsCacheTTL),
+	}
+}
+
+// invalidateSettingsCache 設定の書き込み系操作(Upsert・board_key発行)後に呼び、
+// TTL経過前でも古い値を返さないようにする
+func invalidateSettingsCache(storeID string) {
+	settingsCacheMu.Lock()
+	defer settingsCacheMu.Unlock()
+
+	delete(settingsCache, storeID)
+}
 
 // MongoUserRepo ユーザー情報のMongoDBリポジトリ実装
 type MongoUserRepo struct{}
@@ -126,8 +175,28 @@ func (r *MongoStoreRepo) GetStoreDataByUserID(userID primitive.ObjectID) (*model
 	return r.GetStoreData(user.StoreID)
 }
 
+// CountStoresByOwner 指定ユーザーがオーナー(user_id)として持つ店舗数を返す。
+// user_infoのstore_idは1件しか保持できないが、マネージャーは複数店舗を
+// 所有できるため、会員退会時の安全チェックには store_info を直接 user_id で検索する
+func (r *MongoStoreRepo) CountStoresByOwner(userID primitive.ObjectID) (int64, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	count, err := collection.CountDocuments(ctx, bson.M{"user_id": userID})
+	if err != nil {
+		log.Printf("Failed to count stores owned by user '%s': %v", userID.Hex(), err)
+		return 0, err
+	}
+	return count, nil
+}
+
 // 店舗設定データ取得
 func (r *MongoStoreRepo) GetSettings(storeID string) (*models.StoreSetting, error) {
+	if cached, ok := getCachedSettings(storeID); ok {
+		return cached, nil
+	}
+
 	collection := db.GetCollection(DatabaseName, CollectionStoreSettings)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -157,6 +226,7 @@ func (r *MongoStoreRepo) GetSettings(storeID string) (*models.StoreSetting, erro
 		}
 	}
 
+	setCachedSettings(storeID, &storeSettings)
 	return &storeSettings, nil
 }
 
@@ -176,7 +246,53 @@ func (r *MongoStoreRepo) UpsertStoreSettings(storeID string, reqBody map[string]
 		log.Printf("Failed to upsert store settings for store_id=%s: %v", storeID, err)
 		return err
 	}
+	// - TTL経過前に古いキャッシュが返らないよう、書き込み成功時は即座に破棄する
+	invalidateSettingsCache(storeID)
 	return nil
+}
+
+// GetOrCreateBoardKey board_keyを取得する。未設定なら生成して永続化する(先着1件のみ書き込みが成功する
+// ようフィルタ条件で制御し、同時アクセスのレースを解消する)
+func (r *MongoStoreRepo) GetOrCreateBoardKey(storeID string) (string, error) {
+	collection := db.GetCollection(DatabaseName, CollectionStoreSettings)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	filter := bson.M{"store_id": storeID}
+	var settings models.StoreSetting
+	if err := collection.FindOne(ctx, filter).Decode(&settings); err != nil {
+		log.Printf("Failed to find store settings for store_id=%s: %v", storeID, err)
+		return "", err
+	}
+	if settings.BoardKey != nil && *settings.BoardKey != "" {
+		return *settings.BoardKey, nil
+	}
+
+	newKey, err := utils.GenerateSecureToken(32)
+	if err != nil {
+		log.Printf("Failed to generate board key for store_id=%s: %v", storeID, err)
+		return "", err
+	}
+
+	// board_keyが未設定の場合のみ書き込む → 同時に2件来ても片方だけ成功する
+	raceFilter := bson.M{"store_id": storeID, "board_key": bson.M{"$exists": false}}
+	res, err := collection.UpdateOne(ctx, raceFilter, bson.M{"$set": bson.M{"board_key": newKey}})
+	if err != nil {
+		log.Printf("Failed to persist board key for store_id=%s: %v", storeID, err)
+		return "", err
+	}
+	// - board_keyの新規発行はGetSettings経由のキャッシュを経由しないため、
+	//   TTL経過前にキャッシュ済みの古い(board_key未設定の)設定が返らないよう破棄する
+	invalidateSettingsCache(storeID)
+	if res.ModifiedCount == 0 {
+		// 競合: 他リクエストが先にセット済み → 再読込して既存値を返す
+		if err := collection.FindOne(ctx, filter).Decode(&settings); err != nil || settings.BoardKey == nil {
+			log.Printf("Failed to reload board key after race for store_id=%s: %v", storeID, err)
+			return "", fmt.Errorf("board key unavailable after race for store_id=%s", storeID)
+		}
+		return *settings.BoardKey, nil
+	}
+	return newKey, nil
 }
 
 type MinioClient struct {
@@ -491,6 +607,29 @@ func (r *MongoUserRepo) UpdateUserData(userID primitive.ObjectID, update map[str
 	return &updatedUser, nil
 }
 
+// MarkUserWithdrawn 指定ユーザーを退会済み(WITHDRAWN)としてマークする(ソフトデリート)。
+// 電話番号・住所などの連絡先は削除せず保持したまま、ログインのみ不可にする方針のため、
+// ドキュメント自体は消さずstatus/withdrawn_atだけ更新する。
+// Firebase Auth側のアカウント削除は呼び出し側(handler)がauth.DeleteUserで別途行う
+func (r *MongoUserRepo) MarkUserWithdrawn(userID primitive.ObjectID) error {
+	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	update := bson.M{
+		"$set": bson.M{
+			"status":       models.UserStatusWithdrawn,
+			"withdrawn_at": time.Now(),
+		},
+	}
+	_, err := collection.UpdateOne(ctx, bson.M{"_id": userID}, update)
+	if err != nil {
+		log.Printf("Failed to mark user withdrawn for user '%s': %v", userID.Hex(), err)
+		return err
+	}
+	return nil
+}
+
 func (r *MongoUserRepo) UpdateUserImageURL(firebaseUID string, userImageURL string) (*models.User, error) {
 	collection := db.GetCollection(DatabaseName, CollectionUserInfo)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -680,6 +819,7 @@ func (r *MongoStoreRepo) GetStoresByStatus(status string) ([]models.StoreWithLic
 	projectStage := bson.D{{Key: "$project", Value: bson.D{
 		{Key: "store_id", Value: "$store_id"},
 		{Key: "store_name", Value: "$storeDetails.store_name"},
+		{Key: "business_category", Value: "$storeDetails.business_category"},
 		{Key: "address", Value: "$storeDetails.address"},
 		{Key: "phone", Value: "$storeDetails.phone"},
 		{Key: "license_image_url", Value: "$license_image_url"},

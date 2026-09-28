@@ -31,20 +31,27 @@ COPY --from=build /saboten-server /saboten-server
 # サーバー実行時にこのフォルダから設定ファイルを読み取れる
 COPY --from=build /src/config /config
 
-# Run in non-interactive mode for Infisical install
-# jq 追加 (JSON parse)
-RUN apk add --no-cache curl bash jq && \
-    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
-    apk add infisical
-
 # 8080portを公開
 EXPOSE 8080
 
-# サーバー実行 (Infisicalを通じて実行, 環境変数で環境を指定)
-# 1. APIを使用してトークン発行(CLIログイン問題回避)
-# 2. 発行されたトークンでrun実行
-CMD sh -c "export INFISICAL_TOKEN=\$(curl --silent --location --request POST 'https://app.infisical.com/api/v1/auth/universal-auth/login' \
-    --header 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode \"clientId=\${INFISICAL_CLIENT_ID}\" \
-    --data-urlencode \"clientSecret=\${INFISICAL_CLIENT_SECRET}\" | jq -r .accessToken) && \
-    infisical run --token=\${INFISICAL_TOKEN} --projectId=\${INFISICAL_PROJECT_ID} --env=\${INFISICAL_ENV:-dev} -- /saboten-server"
+# サーバー実行。
+#
+# シークレットは Infisical の Fly.io Secret Sync が fly secrets へ push したものを、
+# 通常の環境変数として受け取る。このコンテナは Infisical に一切アクセスしない。
+#
+# 以前はここで毎起動 app.infisical.com へログインしてトークンを取り、
+# `infisical run -- /saboten-server` として起動していた。やめた理由:
+#
+#   - min_machines_running = 0 のためマシンは頻繁に起動し直す。そのたびに外部APIへ
+#     依存しており、Infisical が落ちていればサーバーが起動できなかった
+#   - `curl ... | jq` はパイプの終了コードが jq のものになるため、curl が失敗しても
+#     トークンが "null" のまま処理が進み、失敗が握り潰されていた
+#     (同じ罠でこのファイルは2026-09-17に一度ビルドが停止している)
+#   - CLI の取得でビルドが外部配布物に依存していた
+#
+# Infisical は引き続きシークレットの単一ソースであり、チームのローカル開発も
+# `infisical run` のまま変わらない。変わったのは注入経路だけ。
+#
+# 注意: ca-certificates は上で別途インストールしている。MongoDB Atlas・Gemini・R2 の
+# TLS 接続に必須なので、この行を整理する際に巻き込んで消さないこと。
+CMD ["/saboten-server"]

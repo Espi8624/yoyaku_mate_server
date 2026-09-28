@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 	"yoyaku_mate_server/models"
 )
 
@@ -189,6 +190,56 @@ func TestMetricsMiddleware_ExcludesAdminMetricsPolling(t *testing.T) {
 	if len(reqRecorder.recordedLogs) != 0 {
 		t.Errorf("/api/admin/metrics 경로인데 RecordRequest가 %d번 호출됨, expected 0", len(reqRecorder.recordedLogs))
 	}
+}
+
+// - SSEストリーム(/api/waiting-list/stream, stream-user)は接続維持のためハンドラーが長時間ブロックする。
+//   これらを応答時間の記録対象に含めると、接続の生存時間がそのまま「応答時間」として記録されてしまい、
+//   平均/p95/p99やアラート閾値判定を無意味な値で汚染するバグの回帰防止テスト
+func TestMetricsMiddleware_ExcludesLongLivedStreamPaths(t *testing.T) {
+	for _, path := range []string{"/api/waiting-list/stream", "/api/waiting-list/stream-user"} {
+		t.Run(path, func(t *testing.T) {
+			reqRecorder := &mockRequestRecorder{}
+			errRecorder := &mockErrorRecorder{}
+
+			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// - 実際のSSEハンドラーを模倣し、わずかに処理時間を発生させる
+				time.Sleep(5 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware := MetricsMiddleware(reqRecorder, errRecorder)(nextHandler)
+
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+
+			middleware.ServeHTTP(rec, req)
+
+			if len(reqRecorder.recordedLogs) != 0 {
+				t.Errorf("%s 경로인데 RecordRequest가 %d번 호출됨, expected 0", path, len(reqRecorder.recordedLogs))
+			}
+		})
+	}
+
+	// - 同じ待機列機能でも/pollは短命の通常リクエストなので、除外対象に含めてはならない
+	t.Run("/api/waiting-list/poll is NOT excluded", func(t *testing.T) {
+		reqRecorder := &mockRequestRecorder{}
+		errRecorder := &mockErrorRecorder{}
+
+		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := MetricsMiddleware(reqRecorder, errRecorder)(nextHandler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/waiting-list/poll", nil)
+		rec := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rec, req)
+
+		if len(reqRecorder.recordedLogs) != 1 {
+			t.Errorf("/api/waiting-list/poll는 정상 기록되어야 하는데 RecordRequest가 %d번 호출됨, expected 1", len(reqRecorder.recordedLogs))
+		}
+	})
 }
 
 // - 4xx/5xx 응답 시 ErrorRecorder에도 함께 기록되는지, 상태 코드에 따라 ErrorType이 올바르게 분류되는지 검증

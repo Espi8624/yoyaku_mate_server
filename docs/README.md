@@ -26,6 +26,7 @@ docs/
 | [audit-log.md](./features/audit-log.md) | 管理者操作の監査ログ自動記録および履歴管理 |
 | [staff-availability.md](./features/staff-availability.md) | スタッフの曜日別勤務可能時間帯の入力・照会・修正 |
 | [shift-table.md](./features/shift-table.md) | 店舗の週単位シフト表(作成・シフト追加/修正/削除・照会) |
+| [store-category.md](./features/store-category.md) | 店舗業種タグ(登録時必須選択・設定画面から変更可能) |
 
 ---
 
@@ -70,6 +71,10 @@ docs/
 |------|------|
 | [001-lessons-learned.md](./troubles/001-lessons-learned.md) | Goroutineリーク、Rate Limiter調整など開発プロセスの振り返り |
 | [002-active-user-ip-port-issue.md](./troubles/002-active-user-ip-port-issue.md) | リアルタイム接続者のエフェメラルポートおよびIPv6重複カウント防止解決プロセス |
+| [003-sse-heartbeat-and-zombie-cleanup.md](./troubles/003-sse-heartbeat-and-zombie-cleanup.md) | heartbeatがデータイベントとして配信されていた問題と、ゾンビ接続回収済みチャネルの二重closeによるpanic |
+| [004-production-readiness-hardening.md](./troubles/004-production-readiness-hardening.md) | 本番運用に向けた点検: 認証情報のログ出力、ゴルーチンのpanic保護、公開SSEの情報最小化、HTTPタイムアウト |
+| [005-availability-and-recovery-hardening.md](./troubles/005-availability-and-recovery-hardening.md) | 可用性と復旧経路の点検: Gemini呼び出しのタイムアウト、fly.ioヘルスチェック、MongoDB未接続時の503と再接続、ハンドラのpanic復帰 |
+| [006-committed-credential-in-history.md](./troubles/006-committed-credential-in-history.md) | 履歴に残っていたAtlas認証情報と、それを見落とした点検方法 (GitGuardianの誤検知から発覚) |
 
 ---
 

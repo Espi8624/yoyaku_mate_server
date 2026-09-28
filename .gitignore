@@ -36,3 +36,5 @@ serviceAccountKey.json
 
 # Infisical
 .infisical.json
+# graphify (지식 그래프 생성 산출물)
+graphify-out/

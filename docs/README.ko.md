@@ -26,6 +26,7 @@ docs/
 | [audit-log.ko.md](./features/audit-log.ko.md) | 관리자 행위 감사 로그 자동 기록 및 이력 관리 |
 | [staff-availability.ko.md](./features/staff-availability.ko.md) | 스태프 요일별 근무 가능 시간대 입력·조회·수정 |
 | [shift-table.ko.md](./features/shift-table.ko.md) | 매장 주 단위 시프트표(생성·시프트 추가/수정/삭제·조회) |
+| [store-category.ko.md](./features/store-category.ko.md) | 점포 업종 태그(등록 시 필수 선택·설정 화면에서 변경 가능) |
 
 ---
 
@@ -69,6 +70,10 @@ docs/
 |------|------|
 | [001-lessons-learned.ko.md](./troubles/001-lessons-learned.ko.md) | Goroutine 리크, Rate Limiter 조정 등 개발 과정 회고 |
 | [002-active-user-ip-port-issue.ko.md](./troubles/002-active-user-ip-port-issue.ko.md) | 실시간 접속자의 에피메럴 포트 및 IPv6 중복 카운트 방지 해결 과정 |
+| [003-sse-heartbeat-and-zombie-cleanup.ko.md](./troubles/003-sse-heartbeat-and-zombie-cleanup.ko.md) | heartbeat가 데이터 이벤트로 전송되던 문제와, 좀비 커넥션 회수된 채널의 이중 close로 인한 panic |
+| [004-production-readiness-hardening.ko.md](./troubles/004-production-readiness-hardening.ko.md) | 실서비스 대비 점검: 자격증명 로그 출력, goroutine 패닉 보호, 공개 SSE 정보 최소화, HTTP 타임아웃 |
+| [005-availability-and-recovery-hardening.ko.md](./troubles/005-availability-and-recovery-hardening.ko.md) | 가용성·복구 경로 점검: Gemini 호출 타임아웃, fly.io 헬스체크, MongoDB 미연결 시 503과 재연결, 핸들러 패닉 복구 |
+| [006-committed-credential-in-history.ko.md](./troubles/006-committed-credential-in-history.ko.md) | 히스토리에 남아 있던 Atlas 자격증명과, 그것을 놓친 점검 방법 (GitGuardian 오탐에서 발각) |
 
 ---
 

@@ -3,6 +3,8 @@ package events
 import (
 	"sync"
 	"time"
+
+	"yoyaku_mate_server/utils"
 )
 
 // WaitingUserBroker は、個別待機顧客のSSEクライアントを管理し、メッセージをブロードキャストします
@@ -40,7 +42,7 @@ func GetWaitingUserBroker() *WaitingUserBroker {
 			Clients:     make(map[string]map[chan string]bool),
 			connectedAt: make(map[chan string]time.Time),
 		}
-		go waitingUserBrokerInstance.startHeartbeat()
+		utils.GoForever("sse_user_broker_heartbeat", waitingUserBrokerInstance.startHeartbeat)
 	})
 	return waitingUserBrokerInstance
 }
@@ -63,13 +65,21 @@ func (b *WaitingUserBroker) RemoveClient(key string, clientChan chan string) {
 	b.Mutex.Lock()
 	defer b.Mutex.Unlock()
 
-	if clients, ok := b.Clients[key]; ok {
-		delete(clients, clientChan)
-		delete(b.connectedAt, clientChan)
-		close(clientChan)
-		if len(clients) == 0 {
-			delete(b.Clients, key)
-		}
+	clients, ok := b.Clients[key]
+	if !ok {
+		return
+	}
+	// - pingAndCleanにゾンビ判定されて既に回収(close)済みのチャネルを
+	//   もう一度closeするとpanicになる (events/broker.goのRemoveClientと同じ理由)
+	if _, exists := clients[clientChan]; !exists {
+		return
+	}
+
+	delete(clients, clientChan)
+	delete(b.connectedAt, clientChan)
+	close(clientChan)
+	if len(clients) == 0 {
+		delete(b.Clients, key)
 	}
 }
 
@@ -90,6 +100,27 @@ func (b *WaitingUserBroker) Broadcast(key string, message string) {
 }
 
 // startHeartbeat は30秒周期でpingAndCleanを実行するバックグラウンドゴルーチンです
+// SendTo は指定した1つのクライアントにのみメッセージを送ります。
+// 詳細は Broker.SendTo のコメントを参照 (closeされたチャネルへ送らないための
+// ロックと登録確認が要点)
+func (b *WaitingUserBroker) SendTo(key string, clientChan chan string, message string) {
+	b.Mutex.RLock()
+	defer b.Mutex.RUnlock()
+
+	clients, ok := b.Clients[key]
+	if !ok {
+		return
+	}
+	if !clients[clientChan] {
+		return
+	}
+
+	select {
+	case clientChan <- message:
+	default:
+	}
+}
+
 func (b *WaitingUserBroker) startHeartbeat() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -99,26 +130,50 @@ func (b *WaitingUserBroker) startHeartbeat() {
 	}
 }
 
-// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を即座に削除します
-// SSE仕様のコメント形式（":ping\n\n"）はクライアント側でイベントとして受信されません
+// pingAndClean は全体のチャネルにpingを送信し、ブロックされたチャネル（ゾンビ接続）を削除します
+// 送出するのはHeartbeatMessageセンチネルで、SSEコメント行への変換はハンドラ側が行います
+//
+// - 以前は走査中ずっと排他Lockを保持しており、全待機顧客分のping送信が終わるまでBroadcast(RLock)が
+//   待たされていた。notifyWaitingUsersが待機顧客ごとにBroadcastを呼ぶホットパスであるため、
+//   このブローカーでは特に影響が大きい。
+// - 送信は非ブロッキング(select-default)でマップを書き換えないため、RLockで走査すれば
+//   Broadcastとは同時実行できる。ゾンビ削除だけを短時間の排他Lockに分離する。
 func (b *WaitingUserBroker) pingAndClean() {
-	b.Mutex.Lock()
-	defer b.Mutex.Unlock()
-
+	b.Mutex.RLock()
+	var zombies []zombieChannel
 	for key, clients := range b.Clients {
 		for ch := range clients {
 			select {
-			case ch <- ":ping":
+			case ch <- HeartbeatMessage:
 				// 正常チャネル: keep-aliveを維持
 			default:
-				// チャネルブロック = ゾンビ接続 → 即座に削除
-				delete(clients, ch)
-				delete(b.connectedAt, ch)
-				close(ch)
+				// チャネルブロック = ゾンビ接続 → 削除対象として記録(走査中はまだ削除しない)
+				zombies = append(zombies, zombieChannel{key, ch})
 			}
 		}
+	}
+	b.Mutex.RUnlock()
+
+	if len(zombies) == 0 {
+		return
+	}
+
+	b.Mutex.Lock()
+	defer b.Mutex.Unlock()
+	for _, z := range zombies {
+		clients, ok := b.Clients[z.storeID]
+		if !ok {
+			continue
+		}
+		// - RUnlockからLock取得までの間にRemoveClientで既に正常削除されている可能性があるため確認
+		if _, exists := clients[z.ch]; !exists {
+			continue
+		}
+		delete(clients, z.ch)
+		delete(b.connectedAt, z.ch)
+		close(z.ch)
 		if len(clients) == 0 {
-			delete(b.Clients, key)
+			delete(b.Clients, z.storeID)
 		}
 	}
 }

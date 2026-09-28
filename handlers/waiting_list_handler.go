@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
@@ -142,6 +145,10 @@ func (h *WaitingListHandler) HandlePolling(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !h.hasActiveStaffSession(r) {
+		waitingList = redactForPublic(waitingList)
+	}
+
 	utils.RespondWithJSON(w, waitingList, http.StatusOK)
 }
 
@@ -152,6 +159,9 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
+
+	// - 接続時に1回だけスタッフセッションかどうかを判定し、この接続の生存中はその判定を使い回す
+	isStaff := h.hasActiveStaffSession(r)
 
 	// - SSE用ヘッダーを設定
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -167,13 +177,18 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	notify := r.Context().Done()
 
 	// - 接続時に初期データを送信
-	go func() {
+	//   ハンドラ内で起動してもnet/httpのrecoverは効かない(別ゴルーチンのため)ので
+	//   panic保護を挟む。ここが落ちると全店舗のSSEが巻き添えになる
+	// - 送り先はこの接続だけ (SendTo)。以前はBroadcastしており、客が1人接続するたびに
+	//   同じ店舗の全接続へ全件が再送されていた。接続数に比例して転送量が増えるため、
+	//   混むほど遅くなる構造になっていた
+	utils.Go("sse_stream_initial_data", func() {
 		waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 		if err == nil {
 			jsonData, _ := json.Marshal(waitingList)
-			h.broker.Broadcast(storeID, string(jsonData))
+			h.broker.SendTo(storeID, clientChan, string(jsonData))
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -188,14 +203,82 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 				ClientIP:  r.RemoteAddr,
 			})
 			return
-		case msg := <-clientChan:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+		case msg, ok := <-clientChan:
+			// - pingAndCleanにゾンビ判定されてチャネルがcloseされると、受信は
+			//   ゼロ値を即座に返し続ける。放置するとこのループがCPUを焼き続けるため畳む
+			if !ok {
+				return
+			}
+			if msg == events.HeartbeatMessage {
+				// - keep-aliveはSSEコメントとして送る。データイベントにすると
+				//   クライアントがJSONとしてパースを試みることになる
+				fmt.Fprintf(w, "%s\n\n", msg)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", h.filterStreamMessage(msg, isStaff))
+			}
 			w.(http.Flusher).Flush()
 		}
 	}
 }
 
+// filterStreamMessage スタッフ接続以外には個人情報を除去したJSONを返す (redactForPublic参照)。
+// ハートビートは呼び出し元で分岐済みのため、ここに来るのは待機リストのJSONのみ
+func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) string {
+	if isStaff {
+		return msg
+	}
+	var list []models.WaitingList
+	if err := json.Unmarshal([]byte(msg), &list); err != nil {
+		return msg
+	}
+	redacted, err := json.Marshal(redactForPublic(list))
+	if err != nil {
+		return msg
+	}
+	return string(redacted)
+}
+
 // HandleWaitingItemStream 個別の待機顧客のリアルタイムステータス変化を監視するSSEを処理
+// HandleWaitingUser GET /api/waiting-list/user?store_id=...&waiting_id=...
+//
+// 特定の顧客1件分の待機情報(待ち順・目安時間を含む)を返す。
+// 顧客ウェブの初期表示用。SSE(HandleWaitingItemStream)と同じ
+// getWaitingUserResponse を使うため、初期取得とリアルタイム更新で
+// 応答の形が完全に一致する。
+//
+// - これが無かった間、顧客ウェブは店舗の待機リスト全件を取得して
+//   クライアント側で自分の1件を探していた。待っている客の人数分だけ
+//   転送量が増え、他の客のnotesやmenu_itemsまで配信されていた
+func (h *WaitingListHandler) HandleWaitingUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	storeID := r.URL.Query().Get("store_id")
+	waitingID := r.URL.Query().Get("waiting_id")
+	if storeID == "" || waitingID == "" {
+		utils.RespondWithError(w, "Missing store_id or waiting_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.getWaitingUserResponse(storeID, waitingID)
+	if err != nil {
+		// - データ無し(404)とDB障害(500)を区別する。クライアントは404を
+		//   「登録が存在しない」と解釈してキャンセル画面へ遷移するため、
+		//   一時的な障害を404にしてしまうと誤って登録を失わせることになる
+		if errors.Is(err, errWaitingItemNotFound) {
+			utils.RespondWithError(w, "Waiting item not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to build waiting user response: %v", err)
+		utils.RespondWithError(w, "Failed to fetch waiting item", http.StatusInternalServerError)
+		return
+	}
+
+	utils.RespondWithJSON(w, res, http.StatusOK)
+}
+
 func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	waitingID := r.URL.Query().Get("waiting_id")
@@ -219,14 +302,16 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 	// - 接続終了を監視
 	notify := r.Context().Done()
 
-	// - 接続時に初期データを送信
-	go func() {
+	// - 接続時に初期データを送信 (HandleStreamと同じくpanic保護が必要)
+	// - 送り先はこの接続だけ。こちらのキーは (店舗ID:待機ID) なので通常は1接続だが、
+	//   客が複数タブを開いていると全タブに再送されることになる
+	utils.Go("sse_user_stream_initial_data", func() {
 		res, err := h.getWaitingUserResponse(storeID, waitingID)
 		if err == nil {
 			jsonData, _ := json.Marshal(res)
-			h.userBroker.Broadcast(key, string(jsonData))
+			h.userBroker.SendTo(key, clientChan, string(jsonData))
 		}
-	}()
+	})
 
 	for {
 		select {
@@ -241,8 +326,16 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 				ClientIP:  r.RemoteAddr,
 			})
 			return
-		case msg := <-clientChan:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
+		case msg, ok := <-clientChan:
+			// - HandleStreamと同じ理由: closeされたチャネルでの空回りを防ぐ
+			if !ok {
+				return
+			}
+			if msg == events.HeartbeatMessage {
+				fmt.Fprintf(w, "%s\n\n", msg)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+			}
 			w.(http.Flusher).Flush()
 		}
 	}
@@ -267,8 +360,96 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 		return
 	}
 
+	// - 有効なスタッフセッション(X-Session-Id)が無い場合は contact(電話番号)を除去したコピーを返す
+	//   注意: 「有効な端末セッションが存在する」ことのみ確認し、当該store_idへのスタッフ権限までは
+	//   検証しない(簡易な公開/非公開の判定に留める、既知の限界)
+	if !h.hasActiveStaffSession(r) {
+		waitingListData = redactForPublic(waitingListData)
+	}
+
 	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
 }
+
+// hasActiveStaffSession X-Session-Idヘッダーの有効セッション有無でスタッフ由来かを簡易判定する
+func (h *WaitingListHandler) hasActiveStaffSession(r *http.Request) bool {
+	sessionID := r.Header.Get("X-Session-Id")
+	if sessionID == "" {
+		return false
+	}
+	session, err := h.sessionRepo.FindBySessionID(sessionID)
+	if err != nil || session == nil {
+		return false
+	}
+	return session.IsActive()
+}
+
+// redactForPublic 匿名アクセス向けに個人情報を除去したコピーを返す。元スライスは変更しない。
+//
+// 店舗単位のSSE(/waiting-list/stream)とポーリングは認証を要求しない公開エンドポイントで、
+// store_id さえ分かれば誰でも購読できる。store_id はQRのURLとモニターボードのURLに
+// 含まれるため、一度QRを読んだ客はその店舗の待機リストを恒久的に購読できてしまう。
+//
+// - contact(電話番号)に加え、notes(客が自由記述した要望)とmenu_items(注文内容)も落とす。
+//   どちらも他人に見せる理由が無く、自由記述は何が書かれるか制御できない
+// - 唯一の公開購読者であるモニターボード(yoyaku_mate/src/containers/board/Board.jsx)は
+//   status / queue_number / waiting_id しか使わないため、これらを落としても表示は壊れない
+// - party_size と nationality は残す。個人を特定する情報ではなく、
+//   落とす範囲を広げるほど未把握の利用箇所を壊すリスクが上がる
+func redactForPublic(list []models.WaitingList) []models.WaitingList {
+	redacted := make([]models.WaitingList, len(list))
+	copy(redacted, list)
+	for i := range redacted {
+		redacted[i] = redactItemForPublic(redacted[i])
+	}
+	return redacted
+}
+
+// redactItemForPublic 1件分の個人情報を除去する。
+// 除去対象は redactForPublic と必ず同じにすること (片方だけ増やすと穴になる)
+func redactItemForPublic(item models.WaitingList) models.WaitingList {
+	item.Contact = nil
+	item.Notes = nil
+	item.MenuItems = nil
+	return item
+}
+
+// isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
+// - 定休日(closed_days.regular_weekly、shift_table_handler.goのisClosedDayと共通ロジック)なら false
+// - 24時間営業なら true
+// - 当日の営業時間データが無い/不正な場合は、既存店舗の設定不備で誤って受付停止にしないよう true (制限しない)
+// - 閉店時刻が開始時刻以下の場合は日をまたぐ営業(例: 18:00〜翌2:00)とみなして判定する
+func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
+	weekday := strings.ToLower(now.Weekday().String())
+
+	if isClosedDay(weekday, settings.ClosedDays) {
+		return false
+	}
+
+	if settings.Is24Hours {
+		return true
+	}
+
+	hours, ok := settings.OperatingHours[weekday]
+	if !ok || hours.Start == "" || hours.End == "" {
+		return true
+	}
+
+	startMin, okStart := parseTimeToMinutes(hours.Start)
+	endMin, okEnd := parseTimeToMinutes(hours.End)
+	if !okStart || !okEnd {
+		return true
+	}
+
+	nowMin := now.Hour()*60 + now.Minute()
+
+	if endMin <= startMin {
+		return nowMin >= startMin || nowMin < endMin
+	}
+	return nowMin >= startMin && nowMin < endMin
+}
+
+// maxWaitingIDLength クライアントが送れる waiting_id の最大長
+const maxWaitingIDLength = 64
 
 // handleCreateWaitingList 新しい待機リストアイテムの作成(POST)を処理
 func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +493,18 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 	if newWaiting.PartySize <= 0 {
 		log.Printf("Invalid party_size: %d", newWaiting.PartySize)
 		http.Error(w, "人数が正しくありません。", http.StatusBadRequest)
+		return
+	}
+
+	// - waiting_idはクライアント任意の文字列がそのままユニークキーとしてDBへ入る。
+	//   形式は3クライアントで異なり今後も変わりうるため、形式は見ずに上限だけを課す。
+	//   形式を検証する関数は過去に存在したが、クライアントが形式を変えた後も
+	//   更新されず実態と乖離していた (呼ばれていなかったため誰も気づかなかった)
+	// - 上限の根拠: MongoDBのインデックスキーは約1024バイトが上限で、それを超えると
+	//   挿入が原因の分かりにくい失敗になる。64文字あれば全クライアントの形式に足りる
+	if len(newWaiting.WaitingID) > maxWaitingIDLength {
+		log.Printf("waiting_id too long: %d chars", len(newWaiting.WaitingID))
+		http.Error(w, "waiting_idが正しくありません。", http.StatusBadRequest)
 		return
 	}
 
@@ -386,6 +579,16 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		newWaiting.Source = "app"
 	}
 
+	// - 営業時間外の受付拒否 (QRからの顧客登録のみ対象。マネージャー/スタッフによる
+	//   Appからの手動登録(source=="app")は、閉店直前のウォークイン客対応のため対象外)
+	if newWaiting.Source == "web" && settings != nil {
+		if !isStoreOpenNow(&settings.Settings, now) {
+			log.Printf("Store %s is currently closed (outside operating hours), rejecting web waiting registration", newWaiting.StoreID)
+			http.Error(w, "現在、営業時間外のため、待機受付を行っておりません。", http.StatusForbidden)
+			return
+		}
+	}
+
 	// - ライセンス確認
 	license, err := h.storeRepo.GetLicense(newWaiting.StoreID)
 	if err != nil {
@@ -407,13 +610,27 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		return
 	}
 
-	utils.RespondWithJSON(w, createdItem, http.StatusCreated)
+	// - ゲスト(QRからのウェブ登録)には個人情報を返さない。
+	//   冪等パスでは「既存レコード」がそのまま返るため、waiting_idを推測して
+	//   投げるだけで他の客のcontact(電話番号)が読めてしまう。時刻ベースのIDは
+	//   推測しやすく、特に旧形式は秒までしか無いため総当たりが現実的だった
+	//   ([004] の公開SSE/ポーリングと同じ対策をこの経路にも入れる)
+	// - 判定は「呼び出し元が認証を通したか」(newWaiting.Source) で行う。
+	//   既存レコード側のsourceで判定すると、他人がapp登録した客の情報が漏れる
+	// - ゲスト自身が困ることは無い。客が必要とするのは waiting_id と番号・目安時間で、
+	//   自分が送った内容は手元にある
+	responseItem := *createdItem
+	if newWaiting.Source == "web" {
+		responseItem = redactItemForPublic(responseItem)
+	}
+	utils.RespondWithJSON(w, responseItem, http.StatusCreated)
 
 	// - DBの一貫性確保のため少し待機してから通知
-	go func() {
+	storeIDForNotify := newWaiting.StoreID
+	utils.Go("waiting_create_notify", func() {
 		time.Sleep(100 * time.Millisecond)
-		h.notifyStore(newWaiting.StoreID)
-	}()
+		h.notifyStore(storeIDForNotify)
+	})
 }
 
 // handleClearWaitingList 待機リストをクリアするリクエストを処理
@@ -606,6 +823,16 @@ func (h *WaitingListHandler) handleGetQRToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// - board_key検証: store_idだけでは誰でもトークンを発行できてしまうため、
+	//   点主アプリが認証済みで発行したboard_keyと一致する場合のみ許可する
+	boardKey := r.URL.Query().Get("board_key")
+	settings, err := h.storeRepo.GetSettings(storeID)
+	if err != nil || boardKey == "" || settings.BoardKey == nil ||
+		subtle.ConstantTimeCompare([]byte(boardKey), []byte(*settings.BoardKey)) != 1 {
+		utils.RespondWithError(w, "Invalid board_key", http.StatusForbidden)
+		return
+	}
+
 	// - JST基準の日付 (Dynamic Cutoff)
 	jst := time.FixedZone("JST", 9*60*60)
 	now := time.Now().In(jst)
@@ -631,6 +858,10 @@ type WaitingUserResponse struct {
 	EstimatedWaitingTime string `json:"estimated_waiting_time"`
 }
 
+// errWaitingItemNotFound 該当の待機データが存在しないことを表す。
+// 呼び出し元が「DB障害(500)」と「データ無し(404)」を区別するために使う
+var errWaitingItemNotFound = errors.New("waiting item not found")
+
 // notifyStore 最新データを取得し、全サブスクライバーにブロードキャストする
 func (h *WaitingListHandler) notifyStore(storeID string) {
 	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
@@ -648,15 +879,17 @@ func (h *WaitingListHandler) notifyStore(storeID string) {
 	h.broker.Broadcast(storeID, string(jsonData))
 
 	// - 個別待機ユーザー用SSEにもアップデートを送信
-	h.notifyWaitingUsers(storeID)
+	//   (取得済みのwaitingListをそのまま再利用し、接続顧客数分のDB再照会を回避)
+	h.notifyWaitingUsers(storeID, waitingList)
 }
 
 // notifyWaitingUsers 指定店舗の全アクティブな待機顧客にアップデートを送信する
-func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
-	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
-	if err != nil {
-		log.Printf("Error fetching waiting list for notifying users: %v", err)
-		return
+// waitingList: notifyStoreで取得済みのリストを受け取り、顧客ごとのGetWaitingList再照会を避ける
+func (h *WaitingListHandler) notifyWaitingUsers(storeID string, waitingList []models.WaitingList) {
+	// - 店舗設定からチームあたりの時間を一度だけ取得(顧客ごとの再照会を回避)
+	minutesPerTeam := 10
+	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
 	}
 
 	for _, item := range waitingList {
@@ -668,7 +901,7 @@ func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
 		h.userBroker.Mutex.RUnlock()
 
 		if clientsExist {
-			res, err := h.getWaitingUserResponse(storeID, item.WaitingID)
+			res, err := buildWaitingUserResponse(waitingList, item.WaitingID, minutesPerTeam)
 			if err != nil {
 				log.Printf("Error generating response for active client %s: %v", key, err)
 				continue
@@ -685,13 +918,24 @@ func (h *WaitingListHandler) notifyWaitingUsers(storeID string) {
 	}
 }
 
-// getWaitingUserResponse 特定の待機アイテムの詳細応答データを構築する
+// getWaitingUserResponse 特定の待機アイテムの詳細応答データを構築する(DBから1回だけ取得)
+// SSE接続開始時の初期データ送信など、単発の照会でのみ使用する
 func (h *WaitingListHandler) getWaitingUserResponse(storeID string, waitingID string) (*WaitingUserResponse, error) {
 	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 	if err != nil {
 		return nil, err
 	}
 
+	minutesPerTeam := 10
+	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
+		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
+	}
+
+	return buildWaitingUserResponse(waitingList, waitingID, minutesPerTeam)
+}
+
+// buildWaitingUserResponse 取得済みの待機リストから特定顧客向けの応答データを組み立てる(DB非照会)
+func buildWaitingUserResponse(waitingList []models.WaitingList, waitingID string, minutesPerTeam int) (*WaitingUserResponse, error) {
 	var details *models.WaitingList
 	for i := range waitingList {
 		if waitingList[i].WaitingID == waitingID {
@@ -700,7 +944,7 @@ func (h *WaitingListHandler) getWaitingUserResponse(storeID string, waitingID st
 		}
 	}
 	if details == nil {
-		return nil, fmt.Errorf("waiting item not found")
+		return nil, errWaitingItemNotFound
 	}
 
 	// - アクティブな待機アイテム(waiting, notified)のみを抽出
@@ -723,12 +967,6 @@ func (h *WaitingListHandler) getWaitingUserResponse(storeID string, waitingID st
 			waitingCount = i
 			break
 		}
-	}
-
-	// - 店舗設定からチームあたりの時間を取得
-	minutesPerTeam := 10
-	if settings, err := h.storeRepo.GetSettings(storeID); err == nil && settings.Settings.WaitingPolicy.EstimatedWaitTime > 0 {
-		minutesPerTeam = settings.Settings.WaitingPolicy.EstimatedWaitTime
 	}
 
 	return &WaitingUserResponse{
