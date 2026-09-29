@@ -42,13 +42,17 @@ R2_ASSETS_BUCKET_NAME=your_assets_bucket
 
 ## Deploy
 
-fly.ioにDockerマルチステージビルド方式でデプロイされます。  
-`main` ブランチにプッシュすると、GitHub Actionsを通じて自動的にデプロイされます。
+fly.ioにDockerマルチステージビルド方式でデプロイされます。
 
-```bash
-# ローカルからの直接デプロイ
-flyctl deploy
-```
+| 環境 | アプリ | 設定 | デプロイ方法 |
+|---|---|---|---|
+| 開発 | `rusui-dev` | `fly.toml` | `develop` へのpushで自動 (テスト通過後) |
+| 本番 | `rusui-prod` | `fly.prod.toml` | `main` へのpush (PRマージ) で自動 (テスト通過後・blue-green)。再デプロイは Actions → **Fly Deploy (Prod)** → Run workflow |
+
+- `main` へのマージ = 本番デプロイ。店舗の営業時間中のマージは避ける (全店舗のSSEが一瞬切れて再接続する)
+- 本番はローカルから `flyctl deploy` しないこと。flyctl はgitと無関係に手元のフォルダをそのままビルドするため、
+  別ブランチや未コミットの変更がそのまま本番へ出る
+- 引数なしの `flyctl deploy` は、どのブランチから実行しても `rusui-dev` へ出る
 
 ## Architecture
 
