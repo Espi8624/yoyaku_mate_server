@@ -7,8 +7,21 @@ on:
     branches:
       - develop
 jobs:
+  # テストが通らないコードはデプロイしない
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
   deploy:
     name: Deploy app
+    needs: test
     runs-on: ubuntu-latest
     concurrency: deploy-group-dev    # 本番用(main)のconcurrencyグループとは分離
     steps:

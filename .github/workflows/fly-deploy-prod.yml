@@ -1,0 +1,60 @@
+# 本番アプリ(rusui-prod, fly.prod.toml参照)へのデプロイ
+#
+# - main へのpush (= develop → main のPRマージ) で自動デプロイする
+#   PRのマージがそのまま「本番へ出す」判断になるため、店舗の営業時間中のマージは避けること
+#   (デプロイのたびにマシンが入れ替わり、全店舗のSSE接続が一瞬切れて再接続する)
+# - コード変更なしで再デプロイしたい場合は Actions → "Fly Deploy (Prod)" → Run workflow
+#   手動実行も main からのみ受け付ける
+# - ローカルの flyctl deploy を使わない理由:
+#   flyctl deploy は git と無関係に「実行したフォルダの現在のファイル」をビルドする。
+#   develop のまま実行したり未コミットの変更が残っていると、それがそのまま本番へ出る。
+#   ここでは main のコミットを新しくチェックアウトしてビルドするため、ローカルの状態に左右されない
+# - デプロイ方式 (blue-green) は fly.prod.toml の [deploy] で指定している
+
+name: Fly Deploy (Prod)
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  guard:
+    name: Require main branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail unless main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "本番デプロイは main ブランチからのみ実行できます (選択されたref: ${{ github.ref }})"
+          exit 1
+
+  # テストが通らないコードはデプロイしない
+  test:
+    name: Test
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  deploy:
+    name: Deploy app
+    needs: test
+    runs-on: ubuntu-latest
+    # - 開発用(develop)とはグループを分離
+    # - 連続でマージされた場合も、進行中のデプロイを中断せず順番に実行する
+    concurrency:
+      group: deploy-group-prod
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      # - -c で本番設定を明示する。付け忘れると fly.toml (rusui-dev) へ出てしまう
+      - run: flyctl deploy -c fly.prod.toml --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

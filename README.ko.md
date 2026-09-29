@@ -42,13 +42,17 @@ R2_ASSETS_BUCKET_NAME=your_assets_bucket
 
 ## Deploy
 
-fly.io에 Docker 멀티스테이지 빌드 방식으로 배포됩니다.  
-`main` 브랜치 푸시 시 GitHub Actions를 통해 자동 배포됩니다.
+fly.io에 Docker 멀티스테이지 빌드 방식으로 배포됩니다.
 
-```bash
-# 로컬에서 직접 배포
-flyctl deploy
-```
+| 환경 | 앱 | 설정 | 배포 방법 |
+|---|---|---|---|
+| 개발 | `rusui-dev` | `fly.toml` | `develop` push 시 자동 (테스트 통과 후) |
+| 프로덕션 | `rusui-prod` | `fly.prod.toml` | `main` push(PR 머지) 시 자동 (테스트 통과 후, blue-green). 재배포는 Actions → **Fly Deploy (Prod)** → Run workflow |
+
+- `main` 머지 = prod 배포. 매장 영업시간 중 머지는 피할 것 (모든 매장의 SSE가 잠깐 끊겼다가 재연결됨)
+- prod는 로컬에서 `flyctl deploy`하지 말 것. flyctl은 git과 무관하게 로컬 폴더를 그대로 빌드하므로,
+  다른 브랜치나 커밋 안 된 변경이 그대로 prod에 나간다
+- 인자 없는 `flyctl deploy`는 어느 브랜치에서 실행하든 `rusui-dev`로 배포된다
 
 ## Architecture
 
