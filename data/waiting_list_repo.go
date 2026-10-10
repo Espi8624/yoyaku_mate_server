@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -369,12 +369,12 @@ const maxInsertAttempts = 5
 //
 //   - 以前は "YYYYMMDD-HHMMSS-mmm" とミリ秒までの時刻だけで、同一ミリ秒に登録が重なると
 //     衝突した。ユニークインデックスを張った以上、衝突は登録失敗として表に出る
-//   - crypto/randベースの接尾辞(utils.GenerateRandomString)を付けて衝突を実質無くす。
+//   - crypto/randベースの接尾辞(auth.GenerateRandomString)を付けて衝突を実質無くす。
 //     形式は点主アプリが以前使っていた "YYYYMMDD-HHMMSS-xxxxxx" に揃える
 //   - 時刻はJST。registration_timeと基準を揃えておかないと、ログを突き合わせるときに
 //     同じレコードの時刻が2種類あることになる (fly.ioのコンテナはUTCで動く)
 func generateWaitingID() (string, error) {
-	suffix := utils.GenerateRandomString(6)
+	suffix := auth.GenerateRandomString(6)
 	if suffix == "" {
 		// - GenerateRandomStringはcrypto/randの失敗時に空文字を返す。
 		//   ここで気づかずに進むと、接尾辞なしのIDが量産されて衝突が復活する

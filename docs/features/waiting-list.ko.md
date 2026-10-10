@@ -184,7 +184,7 @@ waiting ──→ notified ──→ completed
 
 당일 날짜 + store_id를 HMAC으로 서명한 토큰으로, QR 코드 위변조를 방지합니다.  
 Dynamic Cutoff 기반의 영업일 기준으로 토큰 유효성을 판단합니다.  
-→ [상세: utils/hmac.go]
+→ [상세: auth/token.go]
 
 ### Dynamic Business Day Cutoff
 

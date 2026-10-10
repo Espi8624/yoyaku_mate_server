@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -9,7 +10,6 @@ import (
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -42,39 +42,39 @@ var weekdayLabels = [7]string{"日", "月", "火", "水", "木", "金", "土"}
 // HandleGet は店舗の統計情報（今日 or 今週固定）を取得するリクエストを処理します
 func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	// 権限チェック
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 
 	idToken := authHeader[len("Bearer "):]
 	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
 	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
-		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		respondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, user.Role, "")
 	if err != nil || !hasPermission {
-		utils.RespondWithError(w, "Permission denied", http.StatusForbidden)
+		respondWithError(w, "Permission denied", http.StatusForbidden)
 		return
 	}
 
@@ -86,11 +86,11 @@ func (h *StatisticsHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.CalculateStatistics(storeID, period)
 	if err != nil {
 		log.Printf("Failed to calculate statistics for store %s: %v", storeID, err)
-		utils.RespondWithError(w, "Failed to calculate statistics", http.StatusInternalServerError)
+		respondWithError(w, "Failed to calculate statistics", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, stats, http.StatusOK)
+	respondWithJSON(w, stats, http.StatusOK)
 }
 
 // CalculateStatistics は period="auto"(今日を時間帯別) / "weekly"(今週を曜日別、常に直近の週固定)
@@ -321,7 +321,7 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period string) (*models
 		m := arr[0].(bson.M)
 		if avg, ok := m["avg_wait"].(float64); ok {
 			response.WaitTimeSeconds = int(avg)
-			response.AverageWaitTime = utils.FormatDuration(int(avg))
+			response.AverageWaitTime = formatDuration(int(avg))
 		}
 	}
 
@@ -336,4 +336,17 @@ func CalculateGrowthRate(current, previous int) float64 {
 		return 0.0
 	}
 	return (float64(current-previous) / float64(previous)) * 100
+}
+
+// formatDuration は秒数を "X分Y秒" または "X秒" 形式にフォーマットします
+func formatDuration(seconds int) string {
+	if seconds < 0 {
+		return "--分"
+	}
+	min := seconds / 60
+	sec := seconds % 60
+	if min > 0 {
+		return fmt.Sprintf("%d分%d秒", min, sec)
+	}
+	return fmt.Sprintf("%d秒", sec)
 }

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -144,33 +143,33 @@ func (h *ShiftTableHandler) GetShiftTableHandler(w http.ResponseWriter, r *http.
 	weekStartDate := vars["weekStartDate"]
 
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 	if !isValidWeekStartDate(weekStartDate) {
-		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		respondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasViewAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	isManager, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 
@@ -178,10 +177,10 @@ func (h *ShiftTableHandler) GetShiftTableHandler(w http.ResponseWriter, r *http.
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			// この週にはまだシフト表が作成されていない
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
@@ -189,24 +188,24 @@ func (h *ShiftTableHandler) GetShiftTableHandler(w http.ResponseWriter, r *http.
 		// スタッフには確定版だけを見せる。一度も確定していない週は「まだ作成されていない」のと
 		// 区別する必要がないため、404を返して既存の空状態表示に寄せる
 		if table.PublishedAt == nil {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
 		// クライアントが下書き/確定版を意識せず描画できるよう、確定版を Shifts に載せ替えて返す
 		table.Shifts = table.PublishedShifts
 		table.HasUnpublishedChanges = false
-		utils.RespondWithJSON(w, table, http.StatusOK)
+		respondWithJSON(w, table, http.StatusOK)
 		return
 	}
 
 	// マネージャーには下書きをそのまま返し、確定ボタンの出し分けに使う未確定フラグを添える
 	table.HasUnpublishedChanges, err = h.hasUnpublishedChanges(table)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to check unpublished changes", http.StatusInternalServerError)
+		respondWithError(w, "Failed to check unpublished changes", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, table, http.StatusOK)
+	respondWithJSON(w, table, http.StatusOK)
 }
 
 // hasUnpublishedChanges 下書きに未確定の変更が残っているかを判定する。
@@ -270,43 +269,43 @@ func (h *ShiftTableHandler) PublishShiftTableHandler(w http.ResponseWriter, r *h
 	weekStartDate := vars["weekStartDate"]
 
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 	if !isValidWeekStartDate(weekStartDate) {
-		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		respondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to publish the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to publish the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
 	publishedAt := time.Now()
 	if err := h.shiftTableRepo.PublishShifts(table.ID.Hex(), table.Shifts, publishedAt); err != nil {
-		utils.RespondWithError(w, "Failed to publish shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to publish shift table", http.StatusInternalServerError)
 		return
 	}
 
@@ -322,7 +321,7 @@ func (h *ShiftTableHandler) PublishShiftTableHandler(w http.ResponseWriter, r *h
 	table.UpdatedAt = publishedAt
 	table.HasUnpublishedChanges = false
 
-	utils.RespondWithJSON(w, map[string]interface{}{
+	respondWithJSON(w, map[string]interface{}{
 		"shift_table":            table,
 		"resolved_request_count": len(resolved),
 	}, http.StatusOK)
@@ -337,37 +336,37 @@ func (h *ShiftTableHandler) DiscardShiftTableDraftHandler(w http.ResponseWriter,
 	weekStartDate := vars["weekStartDate"]
 
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 	if !isValidWeekStartDate(weekStartDate) {
-		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		respondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
@@ -379,7 +378,7 @@ func (h *ShiftTableHandler) DiscardShiftTableDraftHandler(w http.ResponseWriter,
 		published = []models.Shift{}
 	}
 	if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), published); err != nil {
-		utils.RespondWithError(w, "Failed to discard draft", http.StatusInternalServerError)
+		respondWithError(w, "Failed to discard draft", http.StatusInternalServerError)
 		return
 	}
 
@@ -393,7 +392,7 @@ func (h *ShiftTableHandler) DiscardShiftTableDraftHandler(w http.ResponseWriter,
 	table.Shifts = published
 	table.HasUnpublishedChanges = false
 
-	utils.RespondWithJSON(w, map[string]interface{}{
+	respondWithJSON(w, map[string]interface{}{
 		"shift_table":            table,
 		"reverted_request_count": revertedCount,
 	}, http.StatusOK)
@@ -404,23 +403,23 @@ func (h *ShiftTableHandler) CreateShiftTableHandler(w http.ResponseWriter, r *ht
 	vars := mux.Vars(r)
 	storeID := vars["storeId"]
 	if storeID == "" {
-		utils.RespondWithError(w, "store_id is required", http.StatusBadRequest)
+		respondWithError(w, "store_id is required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to create a shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to create a shift table for this store", http.StatusForbidden)
 		return
 	}
 
@@ -428,22 +427,22 @@ func (h *ShiftTableHandler) CreateShiftTableHandler(w http.ResponseWriter, r *ht
 		WeekStartDate string `json:"week_start_date"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if !isValidWeekStartDate(req.WeekStartDate) {
-		utils.RespondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
+		respondWithError(w, "week_start_date must be a valid Monday date (YYYY-MM-DD)", http.StatusBadRequest)
 		return
 	}
 
 	// 既に同じ週のシフト表が存在するか確認
 	_, err = h.shiftTableRepo.GetShiftTable(storeID, req.WeekStartDate)
 	if err == nil {
-		utils.RespondWithError(w, "Shift table already exists for this week", http.StatusConflict)
+		respondWithError(w, "Shift table already exists for this week", http.StatusConflict)
 		return
 	}
 	if err != mongo.ErrNoDocuments {
-		utils.RespondWithError(w, "Failed to check existing shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to check existing shift table", http.StatusInternalServerError)
 		return
 	}
 
@@ -453,11 +452,11 @@ func (h *ShiftTableHandler) CreateShiftTableHandler(w http.ResponseWriter, r *ht
 		WeekStartDate: req.WeekStartDate,
 	}
 	if err := h.shiftTableRepo.CreateShiftTable(newTable); err != nil {
-		utils.RespondWithError(w, "Failed to create shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to create shift table", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, newTable, http.StatusCreated)
+	respondWithJSON(w, newTable, http.StatusCreated)
 }
 
 // validateAndBuildShift リクエストボディを検証し、承認済みスタッフに紐づくShiftを構築する共通処理
@@ -515,48 +514,48 @@ func (h *ShiftTableHandler) AddShiftHandler(w http.ResponseWriter, r *http.Reque
 	storeID := vars["storeId"]
 	weekStartDate := vars["weekStartDate"]
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week. Create it first.", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week. Create it first.", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
 	shift, statusCode, err := h.validateAndBuildShift(r, storeID)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	if err := h.shiftTableRepo.AddShift(table.ID.Hex(), shift); err != nil {
-		utils.RespondWithError(w, "Failed to add shift", http.StatusInternalServerError)
+		respondWithError(w, "Failed to add shift", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, shift, http.StatusCreated)
+	respondWithJSON(w, shift, http.StatusCreated)
 }
 
 // UpdateShiftHandler 指定週のシフト表内のシフトを1件更新 (マネージャー専用)
@@ -566,48 +565,48 @@ func (h *ShiftTableHandler) UpdateShiftHandler(w http.ResponseWriter, r *http.Re
 	weekStartDate := vars["weekStartDate"]
 	shiftID := vars["shiftId"]
 	if storeID == "" || weekStartDate == "" || shiftID == "" {
-		utils.RespondWithError(w, "store_id, week_start_date and shift_id are required", http.StatusBadRequest)
+		respondWithError(w, "store_id, week_start_date and shift_id are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
 	shift, statusCode, err := h.validateAndBuildShift(r, storeID)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	if err := h.shiftTableRepo.UpdateShift(table.ID.Hex(), shiftID, shift); err != nil {
-		utils.RespondWithError(w, "Failed to update shift", http.StatusInternalServerError)
+		respondWithError(w, "Failed to update shift", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"message": "Shift updated successfully"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"message": "Shift updated successfully"}, http.StatusOK)
 }
 
 // DeleteShiftHandler 指定週のシフト表内のシフトを1件削除 (マネージャー専用)
@@ -617,42 +616,42 @@ func (h *ShiftTableHandler) DeleteShiftHandler(w http.ResponseWriter, r *http.Re
 	weekStartDate := vars["weekStartDate"]
 	shiftID := vars["shiftId"]
 	if storeID == "" || weekStartDate == "" || shiftID == "" {
-		utils.RespondWithError(w, "store_id, week_start_date and shift_id are required", http.StatusBadRequest)
+		respondWithError(w, "store_id, week_start_date and shift_id are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.shiftTableRepo.DeleteShift(table.ID.Hex(), shiftID); err != nil {
-		utils.RespondWithError(w, "Failed to delete shift", http.StatusInternalServerError)
+		respondWithError(w, "Failed to delete shift", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"message": "Shift deleted successfully"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"message": "Shift deleted successfully"}, http.StatusOK)
 }
 
 // AutoGenerateShiftsHandler 必要人員設定とスタッフの勤務可能時間を突き合わせ、
@@ -662,33 +661,33 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 	storeID := vars["storeId"]
 	weekStartDate := vars["weekStartDate"]
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week. Create it first.", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week. Create it first.", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
@@ -696,23 +695,23 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.Mode != "fill_gaps" && req.Mode != "replace_all" {
-		utils.RespondWithError(w, "mode must be 'fill_gaps' or 'replace_all'", http.StatusBadRequest)
+		respondWithError(w, "mode must be 'fill_gaps' or 'replace_all'", http.StatusBadRequest)
 		return
 	}
 
 	settings, err := h.settingsRepo.GetSettings(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch store settings", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch store settings", http.StatusInternalServerError)
 		return
 	}
 
 	staffList, err := h.staffRepo.GetStoreStaffByStoreID(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
 		return
 	}
 	candidates := buildAutoAssignCandidates(staffList, settings.ManagerID)
@@ -748,7 +747,7 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 	newShifts := autoAssignShifts(baseShifts, &settings.Settings, candidates, historicalCounts, historicalPairCounts)
 
 	if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), newShifts); err != nil {
-		utils.RespondWithError(w, "Failed to auto-generate shifts", http.StatusInternalServerError)
+		respondWithError(w, "Failed to auto-generate shifts", http.StatusInternalServerError)
 		return
 	}
 
@@ -756,7 +755,7 @@ func (h *ShiftTableHandler) AutoGenerateShiftsHandler(w http.ResponseWriter, r *
 	// 配置しきれなかったブロック(勤務可能な候補が必要人数に満たなかった等)を
 	// マネージャーに伝えるため、配置結果に対して不足分を算出して添える
 	table.ShiftShortages = computeShiftShortages(newShifts, &settings.Settings)
-	utils.RespondWithJSON(w, table, http.StatusOK)
+	respondWithJSON(w, table, http.StatusOK)
 }
 
 // --- シフト修正依頼 ---
@@ -771,23 +770,23 @@ func (h *ShiftTableHandler) CreateShiftChangeRequestHandler(w http.ResponseWrite
 	storeID := vars["storeId"]
 	weekStartDate := vars["weekStartDate"]
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasViewAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
 		return
 	}
 
@@ -801,17 +800,17 @@ func (h *ShiftTableHandler) CreateShiftChangeRequestHandler(w http.ResponseWrite
 		ToEndTime     string `json:"to_end_time"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	// From/To とも、シフト追加/編集(AddShift/UpdateShift)と同じ day/start_time/end_time
 	// 形式なので、同じバリデーション関数(validateShiftRequest)で検証する
 	if !validateShiftRequest(req.FromDay, req.FromStartTime, req.FromEndTime) {
-		utils.RespondWithError(w, "Invalid from day/start_time/end_time", http.StatusBadRequest)
+		respondWithError(w, "Invalid from day/start_time/end_time", http.StatusBadRequest)
 		return
 	}
 	if !validateShiftRequest(req.ToDay, req.ToStartTime, req.ToEndTime) {
-		utils.RespondWithError(w, "Invalid to day/start_time/end_time", http.StatusBadRequest)
+		respondWithError(w, "Invalid to day/start_time/end_time", http.StatusBadRequest)
 		return
 	}
 
@@ -829,11 +828,11 @@ func (h *ShiftTableHandler) CreateShiftChangeRequestHandler(w http.ResponseWrite
 		ToEndTime:     req.ToEndTime,
 	}
 	if err := h.changeRequestRepo.CreateRequest(changeRequest); err != nil {
-		utils.RespondWithError(w, "Failed to create shift change request", http.StatusInternalServerError)
+		respondWithError(w, "Failed to create shift change request", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, changeRequest, http.StatusCreated)
+	respondWithJSON(w, changeRequest, http.StatusCreated)
 }
 
 // GetShiftChangeRequestsHandler 週間シフト表に対する修正依頼一覧を取得する
@@ -843,35 +842,35 @@ func (h *ShiftTableHandler) GetShiftChangeRequestsHandler(w http.ResponseWriter,
 	storeID := vars["storeId"]
 	weekStartDate := vars["weekStartDate"]
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasViewAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to view the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	isManager, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 
 	requests, err := h.changeRequestRepo.GetRequestsForWeek(storeID, weekStartDate)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
 		return
 	}
 
@@ -881,7 +880,7 @@ func (h *ShiftTableHandler) GetShiftChangeRequestsHandler(w http.ResponseWriter,
 		requests = maskAppliedAsPending(requests)
 	}
 
-	utils.RespondWithJSON(w, requests, http.StatusOK)
+	respondWithJSON(w, requests, http.StatusOK)
 }
 
 // maskAppliedAsPending applied な依頼を pending として見せるためのコピーを返す
@@ -907,32 +906,32 @@ func (h *ShiftTableHandler) DeleteShiftChangeRequestHandler(w http.ResponseWrite
 	weekStartDate := vars["weekStartDate"]
 	requestID := vars["requestId"]
 	if storeID == "" || weekStartDate == "" || requestID == "" {
-		utils.RespondWithError(w, "store_id, week_start_date and request_id are required", http.StatusBadRequest)
+		respondWithError(w, "store_id, week_start_date and request_id are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
 	if err := h.changeRequestRepo.DeleteRequest(requestID); err != nil {
-		utils.RespondWithError(w, "Failed to delete shift change request", http.StatusInternalServerError)
+		respondWithError(w, "Failed to delete shift change request", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"message": "Shift change request deleted successfully"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"message": "Shift change request deleted successfully"}, http.StatusOK)
 }
 
 // --- 修正依頼の一括適用 ---
@@ -1008,23 +1007,23 @@ func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWrite
 	storeID := vars["storeId"]
 	weekStartDate := vars["weekStartDate"]
 	if storeID == "" || weekStartDate == "" {
-		utils.RespondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
+		respondWithError(w, "store_id and week_start_date are required", http.StatusBadRequest)
 		return
 	}
 
 	user, statusCode, err := h.authenticate(r)
 	if err != nil {
-		utils.RespondWithError(w, err.Error(), statusCode)
+		respondWithError(w, err.Error(), statusCode)
 		return
 	}
 
 	hasAccess, err := h.hasManageAccess(user.ID, storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasAccess {
-		utils.RespondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
+		respondWithError(w, "You do not have permission to edit the shift table for this store", http.StatusForbidden)
 		return
 	}
 
@@ -1032,7 +1031,7 @@ func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWrite
 		Resolutions []changeRequestResolution `json:"resolutions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	resolutionByRequestID := make(map[string]changeRequestResolution, len(req.Resolutions))
@@ -1043,16 +1042,16 @@ func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWrite
 	table, err := h.shiftTableRepo.GetShiftTable(storeID, weekStartDate)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			utils.RespondWithError(w, "Shift table not found for this week", http.StatusNotFound)
+			respondWithError(w, "Shift table not found for this week", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift table", http.StatusInternalServerError)
 		return
 	}
 
 	allRequests, err := h.changeRequestRepo.GetRequestsForWeek(storeID, weekStartDate)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch shift change requests", http.StatusInternalServerError)
 		return
 	}
 	pending := make([]models.ShiftChangeRequest, 0, len(allRequests))
@@ -1068,13 +1067,13 @@ func (h *ShiftTableHandler) ApplyShiftChangeRequestsHandler(w http.ResponseWrite
 
 	settings, err := h.settingsRepo.GetSettings(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch store settings", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch store settings", http.StatusInternalServerError)
 		return
 	}
 
 	staffList, err := h.staffRepo.GetStoreStaffByStoreID(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch staff list", http.StatusInternalServerError)
 		return
 	}
 	managerName := ""
@@ -1210,7 +1209,7 @@ requestLoop:
 	// ただし反映先はあくまで下書き。スタッフに見える確定版へは「確定」を押すまで反映されない
 	if len(appliedRequestIDs) > 0 {
 		if err := h.shiftTableRepo.ReplaceShifts(table.ID.Hex(), shifts); err != nil {
-			utils.RespondWithError(w, "Failed to apply shift changes", http.StatusInternalServerError)
+			respondWithError(w, "Failed to apply shift changes", http.StatusInternalServerError)
 			return
 		}
 		for id := range appliedRequestIDs {
@@ -1244,7 +1243,7 @@ requestLoop:
 		}
 	}
 
-	utils.RespondWithJSON(w, changeRequestApplyResult{
+	respondWithJSON(w, changeRequestApplyResult{
 		AppliedCount:      len(appliedRequestIDs),
 		SupersededCount:   resolvedAsObsolete,
 		SkippedStaleCount: staleResolved,

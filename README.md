@@ -61,9 +61,10 @@ handlers/   → HTTPパース、認証、ビジネスルールの検証 (Reposit
 data/       → MongoDBクエリ (データアクセス層 - Repositoryの実装)
 events/     → SSE Broker (インメモリpub/sub) および Heartbeatによるゾンビ接続の自動クリア
 metrics/    → エラー、APIリクエスト、アクティブユーザー(同時接続者/DAU/MAU)、監査ログ(Audit Log)、システムリソース、DBメトリクスの収集、インメモリバッファリング、非同期バッチ保存
-auth/       → Firebaseトークン/セッション検証
+auth/       → Firebaseトークン/セッション検証、QR用HMACトークン・管理者セッショントークンの発行/検証
 models/     → Go構造体 ↔ BSON/JSON
-utils/      → 共通ユーティリティ (HMAC、JSONレスポンスなど)
+storage/    → ファイルストレージ (Cloudflare R2、未設定時はローカル保存)
+safego/     → panic保護付きゴルーチン起動 (バックグラウンド処理は必ずここを通す)
 ```
 
 ```mermaid

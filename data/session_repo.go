@@ -17,16 +17,6 @@ import (
 //   この間隔を超えた場合にのみ更新する
 const SessionTouchInterval = 5 * time.Minute
 
-// SessionRepository 端末セッションの操作を抽象化するインターフェース
-type SessionRepository interface {
-	Create(session models.Session) (*models.Session, error)
-	FindBySessionID(sessionID string) (*models.Session, error)
-	FindActiveByDevice(userID primitive.ObjectID, deviceID string) (*models.Session, error)
-	RevokeOthers(userID primitive.ObjectID, keepSessionID string, reason string) error
-	Revoke(sessionID string, reason string) error
-	TouchLastSeen(session *models.Session) error
-}
-
 type MongoSessionRepo struct{}
 
 // Create セッションを1件作成する (作成日時・最終アクセス日時はここで確定させる)

@@ -10,7 +10,6 @@ import (
 	"yoyaku_mate_server/config"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 )
 
 // - contextキータイプ: グローバルなstring型との衝突を防ぐために別途定義
@@ -64,7 +63,7 @@ func (w *panicResponseWriter) Unwrap() http.ResponseWriter {
 //   - MetricsMiddlewareの内側に置くこと。ここで書いた500を外側のメトリクスが拾い、
 //     エラーダッシュボードに計上される
 //   - バックグラウンドゴルーチンのpanicはこのミドルウェアの範囲外。そちらは
-//     utils.Go / utils.GoForever が受け持つ
+//     safego.Go / safego.GoForever が受け持つ
 func RecoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &panicResponseWriter{ResponseWriter: w}
@@ -90,7 +89,7 @@ func RecoverMiddleware(next http.Handler) http.Handler {
 				return
 			}
 
-			utils.RespondWithError(w, "Internal server error", http.StatusInternalServerError)
+			respondWithError(w, "Internal server error", http.StatusInternalServerError)
 		}()
 
 		next.ServeHTTP(rw, r)
@@ -144,7 +143,7 @@ func LimitRequestBodyMiddleware(next http.Handler) http.Handler {
 		}
 
 		if r.ContentLength > limit {
-			utils.RespondWithError(w, "Request body is too large", http.StatusRequestEntityTooLarge)
+			respondWithError(w, "Request body is too large", http.StatusRequestEntityTooLarge)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -185,7 +184,7 @@ func RequireDatabaseMiddleware(next http.Handler) http.Handler {
 		if !db.IsReady() {
 			// - 再接続ワーカーの試行間隔に合わせ、クライアントに再試行の目安を伝える
 			w.Header().Set("Retry-After", "30")
-			utils.RespondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
+			respondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -208,7 +207,7 @@ func RequireAuthMiddleware(repo MiddlewareUserRepository) func(http.Handler) htt
 			// - Authorizationヘッダーを取得
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+				respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 				return
 			}
 
@@ -216,27 +215,27 @@ func RequireAuthMiddleware(repo MiddlewareUserRepository) func(http.Handler) htt
 			idToken := strings.TrimPrefix(authHeader, "Bearer ")
 			if idToken == authHeader {
 				// - "Bearer " プレフィックスが存在しない場合は不正なフォーマット
-				utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+				respondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
 				return
 			}
 
 			// - Firebase IDトークンを検証
 			firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
 			if err != nil {
-				utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+				respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 				return
 			}
 
 			// - DBからユーザー情報を取得
 			user, err := repo.GetByFirebaseUID(firebaseUID)
 			if err != nil || user == nil {
-				utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+				respondWithError(w, "User not found", http.StatusUnauthorized)
 				return
 			}
 
 			// - 退会済みアカウント: Firebase側のトークンがまだ有効期限内でも即座に拒否する
 			if user.IsWithdrawn() {
-				utils.RespondWithErrorCode(w, ErrCodeAccountWithdrawn, "退会済みのアカウントです。", http.StatusForbidden)
+				respondWithErrorCode(w, ErrCodeAccountWithdrawn, "退会済みのアカウントです。", http.StatusForbidden)
 				return
 			}
 
@@ -279,7 +278,7 @@ func RequireSessionMiddleware(repo MiddlewareSessionRepository) func(http.Handle
 
 			user, ok := GetUserFromContext(r.Context())
 			if !ok {
-				utils.RespondWithError(w, "Authentication required", http.StatusUnauthorized)
+				respondWithError(w, "Authentication required", http.StatusUnauthorized)
 				return
 			}
 
@@ -298,25 +297,25 @@ func RequireSessionMiddleware(repo MiddlewareSessionRepository) func(http.Handle
 func VerifySessionForUser(w http.ResponseWriter, r *http.Request, repo MiddlewareSessionRepository, user *models.User) bool {
 	sessionID := r.Header.Get("X-Session-Id")
 	if sessionID == "" {
-		utils.RespondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
+		respondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
 		return false
 	}
 
 	session, err := repo.FindBySessionID(sessionID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify session", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify session", http.StatusInternalServerError)
 		return false
 	}
 
 	// - 未知のトークン、または他ユーザーのトークン。奪われたわけではないので再発行を促すだけに留める
 	if session == nil || session.UserID != user.ID {
-		utils.RespondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
+		respondWithErrorCode(w, ErrCodeSessionRequired, "セッションの再確立が必要です。", http.StatusUnauthorized)
 		return false
 	}
 
 	// - 無効化済み: 他端末でログインされたケース
 	if !session.IsActive() {
-		utils.RespondWithErrorCode(w, ErrCodeSessionRevoked, "他の端末でログインされたため、ログアウトします。", http.StatusUnauthorized)
+		respondWithErrorCode(w, ErrCodeSessionRevoked, "他の端末でログインされたため、ログアウトします。", http.StatusUnauthorized)
 		return false
 	}
 
@@ -341,19 +340,19 @@ func RequireAdminAuthMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+			respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if token == authHeader {
-			utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+			respondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
 			return
 		}
 
 		secret := config.Get().AdminTokenSecret
-		if secret == "" || !utils.VerifyAdminSessionToken(secret, token) {
-			utils.RespondWithError(w, "Invalid or expired admin session", http.StatusUnauthorized)
+		if secret == "" || !auth.VerifyAdminSessionToken(secret, token) {
+			respondWithError(w, "Invalid or expired admin session", http.StatusUnauthorized)
 			return
 		}
 

@@ -10,7 +10,7 @@
 | HTTP ルーター | `gorilla/mux` |
 | DB | MongoDB Atlas |
 | 認証 | Firebase Auth |
-| ファイルストレージ | Cloudflare R2 (MinIO互換クライアント) |
+| ファイルストレージ | Cloudflare R2 (S3互換クライアント、`storage/`) |
 | デプロイ | fly.io |
 | Rate Limiting | `tollbooth` (5 req/s per IP, burst 10) |
 | CORS | `rs/cors` |
@@ -53,11 +53,13 @@ yoyaku_mate_server/
 │
 ├── auth/                # 認証関連ロジック
 │   ├── firebase_auth.go # Firebase ID Token検証
-│   └── login_token.go   # 重複ログイン防止トークン検証
+│   ├── firebase_auth_service.go # ハンドラに注入する認証サービス
+│   └── token.go         # QR用HMACトークン・管理者セッショントークン・ランダム文字列生成
 │
 ├── config/              # 環境変数ローディング
 ├── db/                  # MongoDB接続管理
-└── utils/               # 共通ユーティリティ (JSONレスポンス、HMACトークンなど)
+├── storage/             # ファイルストレージ (Cloudflare R2、未設定時はローカル保存)
+└── safego/              # panic保護付きゴルーチン起動
 ```
 
 ---

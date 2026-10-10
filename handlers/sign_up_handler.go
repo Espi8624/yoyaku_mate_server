@@ -11,7 +11,6 @@ import (
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -35,91 +34,91 @@ const (
 // /api/auth/signup [post]
 func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Firebase IDで、トークン検証
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
 	firebaseUIDFromToken, emailVerified, err := auth.VerifyIDTokenWithEmailVerified(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 	// メール未認証のアカウントは登録不可
 	if !emailVerified {
-		utils.RespondWithError(w, "Email verification required before signup", http.StatusForbidden)
+		respondWithError(w, "Email verification required before signup", http.StatusForbidden)
 		return
 	}
 
 	var req models.SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// トークンで検証されたUIDと、要請本文のUIDが一致しているか確認
 	if firebaseUIDFromToken != req.FirebaseUID {
-		utils.RespondWithError(w, "Firebase UID mismatch between token and request body", http.StatusBadRequest)
+		respondWithError(w, "Firebase UID mismatch between token and request body", http.StatusBadRequest)
 		return
 	}
 
 	// 必須フィールド検証
 	if req.FirebaseUID == "" || req.Email == "" || req.Name == "" || req.Role == "" {
-		utils.RespondWithError(w, "Missing required fields", http.StatusBadRequest)
+		respondWithError(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
 	// 本人情報(生年月日・住所)の必須フィールド検証 (建物名のみ任意)
 	if req.Birthdate == "" || req.ZipCode == "" || req.Prefecture == "" || req.City == "" || req.Address == "" {
-		utils.RespondWithError(w, "Missing required personal info fields (birthdate/address)", http.StatusBadRequest)
+		respondWithError(w, "Missing required personal info fields (birthdate/address)", http.StatusBadRequest)
 		return
 	}
 
 	// 生年月日の形式検証 + 満年齢が労働基準法上の最低就労年齢(満15歳)以上か確認
 	birthdate, err := time.Parse("2006-01-02", req.Birthdate)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid birthdate format (expected YYYY-MM-DD)", http.StatusBadRequest)
+		respondWithError(w, "Invalid birthdate format (expected YYYY-MM-DD)", http.StatusBadRequest)
 		return
 	}
 	if birthdate.After(time.Now()) {
-		utils.RespondWithError(w, "Birthdate cannot be in the future", http.StatusBadRequest)
+		respondWithError(w, "Birthdate cannot be in the future", http.StatusBadRequest)
 		return
 	}
 	if calculateAge(birthdate) < 15 {
-		utils.RespondWithError(w, "Applicant must be at least 15 years old", http.StatusBadRequest)
+		respondWithError(w, "Applicant must be at least 15 years old", http.StatusBadRequest)
 		return
 	}
 
 	// 権限検証
 	if req.Role != "manager" && req.Role != "staff" {
-		utils.RespondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
+		respondWithError(w, "Invalid role: must be 'manager' or 'staff'", http.StatusBadRequest)
 		return
 	}
 
 	// メールアドレス形式検証
 	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	if !emailRegex.MatchString(req.Email) {
-		utils.RespondWithError(w, "Invalid email format", http.StatusBadRequest)
+		respondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 
 	// 個人電話番号形式検証
 	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
 	if !phoneRegex.MatchString(req.PhoneNumber) {
-		utils.RespondWithError(w, "Invalid personal phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
+		respondWithError(w, "Invalid personal phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
 
 	// MongoDB Transaction スタート
 	session, err := db.Client().StartSession()
 	if err != nil {
-		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
+		respondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return
 	}
 	defer session.EndSession(r.Context())
@@ -183,10 +182,10 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 					StoreName:        *req.StoreName,
 					BusinessCategory: *req.StoreCategory,
 					Address:          *req.StoreAddress,
-					Building:         utils.GetStringPointerValue(req.StoreBuilding, ""),
-					ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
-					Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
-					City:             utils.GetStringPointerValue(req.StoreCity, ""),
+					Building:         valueOr(req.StoreBuilding, ""),
+					ZipCode:          valueOr(req.StoreZipCode, ""),
+					Prefecture:       valueOr(req.StorePrefecture, ""),
+					City:             valueOr(req.StoreCity, ""),
 					Phone:            *req.StoreTelNumber,
 					StoreID:          primitive.NewObjectID().Hex(),
 					UserID:           newUserID,
@@ -238,13 +237,13 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 							SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 						},
 						WaitingPolicy: models.WaitingPolicy{
-							MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
-							EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
-							EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
-							RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
+							MaxWaitingCount:         valueOr(req.MaxWaitingCount, 10),
+							EstimatedWaitTime:       valueOr(req.EstimatedWaitTime, 10),
+							EnableMenuSelection:     valueOr(req.EnableMenuSelection, false),
+							RequireOneMenuPerPerson: valueOr(req.RequireOneMenuPerPerson, false),
 						},
-						Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
-						ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
+						Is24Hours: valueOr(req.Is24Hours, false),
+						ResetTime: valueOr(req.ResetTime, ""),
 					},
 					UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 				}
@@ -350,19 +349,19 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Trasaction Callbackされた時の処理
 		if strings.Contains(err.Error(), "already exists") {
-			utils.RespondWithError(w, err.Error(), http.StatusConflict)
+			respondWithError(w, err.Error(), http.StatusConflict)
 		} else if strings.Contains(err.Error(), "not found") {
-			utils.RespondWithError(w, err.Error(), http.StatusNotFound)
+			respondWithError(w, err.Error(), http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "Invalid") {
-			utils.RespondWithError(w, err.Error(), http.StatusBadRequest)
+			respondWithError(w, err.Error(), http.StatusBadRequest)
 		} else {
-			utils.RespondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
+			respondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
 
 	// Transaction成功
-	utils.RespondWithJSON(w, result, http.StatusCreated)
+	respondWithJSON(w, result, http.StatusCreated)
 }
 
 // calculateAge 生年月日から満年齢を計算する(誕生日を迎えているかどうかを考慮)
@@ -379,41 +378,41 @@ func calculateAge(birthdate time.Time) int {
 
 func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Store ID is required", http.StatusBadRequest)
+		respondWithError(w, "Store ID is required", http.StatusBadRequest)
 		return
 	}
 	storeCollection := db.GetCollection(DatabaseName, StoresCollection)
 	count, err := storeCollection.CountDocuments(r.Context(), bson.M{"store_id": storeID})
 	if err != nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	exists := count > 0
-	utils.RespondWithJSON(w, map[string]bool{"exists": exists}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"exists": exists}, http.StatusOK)
 }
 
 func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req models.EmailCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.Email == "" {
-		utils.RespondWithError(w, "Email is required", http.StatusBadRequest)
+		respondWithError(w, "Email is required", http.StatusBadRequest)
 		return
 	}
 	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 	if !emailRegex.MatchString(req.Email) {
-		utils.RespondWithError(w, "Invalid email format", http.StatusBadRequest)
+		respondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 	// 1. MongoDB check
@@ -425,7 +424,7 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		"status": bson.M{"$ne": models.UserStatusWithdrawn},
 	})
 	if err != nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -455,26 +454,26 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	// DBまたはFirebaseに存在する場合、利用できない
 	isUnavailable := (count > 0) || firebaseExists
 
-	utils.RespondWithJSON(w, map[string]bool{"available": !isUnavailable}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"available": !isUnavailable}, http.StatusOK)
 }
 
 func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var req models.PhoneCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.PhoneNumber == "" {
-		utils.RespondWithError(w, "Phone number is required", http.StatusBadRequest)
+		respondWithError(w, "Phone number is required", http.StatusBadRequest)
 		return
 	}
 	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
 	if !phoneRegex.MatchString(req.PhoneNumber) {
-		utils.RespondWithError(w, "Invalid phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
+		respondWithError(w, "Invalid phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
 	// 退会済み(WITHDRAWN)アカウントは、同じ電話番号での新規登録を妨げないよう除外する
@@ -484,10 +483,10 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		"status": bson.M{"$ne": models.UserStatusWithdrawn},
 	})
 	if err != nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	utils.RespondWithJSON(w, map[string]bool{"available": count == 0}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"available": count == 0}, http.StatusOK)
 }
 
 // ログインされているユーザーの店舗登録プロセス
@@ -495,30 +494,30 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 	// 使用者認証
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
 	if idToken == authHeader {
-		utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+		respondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
 		return
 	}
 	firebaseUID, err := auth.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
 	// 新しい店舗情報をリクエストボディから取得
 	var req models.SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	session, err := db.Client().StartSession()
 	if err != nil {
-		utils.RespondWithError(w, "Failed to start database session", http.StatusInternalServerError)
+		respondWithError(w, "Failed to start database session", http.StatusInternalServerError)
 		return
 	}
 	defer session.EndSession(r.Context())
@@ -572,10 +571,10 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 			StoreName:        *req.StoreName,
 			BusinessCategory: *req.StoreCategory,
 			Address:          *req.StoreAddress,
-			Building:         utils.GetStringPointerValue(req.StoreBuilding, ""), // New
-			ZipCode:          utils.GetStringPointerValue(req.StoreZipCode, ""),
-			Prefecture:       utils.GetStringPointerValue(req.StorePrefecture, ""),
-			City:             utils.GetStringPointerValue(req.StoreCity, ""),
+			Building:         valueOr(req.StoreBuilding, ""), // New
+			ZipCode:          valueOr(req.StoreZipCode, ""),
+			Prefecture:       valueOr(req.StorePrefecture, ""),
+			City:             valueOr(req.StoreCity, ""),
 			Phone:            *req.StoreTelNumber,
 			StoreID:          primitive.NewObjectID().Hex(),
 			UserID:           existingUser.ID,
@@ -623,13 +622,13 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 					SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 				},
 				WaitingPolicy: models.WaitingPolicy{
-					MaxWaitingCount:         utils.GetIntPointerValue(req.MaxWaitingCount, 10),
-					EstimatedWaitTime:       utils.GetIntPointerValue(req.EstimatedWaitTime, 10),
-					EnableMenuSelection:     utils.GetBoolPointerValue(req.EnableMenuSelection, false),
-					RequireOneMenuPerPerson: utils.GetBoolPointerValue(req.RequireOneMenuPerPerson, false),
+					MaxWaitingCount:         valueOr(req.MaxWaitingCount, 10),
+					EstimatedWaitTime:       valueOr(req.EstimatedWaitTime, 10),
+					EnableMenuSelection:     valueOr(req.EnableMenuSelection, false),
+					RequireOneMenuPerPerson: valueOr(req.RequireOneMenuPerPerson, false),
 				},
-				Is24Hours: utils.GetBoolPointerValue(req.Is24Hours, false),
-				ResetTime: utils.GetStringPointerValue(req.ResetTime, ""),
+				Is24Hours: valueOr(req.Is24Hours, false),
+				ResetTime: valueOr(req.ResetTime, ""),
 			},
 			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
@@ -647,16 +646,16 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			utils.RespondWithError(w, err.Error(), http.StatusNotFound)
+			respondWithError(w, err.Error(), http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "already exists") {
-			utils.RespondWithError(w, err.Error(), http.StatusConflict)
+			respondWithError(w, err.Error(), http.StatusConflict)
 		} else if strings.Contains(err.Error(), "required") || strings.Contains(strings.ToLower(err.Error()), "invalid") {
-			utils.RespondWithError(w, err.Error(), http.StatusBadRequest)
+			respondWithError(w, err.Error(), http.StatusBadRequest)
 		} else {
-			utils.RespondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
+			respondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	utils.RespondWithJSON(w, result, http.StatusCreated)
+	respondWithJSON(w, result, http.StatusCreated)
 }

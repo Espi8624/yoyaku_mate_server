@@ -167,7 +167,7 @@ Atlasが戻るまでクラッシュループに入り、再起動のたびに起
 ```go
 if !db.IsReady() {
     w.Header().Set("Retry-After", "30")
-    utils.RespondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
+    respondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
     return
 }
 ```
@@ -210,7 +210,7 @@ MongoDBに到達できないURIで実際に起動して確認したところ、
 ```
 
 `ErrorTracker.flush` が `db.GetCollection` の戻り値をnilチェックせず `InsertMany` を呼んでいた。
-`utils.GoForever` が復帰させるためプロセスは死なないが、
+`safego.GoForever` が復帰させるためプロセスは死なないが、
 **fly.ioのログに5秒おきにスタックトレースが積み上がり、本当の障害原因が埋もれる。**
 これはHTTPリクエストの経路ではないため、`RequireDatabaseMiddleware` では防げない。
 

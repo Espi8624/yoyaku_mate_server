@@ -184,7 +184,7 @@ waiting ──→ notified ──→ completed
 
 当日の日付 + store_id を HMACで署名したトークンで、QRコードの偽造を防止します。  
 Dynamic Cutoffベースの営業日を基準にトークンの有効性を判断します。  
-→ [詳細: utils/hmac.go]
+→ [詳細: auth/token.go]
 
 ### Dynamic Business Day Cutoff
 

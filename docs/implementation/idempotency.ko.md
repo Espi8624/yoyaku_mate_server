@@ -136,14 +136,14 @@ clientSupplied := item.WaitingID != ""   // 생성으로 덮이기 전에 확정
 
 ```go
 // 형식: YYYYMMDD-HHMMSS-xxxxxx (JST, 끝은 crypto/rand 기반 6자)
-suffix := utils.GenerateRandomString(6)
+suffix := auth.GenerateRandomString(6)
 return time.Now().In(jst).Format("20060102-150405") + "-" + suffix, nil
 ```
 
 이전에는 `YYYYMMDD-HHMMSS-mmm`으로 밀리초까지의 시각뿐이어서 **같은 밀리초에 등록이 겹치면 충돌했다.**
 유니크 인덱스를 건 이상, 충돌은 조용한 이중 등록이 아니라 등록 실패로 겉에 드러난다.
 
-`utils.GenerateRandomString`은 crypto/rand 실패 시 빈 문자열을 반환하므로 그 지점에서 에러로 처리한다.
+`auth.GenerateRandomString`은 crypto/rand 실패 시 빈 문자열을 반환하므로 그 지점에서 에러로 처리한다.
 모르고 지나가면 접미사 없는 ID가 양산되어 충돌이 되살아난다.
 
 > **폴백 ID는 멱등성을 보장하지 않는다.** 재시도마다 다른 ID가 되므로,

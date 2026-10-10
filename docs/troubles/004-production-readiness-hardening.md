@@ -2,7 +2,7 @@
 
 > 作成日: 2026-09-18
 > 状態: コード側は解決済み (Resolved) / 認証情報のローテーションは未実施
-> 関連ファイル: [`db/mongo.go`](../../db/mongo.go), [`utils/safego.go`](../../utils/safego.go), [`handlers/waiting_list_handler.go`](../../handlers/waiting_list_handler.go), [`main.go`](../../main.go)
+> 関連ファイル: [`db/mongo.go`](../../db/mongo.go), [`safego/safego.go`](../../safego/safego.go), [`handlers/waiting_list_handler.go`](../../handlers/waiting_list_handler.go), [`main.go`](../../main.go)
 
 ---
 
@@ -92,7 +92,7 @@ func (h *WaitingListHandler) HandleStream(...) {   // ← ここはrecoverされ
 
 ### 解決策
 
-`utils.Go` / `utils.GoForever` を追加し、全ての起動箇所をこれに通した。
+`safego.Go` / `safego.GoForever` を追加し、全ての起動箇所をこれに通した。
 
 **`GoForever` が単なるrecoverではなく「再開」する理由**が重要である。
 recoverして終了するだけだと、ワーカーが静かに止まったままプロセスは生き続ける。

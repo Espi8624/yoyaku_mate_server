@@ -199,7 +199,7 @@ func TestRequireDatabaseMiddleware(t *testing.T) {
 		if rec.Header().Get("Retry-After") == "" {
 			t.Error("Retry-Afterヘッダが付いていない")
 		}
-		// - エラーダッシュボードでDB障害として分類されるためのヘッダ (utils.RespondWithErrorが付与)
+		// - エラーダッシュボードでDB障害として分類されるためのヘッダ (respondWithErrorが付与)
 		if got := rec.Header().Get("X-Error-Type"); got != "DATABASE_ERROR" {
 			t.Errorf("X-Error-Typeが DATABASE_ERROR でない: %q", got)
 		}

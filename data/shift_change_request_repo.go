@@ -12,16 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// ShiftChangeRequestRepository 週間シフト表に対する修正依頼の操作を抽象化するインターフェース
-type ShiftChangeRequestRepository interface {
-	CreateRequest(req models.ShiftChangeRequest) error
-	GetRequestsForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	ResolveAppliedForWeek(storeID, weekStartDate string) ([]models.ShiftChangeRequest, error)
-	RevertAppliedForWeek(storeID, weekStartDate string) (int, error)
-	MarkRequestApplied(requestID string) error
-	DeleteRequest(requestID string) error
-}
-
 type MongoShiftChangeRequestRepo struct{}
 
 // CreateRequest 修正依頼を1件作成する (ステータス・作成日時はここで確定させる)
