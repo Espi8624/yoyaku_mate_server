@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"time"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
 )
@@ -38,13 +37,18 @@ type AIContextWaitingListRepository interface {
 	GetWaitingList(storeID string) ([]models.WaitingList, error)
 }
 
+// AIContextMenuRepository AIコンテキスト構成に必要なメニュー一覧を取得するためのインターフェース
+type AIContextMenuRepository interface {
+	GetMenuListData(storeID string) ([]models.MenuList, error)
+}
+
 type StoreAIContextHandler struct {
 	storeRepo       AIContextStoreRepository
 	waitingListRepo AIContextWaitingListRepository
-	menuRepo        data.MenuRepository
+	menuRepo        AIContextMenuRepository
 }
 
-func NewStoreAIContextHandler(storeRepo AIContextStoreRepository, waitingListRepo AIContextWaitingListRepository, menuRepo data.MenuRepository) *StoreAIContextHandler {
+func NewStoreAIContextHandler(storeRepo AIContextStoreRepository, waitingListRepo AIContextWaitingListRepository, menuRepo AIContextMenuRepository) *StoreAIContextHandler {
 	return &StoreAIContextHandler{
 		storeRepo:       storeRepo,
 		waitingListRepo: waitingListRepo,

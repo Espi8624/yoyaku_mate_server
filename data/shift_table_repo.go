@@ -13,19 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// ShiftTableRepository 店舗の週単位シフト表の操作を抽象化するインターフェース
-type ShiftTableRepository interface {
-	GetShiftTable(storeID, weekStartDate string) (*models.ShiftTable, error)
-	CreateShiftTable(table models.ShiftTable) error
-	AddShift(shiftTableID string, shift models.Shift) error
-	UpdateShift(shiftTableID, shiftID string, shift models.Shift) error
-	DeleteShift(shiftTableID, shiftID string) error
-	ReplaceShifts(shiftTableID string, shifts []models.Shift) error
-	PublishShifts(shiftTableID string, shifts []models.Shift, publishedAt time.Time) error
-	GetStaffShiftCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[primitive.ObjectID]int, error)
-	GetStaffPairCounts(storeID, beforeWeekStartDate string, lookbackWeeks int) (map[string]int, error)
-}
-
 type MongoShiftTableRepo struct{}
 
 // GetShiftTable は、店舗・週開始日(月曜日)の組み合わせに対応するシフト表を1件取得

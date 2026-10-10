@@ -24,10 +24,15 @@ type UploadStoreRepository interface {
 	UpdateLicenseInfoAfterUpload(storeID string, imageURL string) (*models.StoreLicense, error)
 }
 
+// UploadMenuRepository メニュー画像更新を抽象化するインターフェース
+type UploadMenuRepository interface {
+	UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error)
+}
+
 // UploadHandler は Minio クライアントを依存関係として持つ
 type UploadHandler struct {
 	Minio              *data.MinioClient
-	MenuRepo           data.MenuRepository
+	MenuRepo           UploadMenuRepository
 	UserRepo           UploadUserRepository
 	StoreRepo          UploadStoreRepository
 	AuthSvc            AuthService
@@ -39,7 +44,7 @@ type UploadHandler struct {
 }
 
 // ハンドラ初期化
-func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
+func NewUploadHandler(minio *data.MinioClient, menuRepo UploadMenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
 	return &UploadHandler{
 		Minio:              minio,
 		MenuRepo:           menuRepo,

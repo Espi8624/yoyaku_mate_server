@@ -4,17 +4,27 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/utils"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// SessionRepository 端末セッションの発行・破棄を抽象化するインターフェース
+// - 検証・最終利用時刻の更新はミドルウェア側の MiddlewareSessionRepository が担う
+type SessionRepository interface {
+	Create(session models.Session) (*models.Session, error)
+	FindActiveByDevice(userID primitive.ObjectID, deviceID string) (*models.Session, error)
+	RevokeOthers(userID primitive.ObjectID, keepSessionID string, reason string) error
+	Revoke(sessionID string, reason string) error
+}
 
 // SessionHandler 端末セッションの発行・破棄を扱うハンドラ
 type SessionHandler struct {
-	sessionRepo data.SessionRepository
+	sessionRepo SessionRepository
 }
 
-func NewSessionHandler(sessionRepo data.SessionRepository) *SessionHandler {
+func NewSessionHandler(sessionRepo SessionRepository) *SessionHandler {
 	return &SessionHandler{sessionRepo: sessionRepo}
 }
 
