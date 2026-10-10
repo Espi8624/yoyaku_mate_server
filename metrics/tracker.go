@@ -8,7 +8,7 @@ import (
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
+	"yoyaku_mate_server/safego"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -27,7 +27,7 @@ var dbDownLogged atomic.Bool
 //
 //   - db.GetCollection は未接続時にnilを返す。ErrorTrackerのflushはそれをnilチェックせず
 //     InsertManyを呼んでおり、DBが落ちている間は5秒ごとにpanicしていた。
-//     utils.GoForeverが復帰させるためプロセスは死なないが、fly.ioのログに
+//     safego.GoForeverが復帰させるためプロセスは死なないが、fly.ioのログに
 //     5秒おきにスタックトレースが積み上がり、本当の障害原因が埋もれる
 //   - バッファを取り出す**前**に判定するのが要点。従来のnilチェックは
 //     バッファを空にした後に置かれていたため、DBが落ちている間のログは
@@ -65,7 +65,7 @@ func GetTracker() *ErrorTracker {
 		tracker = &ErrorTracker{
 			logBuffer: make([]models.ErrorLog, 0, 100),
 		}
-		utils.GoForever("metrics_error_batch", tracker.startBatchWorker)
+		safego.GoForever("metrics_error_batch", tracker.startBatchWorker)
 	})
 	return tracker
 }
@@ -160,7 +160,7 @@ func GetRequestTracker() *RequestTracker {
 			logBuffer:   make([]models.RequestLog, 0, 100),
 			activeUsers: make(map[string]time.Time),
 		}
-		utils.GoForever("metrics_request_batch", requestTracker.startBatchWorker)
+		safego.GoForever("metrics_request_batch", requestTracker.startBatchWorker)
 	})
 	return requestTracker
 }
@@ -311,7 +311,7 @@ func GetAuditTracker() *AuditTracker {
 		auditTracker = &AuditTracker{
 			logBuffer: make([]models.AuditLog, 0, 100),
 		}
-		utils.GoForever("metrics_audit_batch", auditTracker.startBatchWorker)
+		safego.GoForever("metrics_audit_batch", auditTracker.startBatchWorker)
 	})
 	return auditTracker
 }

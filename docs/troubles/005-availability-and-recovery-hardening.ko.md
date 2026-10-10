@@ -209,7 +209,7 @@ MongoDB에 도달할 수 없는 URI로 실제 기동해 확인했더니,
 ```
 
 `ErrorTracker.flush`가 `db.GetCollection`의 반환값을 nil 체크 없이 `InsertMany`에 넘기고 있었다.
-`utils.GoForever`가 복귀시켜 주므로 프로세스는 죽지 않지만,
+`safego.GoForever`가 복귀시켜 주므로 프로세스는 죽지 않지만,
 **fly.io 로그에 5초마다 스택 트레이스가 쌓여 진짜 장애 원인이 묻힌다.**
 이것은 HTTP 요청 경로가 아니므로 `RequireDatabaseMiddleware`로는 막을 수 없다.
 

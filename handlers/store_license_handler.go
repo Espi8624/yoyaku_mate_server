@@ -8,6 +8,7 @@ import (
 	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/safego"
 	"yoyaku_mate_server/utils"
 
 	"github.com/gorilla/mux"
@@ -113,7 +114,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 		":clipboard: 新しい営業許可証の承認リクエストが届きました\n店舗ID: %s\n管理画面のLicense Approvalから確認してください。",
 		storeID,
 	)
-	utils.Go("slack_license_request_notify", func() {
+	safego.Go("slack_license_request_notify", func() {
 		metrics.SendSlackMessage(h.SlackWebhookURL, slackMessage)
 	})
 

@@ -13,6 +13,7 @@ import (
 	"time"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/safego"
 	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -182,7 +183,7 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	// - 送り先はこの接続だけ (SendTo)。以前はBroadcastしており、客が1人接続するたびに
 	//   同じ店舗の全接続へ全件が再送されていた。接続数に比例して転送量が増えるため、
 	//   混むほど遅くなる構造になっていた
-	utils.Go("sse_stream_initial_data", func() {
+	safego.Go("sse_stream_initial_data", func() {
 		waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 		if err == nil {
 			jsonData, _ := json.Marshal(waitingList)
@@ -305,7 +306,7 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 	// - 接続時に初期データを送信 (HandleStreamと同じくpanic保護が必要)
 	// - 送り先はこの接続だけ。こちらのキーは (店舗ID:待機ID) なので通常は1接続だが、
 	//   客が複数タブを開いていると全タブに再送されることになる
-	utils.Go("sse_user_stream_initial_data", func() {
+	safego.Go("sse_user_stream_initial_data", func() {
 		res, err := h.getWaitingUserResponse(storeID, waitingID)
 		if err == nil {
 			jsonData, _ := json.Marshal(res)
@@ -627,7 +628,7 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 
 	// - DBの一貫性確保のため少し待機してから通知
 	storeIDForNotify := newWaiting.StoreID
-	utils.Go("waiting_create_notify", func() {
+	safego.Go("waiting_create_notify", func() {
 		time.Sleep(100 * time.Millisecond)
 		h.notifyStore(storeIDForNotify)
 	})

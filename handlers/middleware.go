@@ -64,7 +64,7 @@ func (w *panicResponseWriter) Unwrap() http.ResponseWriter {
 //   - MetricsMiddlewareの内側に置くこと。ここで書いた500を外側のメトリクスが拾い、
 //     エラーダッシュボードに計上される
 //   - バックグラウンドゴルーチンのpanicはこのミドルウェアの範囲外。そちらは
-//     utils.Go / utils.GoForever が受け持つ
+//     safego.Go / safego.GoForever が受け持つ
 func RecoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := &panicResponseWriter{ResponseWriter: w}

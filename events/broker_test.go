@@ -127,7 +127,7 @@ func TestSendToOnlyReachesTargetClient(t *testing.T) {
 //
 // 初期データは別ゴルーチンで送るため、その間に客が画面を閉じると
 // RemoveClient がチャネルをcloseする。closeされたチャネルへの送信はpanicになる。
-// utils.Go のpanic保護でプロセスは落ちないが、切断のたびにスタックトレースが積み上がる
+// safego.Go のpanic保護でプロセスは落ちないが、切断のたびにスタックトレースが積み上がる
 func TestSendToAfterRemoveDoesNotPanic(t *testing.T) {
 	b := newTestBroker()
 	ch := make(chan string, 1)
