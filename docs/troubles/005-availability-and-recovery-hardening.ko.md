@@ -166,7 +166,7 @@ Atlas가 돌아올 때까지 크래시 루프에 들어가고, 재시작할 때�
 ```go
 if !db.IsReady() {
     w.Header().Set("Retry-After", "30")
-    utils.RespondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
+    respondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
     return
 }
 ```

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/config"
-	"yoyaku_mate_server/utils"
 )
 
 // - 管理者ログインリクエストのボディ
@@ -23,28 +23,28 @@ func AdminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	cfg := config.Get()
 	if cfg.AdminPassword == "" || cfg.AdminTokenSecret == "" {
-		utils.RespondWithError(w, "Admin login is not configured", http.StatusServiceUnavailable)
+		respondWithError(w, "Admin login is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	var req adminLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	// - タイミング攻撃を防ぐため定数時間比較を使用
 	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(cfg.AdminPassword)) != 1 {
-		utils.RespondWithError(w, "Invalid password", http.StatusUnauthorized)
+		respondWithError(w, "Invalid password", http.StatusUnauthorized)
 		return
 	}
 
-	token := utils.GenerateAdminSessionToken(cfg.AdminTokenSecret)
-	utils.RespondWithJSON(w, map[string]string{"token": token}, http.StatusOK)
+	token := auth.GenerateAdminSessionToken(cfg.AdminTokenSecret)
+	respondWithJSON(w, map[string]string{"token": token}, http.StatusOK)
 }

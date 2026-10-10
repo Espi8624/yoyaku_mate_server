@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"yoyaku_mate_server/db"
-	"yoyaku_mate_server/utils"
 )
 
 // HealthHandler は外部の死活監視サービス(UptimeRobot等)がpingするための無認証エンドポイント。
@@ -16,7 +15,7 @@ import (
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	client := db.Client()
 	if client == nil {
-		utils.RespondWithError(w, "Database client is not initialized", http.StatusServiceUnavailable)
+		respondWithError(w, "Database client is not initialized", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -24,9 +23,9 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := client.Ping(ctx, nil); err != nil {
-		utils.RespondWithError(w, "Database ping failed", http.StatusServiceUnavailable)
+		respondWithError(w, "Database ping failed", http.StatusServiceUnavailable)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"status": "ok"}, http.StatusOK)
 }

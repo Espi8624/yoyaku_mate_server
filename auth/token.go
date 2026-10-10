@@ -1,4 +1,4 @@
-package utils
+package auth
 
 import (
 	"crypto/hmac"
@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log"
+	"math/big"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,4 +90,19 @@ func VerifyAdminSessionToken(secret, token string) bool {
 		return false
 	}
 	return time.Now().Unix() < expiry
+}
+
+// GenerateRandomString 英数字からなる指定長のランダム文字列を crypto/rand で生成する
+// - crypto/rand が失敗した場合は空文字を返す (呼び出し側で空文字をエラーとして扱うこと)
+func GenerateRandomString(n int) string {
+	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	ret := make([]byte, n)
+	for i := 0; i < n; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+		if err != nil {
+			return ""
+		}
+		ret[i] = letters[num.Int64()]
+	}
+	return string(ret)
 }

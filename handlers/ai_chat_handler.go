@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-
-	"yoyaku_mate_server/utils"
 )
 
 // AIChatRequest フロントエンドから受け取るリクエスト構造体。
@@ -75,23 +73,23 @@ func NewAIChatHandler(storeAIContextHandler *StoreAIContextHandler) *AIChatHandl
 // Handle POST /api/public/ai-chat
 func (h *AIChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req AIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	if req.StoreID == "" {
-		utils.RespondWithError(w, "storeId is required", http.StatusBadRequest)
+		respondWithError(w, "storeId is required", http.StatusBadRequest)
 		return
 	}
 	if req.UserMessage == "" {
-		utils.RespondWithError(w, "userMessage is required", http.StatusBadRequest)
+		respondWithError(w, "userMessage is required", http.StatusBadRequest)
 		return
 	}
 
@@ -111,17 +109,17 @@ func (h *AIChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	replyText, err := callGeminiForText(r.Context(), fullPrompt)
 	if err != nil {
 		if errors.Is(err, errGeminiRateLimited) {
-			utils.RespondWithError(w, "AI service is busy. Please try again later.", http.StatusTooManyRequests)
+			respondWithError(w, "AI service is busy. Please try again later.", http.StatusTooManyRequests)
 			return
 		}
 		log.Printf("[AIChatHandler] %v", err)
-		utils.RespondWithError(w, "AI service error", http.StatusBadGateway)
+		respondWithError(w, "AI service error", http.StatusBadGateway)
 		return
 	}
 	if replyText == "" {
 		replyText = "すみません、うまく聞き取れませんでした。"
 	}
 
-	utils.RespondWithJSON(w, AIChatResponse{Reply: replyText}, http.StatusOK)
+	respondWithJSON(w, AIChatResponse{Reply: replyText}, http.StatusOK)
 	log.Printf("[AIChatHandler] AI response served successfully")
 }

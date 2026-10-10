@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 )
 
 // StoreAIContextResponse AIに注入する店舗コンテキスト情報構造体
@@ -60,23 +59,23 @@ func NewStoreAIContextHandler(storeRepo AIContextStoreRepository, waitingListRep
 // GET /api/public/store_ai_context?store_id=xxx
 func (h *StoreAIContextHandler) HandleGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	response, err := h.BuildContext(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Store not found", http.StatusNotFound)
+		respondWithError(w, "Store not found", http.StatusNotFound)
 		return
 	}
 
-	utils.RespondWithJSON(w, response, http.StatusOK)
+	respondWithJSON(w, response, http.StatusOK)
 	log.Printf("[AI Context] Served context for store %s (Wait: %d, Time: %dmin, Menus: %d)",
 		storeID, response.CurrentWaitCount, response.EstimatedWaitTime, len(response.Menus))
 }

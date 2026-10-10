@@ -10,7 +10,6 @@ import (
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -26,7 +25,7 @@ import (
 func GetErrorMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionErrorLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -45,7 +44,7 @@ func GetErrorMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		CountSSE: countSSE,
 	}
 
-	utils.RespondWithJSON(w, stats, http.StatusOK)
+	respondWithJSON(w, stats, http.StatusOK)
 }
 
 // - MongoDBに保存された詳細なエラーログを最新順にソートして最大50件取得する
@@ -53,7 +52,7 @@ func GetErrorMetricsHandler(w http.ResponseWriter, r *http.Request) {
 func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionErrorLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -79,14 +78,14 @@ func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	cursor, err := collection.Find(ctx, filter, findOptions)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch error logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch error logs", http.StatusInternalServerError)
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var logs []models.ErrorLog
 	if err = cursor.All(ctx, &logs); err != nil {
-		utils.RespondWithError(w, "Failed to decode error logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to decode error logs", http.StatusInternalServerError)
 		return
 	}
 
@@ -94,14 +93,14 @@ func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
 		logs = []models.ErrorLog{}
 	}
 
-	utils.RespondWithJSON(w, logs, http.StatusOK)
+	respondWithJSON(w, logs, http.StatusOK)
 }
 
 // - 直近24時間における累積要求件数、成功率、および直近1時間以内のPeak TPS統計を演算して返却するハンドラー
 func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database connection error", http.StatusInternalServerError)
+		respondWithError(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 
@@ -118,7 +117,7 @@ func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Failed to count total requests: %v", err)
-		utils.RespondWithError(w, "Failed to calculate total requests", http.StatusInternalServerError)
+		respondWithError(w, "Failed to calculate total requests", http.StatusInternalServerError)
 		return
 	}
 
@@ -129,7 +128,7 @@ func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Failed to count success requests: %v", err)
-		utils.RespondWithError(w, "Failed to calculate success requests", http.StatusInternalServerError)
+		respondWithError(w, "Failed to calculate success requests", http.StatusInternalServerError)
 		return
 	}
 
@@ -185,14 +184,14 @@ func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		PeakTPS1h:        peakTPS,
 	}
 
-	utils.RespondWithJSON(w, stats, http.StatusOK)
+	respondWithJSON(w, stats, http.StatusOK)
 }
 
 // - MongoDBに保存された詳細なリクエストログを最新順にソートして最大50件取得するハンドラー
 func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database connection error", http.StatusInternalServerError)
+		respondWithError(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 
@@ -206,7 +205,7 @@ func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
 	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
 		log.Printf("Failed to fetch request logs: %v", err)
-		utils.RespondWithError(w, "Failed to fetch request logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch request logs", http.StatusInternalServerError)
 		return
 	}
 	defer cursor.Close(ctx)
@@ -214,7 +213,7 @@ func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
 	var logs []models.RequestLog
 	if err = cursor.All(ctx, &logs); err != nil {
 		log.Printf("Failed to decode request logs: %v", err)
-		utils.RespondWithError(w, "Failed to decode request logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to decode request logs", http.StatusInternalServerError)
 		return
 	}
 
@@ -222,7 +221,7 @@ func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
 		logs = []models.RequestLog{}
 	}
 
-	utils.RespondWithJSON(w, logs, http.StatusOK)
+	respondWithJSON(w, logs, http.StatusOK)
 }
 
 // - リアルタイム同時接続者数およびDAU/MAU統計を集計して返却するハンドラー
@@ -234,7 +233,7 @@ func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	if dauCollection == nil {
 		// DB接続失敗時もエラーを返却せずダッシュボードのクラッシュを防ぐためにフォールバック値を提供
 		log.Println("DB connection failure in GetActiveUserMetricsHandler")
-		utils.RespondWithJSON(w, models.ActiveUserMetrics{
+		respondWithJSON(w, models.ActiveUserMetrics{
 			CurrentActiveUsers: currentActive,
 			DailyActiveUsers:   currentActive,
 			MonthlyActiveUsers: currentActive,
@@ -283,7 +282,7 @@ func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		MonthlyActiveUsers: mauCount,
 	}
 
-	utils.RespondWithJSON(w, metricsData, http.StatusOK)
+	respondWithJSON(w, metricsData, http.StatusOK)
 }
 
 // GetSSEMetricsHandler は2つのSSEブローカーのリアルタイム接続状況を取得して返します
@@ -317,7 +316,7 @@ func GetSSEMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		Health:           health,
 	}
 
-	utils.RespondWithJSON(w, result, http.StatusOK)
+	respondWithJSON(w, result, http.StatusOK)
 }
 
 // - クエリパラメータ ?range=5m|1h|24h を受け取り、指定期間内の
@@ -326,7 +325,7 @@ func GetSSEMetricsHandler(w http.ResponseWriter, r *http.Request) {
 func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database connection error", http.StatusInternalServerError)
+		respondWithError(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
 
@@ -391,7 +390,7 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	endpointCursor, err := collection.Aggregate(ctx, endpointPipeline)
 	if err != nil {
 		log.Printf("Endpoint latency aggregation error: %v", err)
-		utils.RespondWithError(w, "Failed to aggregate endpoint latency", http.StatusInternalServerError)
+		respondWithError(w, "Failed to aggregate endpoint latency", http.StatusInternalServerError)
 		return
 	}
 	defer endpointCursor.Close(ctx)
@@ -399,7 +398,7 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	var rawEndpoints []bson.M
 	if err := endpointCursor.All(ctx, &rawEndpoints); err != nil {
 		log.Printf("Endpoint cursor decode error: %v", err)
-		utils.RespondWithError(w, "Failed to decode endpoint latency", http.StatusInternalServerError)
+		respondWithError(w, "Failed to decode endpoint latency", http.StatusInternalServerError)
 		return
 	}
 
@@ -462,7 +461,7 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	summaryCursor, err := collection.Aggregate(ctx, summaryPipeline)
 	if err != nil {
 		log.Printf("Summary latency aggregation error: %v", err)
-		utils.RespondWithError(w, "Failed to aggregate summary", http.StatusInternalServerError)
+		respondWithError(w, "Failed to aggregate summary", http.StatusInternalServerError)
 		return
 	}
 	defer summaryCursor.Close(ctx)
@@ -470,7 +469,7 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	var summaryRaw []bson.M
 	if err := summaryCursor.All(ctx, &summaryRaw); err != nil {
 		log.Printf("Summary cursor decode error: %v", err)
-		utils.RespondWithError(w, "Failed to decode summary", http.StatusInternalServerError)
+		respondWithError(w, "Failed to decode summary", http.StatusInternalServerError)
 		return
 	}
 
@@ -496,7 +495,7 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		Endpoints: endpoints,
 	}
 
-	utils.RespondWithJSON(w, result, http.StatusOK)
+	respondWithJSON(w, result, http.StatusOK)
 }
 
 // - interface{}から float64へ安全に型変換するヘルパー
@@ -531,7 +530,7 @@ func toInt64(v interface{}) int64 {
 func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
 	collection := db.GetCollection(db.DatabaseName, db.CollectionAuditLogs)
 	if collection == nil {
-		utils.RespondWithError(w, "Database error", http.StatusInternalServerError)
+		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -544,14 +543,14 @@ func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
 
 	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to fetch audit logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch audit logs", http.StatusInternalServerError)
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var logs []models.AuditLog
 	if err = cursor.All(ctx, &logs); err != nil {
-		utils.RespondWithError(w, "Failed to decode audit logs", http.StatusInternalServerError)
+		respondWithError(w, "Failed to decode audit logs", http.StatusInternalServerError)
 		return
 	}
 
@@ -559,7 +558,7 @@ func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
 		logs = []models.AuditLog{}
 	}
 
-	utils.RespondWithJSON(w, logs, http.StatusOK)
+	respondWithJSON(w, logs, http.StatusOK)
 }
 
 // GetSystemMetricsHandler はリアルタイムのハードウェアリソース使用状況（CPU、Memory、Disk）を取得します
@@ -591,14 +590,14 @@ func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		DiskSpace:   diskUsage,
 	}
 
-	utils.RespondWithJSON(w, metricsData, http.StatusOK)
+	respondWithJSON(w, metricsData, http.StatusOK)
 }
 
 // GetDBMetricsHandler は MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
 func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	client := db.Client()
 	if client == nil {
-		utils.RespondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
+		respondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
 		return
 	}
 
@@ -646,6 +645,6 @@ func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	utils.RespondWithJSON(w, metricsData, http.StatusOK)
+	respondWithJSON(w, metricsData, http.StatusOK)
 }
 

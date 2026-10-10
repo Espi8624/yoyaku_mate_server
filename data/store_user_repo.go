@@ -16,9 +16,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 )
 
 // MongoStoreRepo 店舗情報のMongoDBリポジトリ実装
@@ -268,7 +268,7 @@ func (r *MongoStoreRepo) GetOrCreateBoardKey(storeID string) (string, error) {
 		return *settings.BoardKey, nil
 	}
 
-	newKey, err := utils.GenerateSecureToken(32)
+	newKey, err := auth.GenerateSecureToken(32)
 	if err != nil {
 		log.Printf("Failed to generate board key for store_id=%s: %v", storeID, err)
 		return "", err

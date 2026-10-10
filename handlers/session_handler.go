@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -47,7 +47,7 @@ func (h *SessionHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	case http.MethodOptions:
 		w.WriteHeader(http.StatusOK)
 	default:
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -58,38 +58,38 @@ func (h *SessionHandler) Handle(w http.ResponseWriter, r *http.Request) {
 func (h *SessionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	user, ok := GetUserFromContext(r.Context())
 	if !ok {
-		utils.RespondWithError(w, "Authentication required", http.StatusUnauthorized)
+		respondWithError(w, "Authentication required", http.StatusUnauthorized)
 		return
 	}
 
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.DeviceID == "" {
-		utils.RespondWithError(w, "device_id is required", http.StatusBadRequest)
+		respondWithError(w, "device_id is required", http.StatusBadRequest)
 		return
 	}
 
 	// - 同一端末の既存セッションを探す
 	existing, err := h.sessionRepo.FindActiveByDevice(user.ID, req.DeviceID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to look up session", http.StatusInternalServerError)
+		respondWithError(w, "Failed to look up session", http.StatusInternalServerError)
 		return
 	}
 
 	session := existing
 	if session == nil {
 		created, err := h.sessionRepo.Create(models.Session{
-			SessionID:  utils.GenerateRandomString(32),
+			SessionID:  auth.GenerateRandomString(32),
 			UserID:     user.ID,
 			DeviceID:   req.DeviceID,
 			DeviceName: req.DeviceName,
 			Platform:   req.Platform,
 		})
 		if err != nil {
-			utils.RespondWithError(w, "Failed to create session", http.StatusInternalServerError)
+			respondWithError(w, "Failed to create session", http.StatusInternalServerError)
 			return
 		}
 		session = created
@@ -101,7 +101,7 @@ func (h *SessionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to revoke other sessions for user %s: %v", user.ID.Hex(), err)
 	}
 
-	utils.RespondWithJSON(w, session, http.StatusOK)
+	respondWithJSON(w, session, http.StatusOK)
 }
 
 // handleDelete 自分のセッションを破棄する (明示的なログアウト)
@@ -109,14 +109,14 @@ func (h *SessionHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 func (h *SessionHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.Header.Get("X-Session-Id")
 	if sessionID == "" {
-		utils.RespondWithError(w, "X-Session-Id header is required", http.StatusBadRequest)
+		respondWithError(w, "X-Session-Id header is required", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.sessionRepo.Revoke(sessionID, models.SessionRevokedReasonLogout); err != nil {
-		utils.RespondWithError(w, "Failed to revoke session", http.StatusInternalServerError)
+		respondWithError(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]bool{"revoked": true}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"revoked": true}, http.StatusOK)
 }

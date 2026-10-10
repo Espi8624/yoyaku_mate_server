@@ -61,9 +61,9 @@ handlers/   → HTTP 파싱, 인증, 비즈니스 룰 검증 (Repository Pattern
 data/       → MongoDB 쿼리 (데이터 접근 계층 - Repository 구현체)
 events/     → SSE Broker (in-memory pub/sub) 및 Heartbeat 좀비 연결 제거
 metrics/    → 에러, API 리퀘스트, 응답시간, 활성 사용자, 감사 로그, 시스템 리소스(CPU/Mem/Disk), DB 메트릭스 수집
-auth/       → Firebase 토큰 / 세션 검증
+auth/       → Firebase 토큰 / 세션 검증, QR용 HMAC 토큰·관리자 세션 토큰 발급/검증
 models/     → Go 구조체 ↔ BSON/JSON
-utils/      → 공통 유틸 (HMAC, JSON 응답 등)
+safego/     → panic 보호가 붙은 고루틴 실행 (백그라운드 처리는 반드시 여기를 통과)
 ```
 
 ```mermaid

@@ -167,7 +167,7 @@ Atlasが戻るまでクラッシュループに入り、再起動のたびに起
 ```go
 if !db.IsReady() {
     w.Header().Set("Retry-After", "30")
-    utils.RespondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
+    respondWithError(w, "Database is temporarily unavailable", http.StatusServiceUnavailable)
     return
 }
 ```

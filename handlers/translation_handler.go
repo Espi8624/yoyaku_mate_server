@@ -12,8 +12,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"yoyaku_mate_server/utils"
 )
 
 // 点主アプリの自動翻訳機能 (メニュー名/カテゴリー名/待機メモ) のGemini APIプロキシ。
@@ -115,11 +113,11 @@ func callGeminiForText(ctx context.Context, prompt string) (string, error) {
 // respondGeminiError callGeminiForTextのエラーをHTTPレスポンスに変換する共通処理
 func respondGeminiError(w http.ResponseWriter, context string, err error) {
 	if errors.Is(err, errGeminiRateLimited) {
-		utils.RespondWithError(w, "Translation service is busy. Please try again later.", http.StatusTooManyRequests)
+		respondWithError(w, "Translation service is busy. Please try again later.", http.StatusTooManyRequests)
 		return
 	}
 	log.Printf("[%s] %v", context, err)
-	utils.RespondWithError(w, "Translation failed", http.StatusBadGateway)
+	respondWithError(w, "Translation failed", http.StatusBadGateway)
 }
 
 // normalizeLanguageCode Geminiが返す言語表記(コード/英語名など揺れがある)を短縮ISOコードに正規化する。
@@ -160,7 +158,7 @@ func normalizeLanguageCode(code string) string {
 // HandleTranslate POST /api/provider_translate
 func HandleTranslate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -169,13 +167,13 @@ func HandleTranslate(w http.ResponseWriter, r *http.Request) {
 		TargetLang string `json:"target_lang"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	if req.Text == "" {
-		utils.RespondWithError(w, "text is required", http.StatusBadRequest)
+		respondWithError(w, "text is required", http.StatusBadRequest)
 		return
 	}
 	targetLang := req.TargetLang
@@ -194,7 +192,7 @@ func HandleTranslate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]interface{}{
+	respondWithJSON(w, map[string]interface{}{
 		"translated_text": translated,
 	}, http.StatusOK)
 }
@@ -222,7 +220,7 @@ var geminiLanguageNames = map[string]string{
 // HandleTranslateMulti POST /api/provider_translate/multi
 func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -232,13 +230,13 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 		SmartMenuMode   bool              `json:"smart_menu_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	if len(req.Texts) == 0 || len(req.TargetLanguages) == 0 {
-		utils.RespondWithJSON(w, map[string]interface{}{"translations": map[string]interface{}{}}, http.StatusOK)
+		respondWithJSON(w, map[string]interface{}{"translations": map[string]interface{}{}}, http.StatusOK)
 		return
 	}
 
@@ -259,7 +257,7 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 	var deepMap map[string]map[string]string
 	if err := json.Unmarshal([]byte(cleanJSON), &deepMap); err != nil {
 		log.Printf("[HandleTranslateMulti] Failed to parse Gemini JSON response: %v (raw: %s)", err, cleanJSON)
-		utils.RespondWithError(w, "Failed to parse translation result", http.StatusBadGateway)
+		respondWithError(w, "Failed to parse translation result", http.StatusBadGateway)
 		return
 	}
 
@@ -276,7 +274,7 @@ func HandleTranslateMulti(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	utils.RespondWithJSON(w, map[string]interface{}{
+	respondWithJSON(w, map[string]interface{}{
 		"translations": translations,
 	}, http.StatusOK)
 }

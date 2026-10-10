@@ -7,7 +7,6 @@ import (
 	"strings"
 	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -74,7 +73,7 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 	// - ミドルウェアで格納された認証済みユーザーを取得
 	authUser, ok := GetUserFromContext(r.Context())
 	if !ok {
-		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -82,91 +81,91 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		userID := r.URL.Query().Get("user_id")
 		if userID == "" {
-			utils.RespondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
+			respondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
 			return
 		}
 
 		// - 文字列をObjectIdに変換
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
-			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
+			respondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
 
 		// - 本人の情報のみ取得可能
 		if objectID != authUser.ID {
-			utils.RespondWithError(w, "Forbidden: cannot access other user's data", http.StatusForbidden)
+			respondWithError(w, "Forbidden: cannot access other user's data", http.StatusForbidden)
 			return
 		}
 
 		user, err := h.userRepo.GetUserData(objectID)
 		if err != nil {
-			utils.RespondWithError(w, "User not found", http.StatusNotFound)
+			respondWithError(w, "User not found", http.StatusNotFound)
 			return
 		}
-		utils.RespondWithJSON(w, user, http.StatusOK)
+		respondWithJSON(w, user, http.StatusOK)
 
 	case http.MethodPut:
 		userID := r.URL.Query().Get("user_id")
 		if userID == "" {
-			utils.RespondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
+			respondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
 			return
 		}
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
-			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
+			respondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
 
 		// - 本人の情報のみ更新可能（他ユーザーの更新を防止）
 		if objectID != authUser.ID {
-			utils.RespondWithError(w, "Forbidden: cannot modify other user's data", http.StatusForbidden)
+			respondWithError(w, "Forbidden: cannot modify other user's data", http.StatusForbidden)
 			return
 		}
 
 		var update map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-			utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+			respondWithError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 
 		// マスアサインメント対策: role・store_id・firebase_uidなど本来クライアントが
 		// 書き換えてはいけないフィールドを弾くため、許可されたフィールドのみ残す
-		update = utils.FilterAllowedFields(update, allowedUserUpdateFields)
+		update = filterAllowedFields(update, allowedUserUpdateFields)
 		if len(update) == 0 {
-			utils.RespondWithError(w, "No valid fields to update", http.StatusBadRequest)
+			respondWithError(w, "No valid fields to update", http.StatusBadRequest)
 			return
 		}
 
 		updatedUser, err := h.userRepo.UpdateUserData(objectID, update)
 		if err != nil {
-			utils.RespondWithError(w, "Failed to update user info", http.StatusInternalServerError)
+			respondWithError(w, "Failed to update user info", http.StatusInternalServerError)
 			return
 		}
 		// - REST標準: PUTレスポンスに更新後のリソースを返却
-		utils.RespondWithJSON(w, updatedUser, http.StatusOK)
+		respondWithJSON(w, updatedUser, http.StatusOK)
 
 	case http.MethodDelete:
 		userID := r.URL.Query().Get("user_id")
 		if userID == "" {
-			utils.RespondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
+			respondWithError(w, "Missing user_id parameter", http.StatusBadRequest)
 			return
 		}
 		objectID, err := primitive.ObjectIDFromHex(userID)
 		if err != nil {
-			utils.RespondWithError(w, "Invalid user_id format", http.StatusBadRequest)
+			respondWithError(w, "Invalid user_id format", http.StatusBadRequest)
 			return
 		}
 
 		// - 本人のアカウントのみ削除可能（他ユーザーの退会を防止）
 		if objectID != authUser.ID {
-			utils.RespondWithError(w, "Forbidden: cannot delete other user's account", http.StatusForbidden)
+			respondWithError(w, "Forbidden: cannot delete other user's account", http.StatusForbidden)
 			return
 		}
 
 		user, err := h.userRepo.GetUserData(objectID)
 		if err != nil {
-			utils.RespondWithError(w, "User not found", http.StatusNotFound)
+			respondWithError(w, "User not found", http.StatusNotFound)
 			return
 		}
 
@@ -177,11 +176,11 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			// 店舗を全て削除(または譲渡)してからでないと退会できないようにする
 			storeCount, err := h.storeRepo.CountStoresByOwner(objectID)
 			if err != nil {
-				utils.RespondWithError(w, "Failed to check owned stores", http.StatusInternalServerError)
+				respondWithError(w, "Failed to check owned stores", http.StatusInternalServerError)
 				return
 			}
 			if storeCount > 0 {
-				utils.RespondWithError(w,
+				respondWithError(w,
 					"店舗を保有したまま退会することはできません。先に店舗を削除してください。",
 					http.StatusConflict)
 				return
@@ -191,7 +190,7 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			// マークする。店舗のスタッフ一覧に「退会済み」として残り続け、
 			// マネージャーが後から連絡先を確認できるようにするため
 			if err := h.staffRepo.MarkStoreStaffWithdrawnByUserID(objectID); err != nil {
-				utils.RespondWithError(w, "Failed to update store memberships", http.StatusInternalServerError)
+				respondWithError(w, "Failed to update store memberships", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -200,7 +199,7 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 		// ステータスをWITHDRAWNにしてログインのみ不可にする。
 		// (退会後も運営側から本人に連絡できるようにするための方針)
 		if err := h.userRepo.MarkUserWithdrawn(objectID); err != nil {
-			utils.RespondWithError(w, "Failed to withdraw user account", http.StatusInternalServerError)
+			respondWithError(w, "Failed to withdraw user account", http.StatusInternalServerError)
 			return
 		}
 
@@ -212,10 +211,10 @@ func (h *UserInfoHandler) HandleUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		utils.RespondWithJSON(w, map[string]string{"message": "Account withdrawn successfully"}, http.StatusOK)
+		respondWithJSON(w, map[string]string{"message": "Account withdrawn successfully"}, http.StatusOK)
 
 	default:
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -225,24 +224,24 @@ func (h *UserInfoHandler) UserByFirebaseUIDHandler(w http.ResponseWriter, r *htt
 	// - 1. 認証チェック
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
 	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
 	// - 2. リクエストUIDの検証
 	uid := r.URL.Query().Get("uid")
 	if uid == "" {
-		utils.RespondWithError(w, "Missing uid parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing uid parameter", http.StatusBadRequest)
 		return
 	}
 	if firebaseUID != uid {
-		utils.RespondWithError(w, "Token UID does not match request UID", http.StatusForbidden)
+		respondWithError(w, "Token UID does not match request UID", http.StatusForbidden)
 		return
 	}
 
@@ -250,9 +249,9 @@ func (h *UserInfoHandler) UserByFirebaseUIDHandler(w http.ResponseWriter, r *htt
 	// - 端末セッションの発行は POST /api/auth/session が担うため、ここでは行わない
 	user, err := h.userRepo.GetUserDataByFirebaseUID(uid)
 	if err != nil {
-		utils.RespondWithError(w, "User not found", http.StatusNotFound)
+		respondWithError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	utils.RespondWithJSON(w, user, http.StatusOK)
+	respondWithJSON(w, user, http.StatusOK)
 }

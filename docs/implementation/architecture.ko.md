@@ -53,11 +53,12 @@ yoyaku_mate_server/
 │
 ├── auth/                # 인증 관련 로직
 │   ├── firebase_auth.go # Firebase ID Token 검증
-│   └── login_token.go   # 중복 로그인 방지 토큰 검증
+│   ├── firebase_auth_service.go # 핸들러에 주입하는 인증 서비스
+│   └── token.go         # QR용 HMAC 토큰·관리자 세션 토큰·랜덤 문자열 생성
 │
 ├── config/              # 환경 변수 로딩
 ├── db/                  # MongoDB 연결 관리
-└── utils/               # 공통 유틸리티 (JSON 응답, HMAC 토큰 등)
+└── safego/              # panic 보호가 붙은 고루틴 실행
 ```
 
 ---
