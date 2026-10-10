@@ -1,19 +1,16 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // StatsUserRepository 統計データの閲覧権限を確認するため、ユーザー情報とアクセス権限を検証するインターフェース
@@ -27,16 +24,22 @@ type StatsStoreRepository interface {
 	GetStoreData(storeID string) (*models.Store, error)
 }
 
+// StatsWaitingListRepository 統計の元になる待機データを集計するインターフェース
+type StatsWaitingListRepository interface {
+	AggregateStatistics(storeID, timezone string, byWeekday bool, startPrev, startCurrent, endCurrent time.Time) (*data.WaitingStatistics, error)
+}
+
 type StatisticsHandler struct {
-	userRepo  StatsUserRepository
-	storeRepo StatsStoreRepository
+	userRepo    StatsUserRepository
+	storeRepo   StatsStoreRepository
+	waitingRepo StatsWaitingListRepository
 }
 
-func NewStatisticsHandler(userRepo StatsUserRepository, storeRepo StatsStoreRepository) *StatisticsHandler {
-	return &StatisticsHandler{userRepo: userRepo, storeRepo: storeRepo}
+func NewStatisticsHandler(userRepo StatsUserRepository, storeRepo StatsStoreRepository, waitingRepo StatsWaitingListRepository) *StatisticsHandler {
+	return &StatisticsHandler{userRepo: userRepo, storeRepo: storeRepo, waitingRepo: waitingRepo}
 }
 
-// 曜日別集計のラベル（Mongoの $dayOfWeek は 1=日曜〜7=土曜）
+// 曜日別集計のラベル（0=日曜〜6=土曜）
 var weekdayLabels = [7]string{"日", "月", "火", "水", "木", "金", "土"}
 
 // HandleGet は店舗の統計情報（今日 or 今週固定）を取得するリクエストを処理します
@@ -126,125 +129,9 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period string) (*models
 		startPrev = today.AddDate(0, 0, -1)
 	}
 
-	collection := db.GetCollection(db.DatabaseName, db.CollectionWaitingList)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	layout := "2006-01-02T15:04:05.000"
-	matchStage := bson.D{{Key: "$match", Value: bson.D{
-		{Key: "store_id", Value: storeID},
-		{Key: "registration_time", Value: bson.D{
-			{Key: "$gte", Value: startPrev.Format(layout)},
-			{Key: "$lt", Value: endCurrent.Format(layout)},
-		}},
-	}}}
-
-	addFieldsStage := bson.D{{Key: "$addFields", Value: bson.D{
-		{Key: "reg_date_obj", Value: bson.D{
-			{Key: "$dateFromString", Value: bson.D{{Key: "dateString", Value: "$registration_time"}}},
-		}},
-		{Key: "entry_date_obj", Value: bson.D{
-			{Key: "$cond", Value: bson.A{
-				bson.D{{Key: "$ne", Value: bson.A{"$entry_time", nil}}},
-				bson.D{{Key: "$dateFromString", Value: bson.D{{Key: "dateString", Value: "$entry_time"}}}},
-				nil,
-			}},
-		}},
-	}}}
-
-	// バケットキー: autoは時間帯(0-23), weeklyは曜日(1=日〜7=土)
-	var bucketExpr bson.D
-	if period == "weekly" {
-		bucketExpr = bson.D{{Key: "$dayOfWeek", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}
-	} else {
-		bucketExpr = bson.D{{Key: "$hour", Value: bson.D{{Key: "date", Value: "$reg_date_obj"}, {Key: "timezone", Value: locationName}}}}
-	}
-
-	// ステータス別(current/prev)にバケット集計するfacetを組み立てるヘルパー
-	bucketFacet := func(status string, from, to time.Time) bson.A {
-		return bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "status", Value: status},
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: from.Format(layout)},
-					{Key: "$lt", Value: to.Format(layout)},
-				}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: bucketExpr},
-				{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-			}}},
-		}
-	}
-
-	facetStage := bson.D{{Key: "$facet", Value: bson.D{
-		{Key: "visitor_current", Value: bucketFacet("completed", startCurrent, endCurrent)},
-		{Key: "visitor_prev", Value: bucketFacet("completed", startPrev, startCurrent)},
-		{Key: "cancelled_current", Value: bucketFacet("cancelled", startCurrent, endCurrent)},
-		{Key: "cancelled_prev", Value: bucketFacet("cancelled", startPrev, startCurrent)},
-		{Key: "no_show_current", Value: bucketFacet("no_show", startCurrent, endCurrent)},
-		{Key: "no_show_prev", Value: bucketFacet("no_show", startPrev, startCurrent)},
-
-		// ハイライト用の期間合計 (現在の期間)
-		{Key: "totals_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: startCurrent.Format(layout)},
-					{Key: "$lt", Value: endCurrent.Format(layout)},
-				}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-				{Key: "total_cancelled", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "cancelled"}}}, 1, 0}}}}}},
-				{Key: "total_no_show", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "no_show"}}}, 1, 0}}}}}},
-				{Key: "total_count", Value: bson.D{{Key: "$sum", Value: 1}}},
-			}}},
-		}},
-		// 前期間(前日 or 前週)の来店者数のみ（成長率算出用）
-		{Key: "totals_prev", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{
-					{Key: "$gte", Value: startPrev.Format(layout)},
-					{Key: "$lt", Value: startCurrent.Format(layout)},
-				}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "total_visitors", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$status", "completed"}}}, 1, 0}}}}}},
-			}}},
-		}},
-		// 平均待ち時間 (現在の期間)
-		{Key: "wait_times_current", Value: bson.A{
-			bson.D{{Key: "$match", Value: bson.D{
-				{Key: "registration_time", Value: bson.D{{Key: "$gte", Value: startCurrent.Format(layout)}, {Key: "$lt", Value: endCurrent.Format(layout)}}},
-				{Key: "status", Value: "completed"},
-				{Key: "entry_date_obj", Value: bson.D{{Key: "$ne", Value: nil}}},
-			}}},
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "wait_duration", Value: bson.D{{Key: "$divide", Value: bson.A{bson.D{{Key: "$subtract", Value: bson.A{"$entry_date_obj", "$reg_date_obj"}}}, 1000}}}},
-			}}},
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: nil},
-				{Key: "avg_wait", Value: bson.D{{Key: "$avg", Value: "$wait_duration"}}},
-			}}},
-		}},
-	}}}
-
-	cursor, err := collection.Aggregate(ctx, mongo.Pipeline{matchStage, addFieldsStage, facetStage})
+	agg, err := h.waitingRepo.AggregateStatistics(storeID, locationName, period == "weekly", startPrev, startCurrent, endCurrent)
 	if err != nil {
 		return nil, err
-	}
-	defer cursor.Close(ctx)
-
-	var results []bson.M
-	if err = cursor.All(ctx, &results); err != nil {
-		return nil, err
-	}
-
-	result := bson.M{}
-	if len(results) > 0 {
-		result = results[0]
 	}
 
 	response := &models.StatisticsResponse{Period: period}
@@ -260,24 +147,7 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period string) (*models
 		}
 		return time.Date(0, 1, 1, bucketIndex, 0, 0, 0, time.UTC).Format("15")
 	}
-	// Mongoの $dayOfWeek は1始まり(1=日)なので、weeklyの場合は-1して0始まりに揃える
-	toBucketMap := func(facetName string) map[int]int {
-		m := make(map[int]int)
-		if arr, ok := result[facetName].(bson.A); ok {
-			for _, item := range arr {
-				im := item.(bson.M)
-				id := int(im["_id"].(int32))
-				if period == "weekly" {
-					id -= 1
-				}
-				m[id] = int(im["count"].(int32))
-			}
-		}
-		return m
-	}
-	buildChart := func(currentFacet, prevFacet string) []models.ChartData {
-		curMap := toBucketMap(currentFacet)
-		prevMap := toBucketMap(prevFacet)
+	buildChart := func(curMap, prevMap map[int]int) []models.ChartData {
 		chart := make([]models.ChartData, 0, bucketCount)
 		for i := 0; i < bucketCount; i++ {
 			chart = append(chart, models.ChartData{
@@ -289,40 +159,23 @@ func (h *StatisticsHandler) CalculateStatistics(storeID, period string) (*models
 		return chart
 	}
 
-	response.VisitorChart = buildChart("visitor_current", "visitor_prev")
-	response.CancelledChart = buildChart("cancelled_current", "cancelled_prev")
-	response.NoShowChart = buildChart("no_show_current", "no_show_prev")
+	response.VisitorChart = buildChart(agg.VisitorCurrent, agg.VisitorPrev)
+	response.CancelledChart = buildChart(agg.CancelledCurrent, agg.CancelledPrev)
+	response.NoShowChart = buildChart(agg.NoShowCurrent, agg.NoShowPrev)
 
 	// --- ハイライト集計 ---
-	visitorTotal, cancelledTotal, noShowTotal, totalCount := 0, 0, 0, 0
-	if arr, ok := result["totals_current"].(bson.A); ok && len(arr) > 0 {
-		m := arr[0].(bson.M)
-		visitorTotal = int(m["total_visitors"].(int32))
-		cancelledTotal = int(m["total_cancelled"].(int32))
-		noShowTotal = int(m["total_no_show"].(int32))
-		totalCount = int(m["total_count"].(int32))
-	}
-	prevVisitorTotal := 0
-	if arr, ok := result["totals_prev"].(bson.A); ok && len(arr) > 0 {
-		m := arr[0].(bson.M)
-		prevVisitorTotal = int(m["total_visitors"].(int32))
-	}
-
-	response.VisitorTotal = visitorTotal
-	response.CancelledTotal = cancelledTotal
-	response.NoShowTotal = noShowTotal
-	response.VisitorGrowthRate = CalculateGrowthRate(visitorTotal, prevVisitorTotal)
-	if totalCount > 0 {
-		response.NoShowRate = (float64(cancelledTotal+noShowTotal) / float64(totalCount)) * 100
+	response.VisitorTotal = agg.VisitorTotal
+	response.CancelledTotal = agg.CancelledTotal
+	response.NoShowTotal = agg.NoShowTotal
+	response.VisitorGrowthRate = CalculateGrowthRate(agg.VisitorTotal, agg.PrevVisitorTotal)
+	if agg.TotalCount > 0 {
+		response.NoShowRate = (float64(agg.CancelledTotal+agg.NoShowTotal) / float64(agg.TotalCount)) * 100
 	}
 
 	response.AverageWaitTime = "--分"
-	if arr, ok := result["wait_times_current"].(bson.A); ok && len(arr) > 0 {
-		m := arr[0].(bson.M)
-		if avg, ok := m["avg_wait"].(float64); ok {
-			response.WaitTimeSeconds = int(avg)
-			response.AverageWaitTime = formatDuration(int(avg))
-		}
+	if agg.AvgWaitSeconds != nil {
+		response.WaitTimeSeconds = int(*agg.AvgWaitSeconds)
+		response.AverageWaitTime = formatDuration(int(*agg.AvgWaitSeconds))
 	}
 
 	return response, nil

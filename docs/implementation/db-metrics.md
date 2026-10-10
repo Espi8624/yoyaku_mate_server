@@ -35,7 +35,7 @@ sequenceDiagram
 ### 2.1 使用ライブラリおよびドライバ
 公式の `go.mongodb.org/mongo-driver/mongo` のみを使用し、パフォーマンスオーバーヘッドを最小限に抑えました。
 
-### 2.2 メトリクス抽出ロジック (`handlers/metrics.go`)
+### 2.2 メトリクス抽出ロジック (`data/admin_metrics_repo.go` の `DBStats`)
 - **Active Connections (アクティブなコネクション)**: 
   - `admin` データベースに `serverStatus` コマンドを実行し、現在開いているコネクション数を把握します。
   - クラスタ監視権限の不足により失敗する可能性があるため、エラー発生時にシステムを停止させず、静かに(Silently) 0として処理するよう例外処理を適用しました。

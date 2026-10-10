@@ -33,9 +33,11 @@ yoyaku_mate_server/
 │   └── ...
 │
 ├── data/                # 데이터 접근 계층 (MongoDB 쿼리)
-│   ├── waiting_list.go
-│   ├── counters.go      # Atomic Counter
-│   ├── store_info.go
+│   ├── waiting_list_repo.go # 대기 리스트 + Atomic Counter
+│   ├── store_user_repo.go # 매장·사용자 정보 등 (DI 적용)
+│   ├── signup_repo.go   # 회원가입·매장 추가 (여러 컬렉션 트랜잭션)
+│   ├── admin_metrics_repo.go # 관리자 대시보드 메트릭 조회
+│   ├── errors.go        # 핸들러가 errors.Is로 판정하는 알려진 에러
 │   └── ...
 │
 ├── models/              # Go 구조체 (DB 스키마 / JSON 직렬화)

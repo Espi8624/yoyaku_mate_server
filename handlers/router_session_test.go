@@ -40,7 +40,7 @@ func newTestRouter() *mux.Router {
 		r,
 		&stubMiddlewareUserRepo{},
 		&stubMiddlewareSessionRepo{},
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	return r
 }

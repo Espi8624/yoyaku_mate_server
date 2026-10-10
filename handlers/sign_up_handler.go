@@ -2,37 +2,50 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 	"yoyaku_mate_server/auth"
-	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
 
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
-const (
-	DatabaseName            = "project_rusui"
-	UsersCollection         = "user_info"
-	StoresCollection        = "store_info"
-	StoreSettingsCollection = "store_settings"
-	StoreLicenseCollection  = "store_license"
+// メール認証を完了しないまま放置されたFirebaseアカウントを、
+// 同じメールアドレスでの再登録時に削除してよいとみなす猶予期間。
+// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮し削除しない
+const unverifiedAccountGracePeriod = 30 * time.Minute
 
-	// メール認証を完了しないまま放置されたFirebaseアカウントを、
-	// 同じメールアドレスでの再登録時に削除してよいとみなす猶予期間。
-	// 猶予期間内は、別端末・別タブで認証待ちの最中である可能性を考慮し削除しない
-	unverifiedAccountGracePeriod = 30 * time.Minute
+var (
+	signUpEmailPattern = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	signUpPhonePattern = regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
 )
 
-// 会員加入処理
+// SignUpRepository 会員登録・店舗追加・重複チェックに必要な永続化操作を抽象化するインターフェース
+type SignUpRepository interface {
+	RegisterUser(user models.User, store *models.Store, settings *models.StoreSetting, joinStoreID string) (*models.User, error)
+	AddStoreForManager(firebaseUID string, store *models.Store, settings *models.StoreSetting) (*models.User, error)
+	StoreExists(storeID string) (bool, error)
+	IsEmailInUse(email string) (bool, error)
+	IsPhoneInUse(phone string) (bool, error)
+}
+
+// SignUpHandler 会員登録と、その前後(重複チェック・ログイン直後の店舗追加)を扱うハンドラ
+type SignUpHandler struct {
+	repo SignUpRepository
+}
+
+func NewSignUpHandler(repo SignUpRepository) *SignUpHandler {
+	return &SignUpHandler{repo: repo}
+}
+
+// SignUp 会員加入処理
 // /api/auth/signup [post]
-func SignUpHandler(w http.ResponseWriter, r *http.Request) {
+func (h *SignUpHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -102,266 +115,66 @@ func SignUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// メールアドレス形式検証
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	if !emailRegex.MatchString(req.Email) {
+	if !signUpEmailPattern.MatchString(req.Email) {
 		respondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 
 	// 個人電話番号形式検証
-	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
-	if !phoneRegex.MatchString(req.PhoneNumber) {
+	if !signUpPhonePattern.MatchString(req.PhoneNumber) {
 		respondWithError(w, "Invalid personal phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
 
-	// MongoDB Transaction スタート
-	session, err := db.Client().StartSession()
-	if err != nil {
-		respondWithError(w, "Failed to start database session", http.StatusInternalServerError)
-		return
+	var newStore *models.Store
+	var newSettings *models.StoreSetting
+	joinStoreID := ""
+	switch req.Role {
+	case "manager":
+		// 店舗情報がある場合のみ作成 (Refactor: 任意項目化)
+		if req.StoreName != nil && *req.StoreName != "" {
+			if err := validateNewStoreRequest(&req); err != nil {
+				respondWithError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			newStore, newSettings = buildNewStore(&req)
+		}
+	case "staff":
+		// 店舗IDがある場合のみ参加 (Refactor: 任意項目化)
+		joinStoreID = req.StoreID
 	}
-	defer session.EndSession(r.Context())
 
-	// Transaction実行
-	result, err := session.WithTransaction(r.Context(), func(sessCtx mongo.SessionContext) (interface{}, error) {
-		userCollection := db.GetCollection(DatabaseName, UsersCollection)
-		storeCollection := db.GetCollection(DatabaseName, StoresCollection)
+	newUser := models.User{
+		ID:               primitive.NewObjectID(),
+		FirebaseUID:      req.FirebaseUID,
+		UserName:         req.Name,
+		UserNameFurigana: req.NameFurigana,
+		Email:            req.Email,
+		Phone:            req.PhoneNumber,
+		Role:             req.Role,
+		Birthdate:        req.Birthdate,
+		ZipCode:          req.ZipCode,
+		Prefecture:       req.Prefecture,
+		City:             req.City,
+		Address:          req.Address,
+		Building:         req.Building,
+		TermsAgreed:      req.TermsAgreed,
+		TermsAgreedAt:    parseAgreedAt(req.TermsAgreedAt),
+		PrivacyAgreed:    req.PrivacyAgreed,
+		PrivacyAgreedAt:  parseAgreedAt(req.PrivacyAgreedAt),
+	}
 
-		// ユーザー重複確認 (FirebaseUID, メールアドレス, 個人電話番号)。
-		// 退会済み(WITHDRAWN)アカウントは対象から除外する: 退会は連絡先を残す
-		// ソフトデリートのため、同じメール/電話番号で改めて新規登録できてよい
-		// (Firebase Auth側のアカウントは退会時に削除済みなので衝突しない)
-		var existingUser models.User
-		err := userCollection.FindOne(sessCtx, bson.M{
-			"status": bson.M{"$ne": models.UserStatusWithdrawn},
-			"$or": []bson.M{
-				{"firebase_uid": req.FirebaseUID},
-				{"email": req.Email},
-				{"phone": req.PhoneNumber},
-			},
-		}).Decode(&existingUser)
-
-		if err == nil {
-			// 既に存在するユーザーである為、Transaction Callback
-			return nil, fmt.Errorf("user with this email or phone number already exists")
-		} else if err != mongo.ErrNoDocuments {
-			return nil, fmt.Errorf("database error during user check")
-		}
-
-		var storeIdForUser string
-		newUserID := primitive.NewObjectID()
-		var newStore *models.Store
-
-		switch req.Role {
-		case "manager":
-			// 店舗情報がある場合のみ作成 (Refactor: 任意項目化)
-			if req.StoreName != nil && *req.StoreName != "" {
-				if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
-					return nil, fmt.Errorf("invalid store phone number format (e.g., 02-123-4567)")
-				}
-				// 業種タグ必須検証
-				if req.StoreCategory == nil || *req.StoreCategory == "" {
-					return nil, fmt.Errorf("business category is required")
-				}
-				if !models.IsValidStoreCategory(*req.StoreCategory) {
-					return nil, fmt.Errorf("Invalid business category")
-				}
-
-				// 店舗電話番号重複検査
-				count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
-				if err != nil {
-					return nil, fmt.Errorf("database error during store phone check: %w", err)
-				}
-				if count > 0 {
-					return nil, fmt.Errorf("a store with this phone number already exists")
-				}
-
-				createdStore := models.Store{
-					ID:               primitive.NewObjectID(),
-					StoreName:        *req.StoreName,
-					BusinessCategory: *req.StoreCategory,
-					Address:          *req.StoreAddress,
-					Building:         valueOr(req.StoreBuilding, ""),
-					ZipCode:          valueOr(req.StoreZipCode, ""),
-					Prefecture:       valueOr(req.StorePrefecture, ""),
-					City:             valueOr(req.StoreCity, ""),
-					Phone:            *req.StoreTelNumber,
-					StoreID:          primitive.NewObjectID().Hex(),
-					UserID:           newUserID,
-				}
-
-				_, err = storeCollection.InsertOne(sessCtx, createdStore)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create store: %w", err)
-				}
-				newStore = &createdStore
-				storeIdForUser = newStore.StoreID
-
-				// License & Settings Creation
-				licenseCollection := db.GetCollection(DatabaseName, StoreLicenseCollection)
-				initialLicenseInfo := models.StoreLicense{
-					ID:                 primitive.NewObjectID(),
-					StoreID:            newStore.StoreID,
-					VerificationStatus: models.StatusNotSubmitted,
-					CreatedAt:          time.Now(),
-					UpdatedAt:          time.Now(),
-				}
-				_, err = licenseCollection.InsertOne(sessCtx, initialLicenseInfo)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create license info: %w", err)
-				}
-
-				// 店舗設定データ生成
-				operatingHours := req.OperatingHours
-				if len(operatingHours) == 0 {
-					operatingHours = map[string]models.StoreDayHours{
-						"monday":    {Start: "09:00", End: "18:00"},
-						"tuesday":   {Start: "09:00", End: "18:00"},
-						"wednesday": {Start: "09:00", End: "18:00"},
-						"thursday":  {Start: "09:00", End: "18:00"},
-						"friday":    {Start: "09:00", End: "18:00"},
-						"saturday":  {Start: "09:00", End: "18:00"},
-						"sunday":    {Start: "09:00", End: "18:00"},
-					}
-				}
-
-				storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
-				defaultSettings := models.StoreSetting{
-					ID:        primitive.NewObjectID(),
-					StoreID:   newStore.StoreID,
-					ManagerID: newUserID.Hex(),
-					Settings: models.Settings{
-						OperatingHours: operatingHours,
-						ClosedDays: models.ClosedDays{
-							SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
-						},
-						WaitingPolicy: models.WaitingPolicy{
-							MaxWaitingCount:         valueOr(req.MaxWaitingCount, 10),
-							EstimatedWaitTime:       valueOr(req.EstimatedWaitTime, 10),
-							EnableMenuSelection:     valueOr(req.EnableMenuSelection, false),
-							RequireOneMenuPerPerson: valueOr(req.RequireOneMenuPerPerson, false),
-						},
-						Is24Hours: valueOr(req.Is24Hours, false),
-						ResetTime: valueOr(req.ResetTime, ""),
-					},
-					UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-				}
-				_, err = storeSettingsCollection.InsertOne(sessCtx, defaultSettings)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create default store settings: %w", err)
-				}
-			}
-
-		case "staff":
-			// 店舗IDがある場合のみチェック (Refactor: 任意項目化)
-			if req.StoreID != "" {
-				var existingStore models.Store
-				err := storeCollection.FindOne(sessCtx, bson.M{"store_id": req.StoreID}).Decode(&existingStore)
-				if err == mongo.ErrNoDocuments {
-					return nil, fmt.Errorf("store with the provided ID not found")
-				} else if err != nil {
-					return nil, fmt.Errorf("database error while verifying store: %w", err)
-				}
-				storeIdForUser = existingStore.StoreID
-			}
-
-		default:
-			return nil, fmt.Errorf("invalid or unsupported user role: %s", req.Role)
-		}
-
-		// Parse TermsAgreedAt
-		var termsAgreedAt time.Time
-		if req.TermsAgreedAt != "" {
-			parsedTime, err := time.Parse(time.RFC3339, req.TermsAgreedAt)
-			if err == nil {
-				termsAgreedAt = parsedTime
-			}
-		}
-
-		// Parse PrivacyAgreedAt
-		var privacyAgreedAt time.Time
-		if req.PrivacyAgreedAt != "" {
-			parsedTime, err := time.Parse(time.RFC3339, req.PrivacyAgreedAt)
-			if err == nil {
-				privacyAgreedAt = parsedTime
-			}
-		}
-
-		newUser := models.User{
-			ID:               newUserID,
-			FirebaseUID:      req.FirebaseUID,
-			UserName:         req.Name,
-			UserNameFurigana: req.NameFurigana,
-			Email:            req.Email,
-			Phone:            req.PhoneNumber,
-			Role:             req.Role,
-			Birthdate:        req.Birthdate,
-			ZipCode:          req.ZipCode,
-			Prefecture:       req.Prefecture,
-			City:             req.City,
-			Address:          req.Address,
-			Building:         req.Building,
-			StoreID:          storeIdForUser, // 空文字の場合はomitemptyで無視、または空文字として保存
-			TermsAgreed:      req.TermsAgreed,
-			TermsAgreedAt:    termsAgreedAt,
-			PrivacyAgreed:    req.PrivacyAgreed,
-			PrivacyAgreedAt:  privacyAgreedAt,
-		}
-
-		// ユーザー生成 (退会済みアカウントと同じメール/電話番号でも、別ドキュメント・
-		// 別UIDの新規ユーザーとして作成する。退会済みの古いドキュメントはそのまま
-		// 履歴として残る)
-		_, err = userCollection.InsertOne(sessCtx, newUser)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create user: %w", err)
-		}
-
-		// Staffの場合、店舗に参加する場合のみ store_staff_infoにも追加
-		if req.Role == "staff" && storeIdForUser != "" {
-			storeStaffCollection := db.GetCollection(DatabaseName, "store_staff_info")
-			newStaffInfo := models.StoreStaffInfo{
-				ID:        primitive.NewObjectID(),
-				UserID:    newUserID,
-				Role:      "staff",
-				StoreID:   storeIdForUser,
-				Status:    models.StaffStatusPending, // 初期状態は承認待ち
-				CreatedAt: time.Now(),
-				UpdatedAt: time.Now(),
-			}
-			_, err = storeStaffCollection.InsertOne(sessCtx, newStaffInfo)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create store staff info: %w", err)
-			}
-		}
-
-		response_data := map[string]interface{}{}
-		response_data["user"] = newUser
-
-		if req.Role == "manager" {
-			response_data["store"] = newStore
-		}
-
-		return response_data, nil
-	})
-	// Transaction終了
-
+	createdUser, err := h.repo.RegisterUser(newUser, newStore, newSettings, joinStoreID)
 	if err != nil {
-		// Trasaction Callbackされた時の処理
-		if strings.Contains(err.Error(), "already exists") {
-			respondWithError(w, err.Error(), http.StatusConflict)
-		} else if strings.Contains(err.Error(), "not found") {
-			respondWithError(w, err.Error(), http.StatusNotFound)
-		} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "Invalid") {
-			respondWithError(w, err.Error(), http.StatusBadRequest)
-		} else {
-			respondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
-		}
+		respondSignUpError(w, err)
 		return
 	}
 
-	// Transaction成功
-	respondWithJSON(w, result, http.StatusCreated)
+	responseData := map[string]interface{}{"user": createdUser}
+	if req.Role == "manager" {
+		responseData["store"] = newStore
+	}
+	respondWithJSON(w, responseData, http.StatusCreated)
 }
 
 // calculateAge 生年月日から満年齢を計算する(誕生日を迎えているかどうかを考慮)
@@ -376,7 +189,20 @@ func calculateAge(birthdate time.Time) int {
 	return age
 }
 
-func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
+// parseAgreedAt 規約同意日時(RFC3339)をパースする。空・不正な値はゼロ値として扱う
+func parseAgreedAt(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+// StoreExists 店舗IDの存在確認
+func (h *SignUpHandler) StoreExists(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -386,17 +212,16 @@ func StoreExistsHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, "Store ID is required", http.StatusBadRequest)
 		return
 	}
-	storeCollection := db.GetCollection(DatabaseName, StoresCollection)
-	count, err := storeCollection.CountDocuments(r.Context(), bson.M{"store_id": storeID})
+	exists, err := h.repo.StoreExists(storeID)
 	if err != nil {
 		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	exists := count > 0
 	respondWithJSON(w, map[string]bool{"exists": exists}, http.StatusOK)
 }
 
-func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
+// EmailCheck メールアドレスが新規登録に使えるかの確認
+func (h *SignUpHandler) EmailCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -410,19 +235,12 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, "Email is required", http.StatusBadRequest)
 		return
 	}
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	if !emailRegex.MatchString(req.Email) {
+	if !signUpEmailPattern.MatchString(req.Email) {
 		respondWithError(w, "Invalid email format", http.StatusBadRequest)
 		return
 	}
 	// 1. MongoDB check
-	// 退会済み(WITHDRAWN)アカウントは、同じメールアドレスでの新規登録を
-	// 妨げないよう件数から除外する(退会は連絡先を残すソフトデリートのため)
-	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	count, err := userCollection.CountDocuments(r.Context(), bson.M{
-		"email":  req.Email,
-		"status": bson.M{"$ne": models.UserStatusWithdrawn},
-	})
+	inUse, err := h.repo.IsEmailInUse(req.Email)
 	if err != nil {
 		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -452,12 +270,13 @@ func EmailCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// DBまたはFirebaseに存在する場合、利用できない
-	isUnavailable := (count > 0) || firebaseExists
+	isUnavailable := inUse || firebaseExists
 
 	respondWithJSON(w, map[string]bool{"available": !isUnavailable}, http.StatusOK)
 }
 
-func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
+// PhoneCheck 電話番号が新規登録に使えるかの確認
+func (h *SignUpHandler) PhoneCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -471,26 +290,20 @@ func PhoneCheckHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, "Phone number is required", http.StatusBadRequest)
 		return
 	}
-	phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
-	if !phoneRegex.MatchString(req.PhoneNumber) {
+	if !signUpPhonePattern.MatchString(req.PhoneNumber) {
 		respondWithError(w, "Invalid phone number format (e.g., 010-1234-5678)", http.StatusBadRequest)
 		return
 	}
-	// 退会済み(WITHDRAWN)アカウントは、同じ電話番号での新規登録を妨げないよう除外する
-	userCollection := db.GetCollection(DatabaseName, UsersCollection)
-	count, err := userCollection.CountDocuments(r.Context(), bson.M{
-		"phone":  req.PhoneNumber,
-		"status": bson.M{"$ne": models.UserStatusWithdrawn},
-	})
+	inUse, err := h.repo.IsPhoneInUse(req.PhoneNumber)
 	if err != nil {
 		respondWithError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	respondWithJSON(w, map[string]bool{"available": count == 0}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"available": !inUse}, http.StatusOK)
 }
 
-// ログインされているユーザーの店舗登録プロセス
-func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
+// AddNewStore ログインされているユーザーの店舗登録プロセス
+func (h *SignUpHandler) AddNewStore(w http.ResponseWriter, r *http.Request) {
 	// 使用者認証
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -515,147 +328,111 @@ func AddNewStoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := db.Client().StartSession()
-	if err != nil {
-		respondWithError(w, "Failed to start database session", http.StatusInternalServerError)
+	// 店舗情報有効性検証
+	if req.StoreName == nil || *req.StoreName == "" {
+		respondWithError(w, "store name is required", http.StatusBadRequest)
 		return
 	}
-	defer session.EndSession(r.Context())
+	if err := validateNewStoreRequest(&req); err != nil {
+		respondWithError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	result, err := session.WithTransaction(r.Context(), func(sessCtx mongo.SessionContext) (interface{}, error) {
+	newStore, newSettings := buildNewStore(&req)
+	owner, err := h.repo.AddStoreForManager(firebaseUID, newStore, newSettings)
+	if err != nil {
+		respondSignUpError(w, err)
+		return
+	}
 
-		userCollection := db.GetCollection(DatabaseName, UsersCollection)
-		storeCollection := db.GetCollection(DatabaseName, StoresCollection)
+	respondWithJSON(w, map[string]interface{}{
+		"user":  owner,
+		"store": newStore,
+	}, http.StatusCreated)
+}
 
-		// firebaseUIDで既存ユーザーを検索し、user.ID（MongoDBの_id）を取得
-		var existingUser models.User
-		err := userCollection.FindOne(sessCtx, bson.M{"firebase_uid": firebaseUID}).Decode(&existingUser)
-		if err != nil {
-			if err == mongo.ErrNoDocuments {
-				return nil, fmt.Errorf("user not found")
-			}
-			return nil, fmt.Errorf("database error while finding user: %w", err)
-		}
+// validateNewStoreRequest 店舗の新規作成に必要な項目を検証する (会員登録時・店舗追加時で共通)
+//   - 以前はトランザクション内で検証しており、エラー文字列の部分一致でステータスを決めていたため、
+//     店舗電話番号の形式エラー("invalid ..." が "Invalid" に一致しない)が500になっていた。
+//     入力値の検証はDBに触れる前にここで済ませ、確実に400で返す
+//   - StoreAddress はポインタのまま参照すると未指定時にnil参照でpanicするため、必須として検証する
+func validateNewStoreRequest(req *models.SignUpRequest) error {
+	if req.StoreTelNumber == nil || !signUpPhonePattern.MatchString(*req.StoreTelNumber) {
+		return errors.New("invalid store phone number format (e.g., 02-123-4567)")
+	}
+	if req.StoreAddress == nil || *req.StoreAddress == "" {
+		return errors.New("store address is required")
+	}
+	// 業種タグ必須検証
+	if req.StoreCategory == nil || *req.StoreCategory == "" {
+		return errors.New("business category is required")
+	}
+	if !models.IsValidStoreCategory(*req.StoreCategory) {
+		return errors.New("invalid business category")
+	}
+	return nil
+}
 
-		// 'manager'でない場合、新しい店舗登録を防ぐ
-		if existingUser.Role != "manager" {
-			return nil, fmt.Errorf("only managers can add new stores")
-		}
+// buildNewStore リクエストから新規店舗と初期店舗設定を組み立てる (所有者の設定はリポジトリ側で行う)
+// - 呼び出し前に validateNewStoreRequest で検証済みであること
+func buildNewStore(req *models.SignUpRequest) (*models.Store, *models.StoreSetting) {
+	store := &models.Store{
+		ID:               primitive.NewObjectID(),
+		StoreName:        *req.StoreName,
+		BusinessCategory: *req.StoreCategory,
+		Address:          *req.StoreAddress,
+		Building:         valueOr(req.StoreBuilding, ""),
+		ZipCode:          valueOr(req.StoreZipCode, ""),
+		Prefecture:       valueOr(req.StorePrefecture, ""),
+		City:             valueOr(req.StoreCity, ""),
+		Phone:            *req.StoreTelNumber,
+		StoreID:          primitive.NewObjectID().Hex(),
+	}
 
-		// 店舗情報有効性検証
-		if req.StoreName == nil || *req.StoreName == "" {
-			return nil, fmt.Errorf("store name is required")
+	operatingHours := req.OperatingHours
+	if len(operatingHours) == 0 {
+		operatingHours = map[string]models.StoreDayHours{
+			"monday":    {Start: "09:00", End: "18:00"},
+			"tuesday":   {Start: "09:00", End: "18:00"},
+			"wednesday": {Start: "09:00", End: "18:00"},
+			"thursday":  {Start: "09:00", End: "18:00"},
+			"friday":    {Start: "09:00", End: "18:00"},
+			"saturday":  {Start: "09:00", End: "18:00"},
+			"sunday":    {Start: "09:00", End: "18:00"},
 		}
-		phoneRegex := regexp.MustCompile(`^\d{2,3}-\d{3,4}-\d{4}$`)
-		if req.StoreTelNumber == nil || !phoneRegex.MatchString(*req.StoreTelNumber) {
-			return nil, fmt.Errorf("invalid store phone number format")
-		}
-		// 業種タグ必須検証
-		if req.StoreCategory == nil || *req.StoreCategory == "" {
-			return nil, fmt.Errorf("business category is required")
-		}
-		if !models.IsValidStoreCategory(*req.StoreCategory) {
-			return nil, fmt.Errorf("invalid business category")
-		}
-		count, err := storeCollection.CountDocuments(sessCtx, bson.M{"phone": *req.StoreTelNumber})
-		if err != nil {
-			return nil, fmt.Errorf("database error during store phone check: %w", err)
-		}
-		if count > 0 {
-			return nil, fmt.Errorf("a store with this phone number already exists")
-		}
+	}
 
-		// 新しい店舗データ生成
-		newStore := models.Store{
-			ID:               primitive.NewObjectID(),
-			StoreName:        *req.StoreName,
-			BusinessCategory: *req.StoreCategory,
-			Address:          *req.StoreAddress,
-			Building:         valueOr(req.StoreBuilding, ""), // New
-			ZipCode:          valueOr(req.StoreZipCode, ""),
-			Prefecture:       valueOr(req.StorePrefecture, ""),
-			City:             valueOr(req.StoreCity, ""),
-			Phone:            *req.StoreTelNumber,
-			StoreID:          primitive.NewObjectID().Hex(),
-			UserID:           existingUser.ID,
-		}
-		_, err = storeCollection.InsertOne(sessCtx, newStore)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create store: %w", err)
-		}
-
-		// store_license及びstore_settings生成
-		licenseCollection := db.GetCollection(DatabaseName, StoreLicenseCollection)
-		initialLicenseInfo := models.StoreLicense{
-			ID:                 primitive.NewObjectID(),
-			StoreID:            newStore.StoreID,
-			VerificationStatus: models.StatusNotSubmitted,
-			CreatedAt:          time.Now(),
-			UpdatedAt:          time.Now(),
-		}
-		_, err = licenseCollection.InsertOne(sessCtx, initialLicenseInfo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create initial license info: %w", err)
-		}
-
-		operatingHours := req.OperatingHours
-		if len(operatingHours) == 0 {
-			operatingHours = map[string]models.StoreDayHours{
-				"monday":    {Start: "09:00", End: "18:00"},
-				"tuesday":   {Start: "09:00", End: "18:00"},
-				"wednesday": {Start: "09:00", End: "18:00"},
-				"thursday":  {Start: "09:00", End: "18:00"},
-				"friday":    {Start: "09:00", End: "18:00"},
-				"saturday":  {Start: "09:00", End: "18:00"},
-				"sunday":    {Start: "09:00", End: "18:00"},
-			}
-		}
-
-		storeSettingsCollection := db.GetCollection(DatabaseName, StoreSettingsCollection)
-		defaultSettings := models.StoreSetting{
-			ID:        primitive.NewObjectID(),
-			StoreID:   newStore.StoreID,
-			ManagerID: existingUser.ID.Hex(),
-			Settings: models.Settings{
-				OperatingHours: operatingHours,
-				ClosedDays: models.ClosedDays{
-					SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
-				},
-				WaitingPolicy: models.WaitingPolicy{
-					MaxWaitingCount:         valueOr(req.MaxWaitingCount, 10),
-					EstimatedWaitTime:       valueOr(req.EstimatedWaitTime, 10),
-					EnableMenuSelection:     valueOr(req.EnableMenuSelection, false),
-					RequireOneMenuPerPerson: valueOr(req.RequireOneMenuPerPerson, false),
-				},
-				Is24Hours: valueOr(req.Is24Hours, false),
-				ResetTime: valueOr(req.ResetTime, ""),
+	settings := &models.StoreSetting{
+		ID: primitive.NewObjectID(),
+		Settings: models.Settings{
+			OperatingHours: operatingHours,
+			ClosedDays: models.ClosedDays{
+				SpecificDates: []string{}, RegularWeekly: []string{}, RegularMonthly: []string{}, HolidayClosure: true,
 			},
-			UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		}
-		_, err = storeSettingsCollection.InsertOne(sessCtx, defaultSettings)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create default store settings: %w", err)
-		}
-
-		response_data := map[string]interface{}{}
-		response_data["user"] = existingUser
-		response_data["store"] = newStore
-
-		return response_data, nil
-	})
-
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			respondWithError(w, err.Error(), http.StatusNotFound)
-		} else if strings.Contains(err.Error(), "already exists") {
-			respondWithError(w, err.Error(), http.StatusConflict)
-		} else if strings.Contains(err.Error(), "required") || strings.Contains(strings.ToLower(err.Error()), "invalid") {
-			respondWithError(w, err.Error(), http.StatusBadRequest)
-		} else {
-			respondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
-		}
-		return
+			WaitingPolicy: models.WaitingPolicy{
+				MaxWaitingCount:         valueOr(req.MaxWaitingCount, 10),
+				EstimatedWaitTime:       valueOr(req.EstimatedWaitTime, 10),
+				EnableMenuSelection:     valueOr(req.EnableMenuSelection, false),
+				RequireOneMenuPerPerson: valueOr(req.RequireOneMenuPerPerson, false),
+			},
+			Is24Hours: valueOr(req.Is24Hours, false),
+			ResetTime: valueOr(req.ResetTime, ""),
+		},
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	return store, settings
+}
 
-	respondWithJSON(w, result, http.StatusCreated)
+// respondSignUpError リポジトリのエラーをHTTPステータスに変換して返す
+func respondSignUpError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, data.ErrUserAlreadyExists), errors.Is(err, data.ErrStorePhoneExists):
+		respondWithError(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, data.ErrUserNotFound), errors.Is(err, data.ErrStoreNotFound):
+		respondWithError(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, data.ErrNotManager):
+		respondWithError(w, err.Error(), http.StatusForbidden)
+	default:
+		respondWithError(w, "Transaction failed: "+err.Error(), http.StatusInternalServerError)
+	}
 }

@@ -35,7 +35,7 @@ sequenceDiagram
 ### 2.1 사용 라이브러리 및 드라이버
 오직 공식 `go.mongodb.org/mongo-driver/mongo`만을 사용하여 성능 오버헤드를 최소화했습니다.
 
-### 2.2 메트릭스 추출 로직 (`handlers/metrics.go`)
+### 2.2 메트릭스 추출 로직 (`data/admin_metrics_repo.go`의 `DBStats`)
 - **Active Connections (활성화된 커넥션)**: 
   - `admin` 데이터베이스에 `serverStatus` 명령어를 실행하여 현재 열려있는 커넥션 개수를 파악합니다.
   - 클러스터 모니터링 권한 부족 시 실패할 수 있으므로, 에러 발생 시 시스템을 중단시키지 않고 조용히(Silently) 0으로 처리하도록 예외 처리를 적용했습니다.

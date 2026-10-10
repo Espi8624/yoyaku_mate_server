@@ -1,134 +1,97 @@
 package handlers
 
 import (
-	"context"
+	"errors"
 	"log"
 	"math"
 	"net/http"
 	"time"
-	"yoyaku_mate_server/db"
+	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
-// - MongoDBからエラー発生タイプ別の合計数をリアルタイムでカウントする
-// - 管理者ダッシュボード上部サマリーカードの統計データとして返却する
-func GetErrorMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionErrorLogs)
-	if collection == nil {
-		respondWithError(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	count500, _ := collection.CountDocuments(ctx, bson.M{"error_type": "500_INTERNAL_ERROR"})
-	count400, _ := collection.CountDocuments(ctx, bson.M{"error_type": "400_BAD_REQUEST"})
-	countDB, _ := collection.CountDocuments(ctx, bson.M{"error_type": "DATABASE_ERROR"})
-	countSSE, _ := collection.CountDocuments(ctx, bson.M{"error_type": "SSE_DISCONNECT"})
-
-	stats := models.ErrorMetrics{
-		Count500: count500,
-		Count400: count400,
-		CountDB:  countDB,
-		CountSSE: countSSE,
-	}
-
-	respondWithJSON(w, stats, http.StatusOK)
+// AdminMetricsRepository 管理者ダッシュボード向けメトリクスの読み取りを抽象化するインターフェース
+type AdminMetricsRepository interface {
+	CountErrorsByType() (models.ErrorMetrics, error)
+	ListErrorLogs(errorType string, limit int64) ([]models.ErrorLog, error)
+	CountRequestsSince(since time.Time, successOnly bool) (int64, error)
+	PeakTPSSince(since time.Time) (int64, error)
+	ListRequestLogs(limit int64) ([]models.RequestLog, error)
+	CountDailyActiveUsers(date string) (int64, error)
+	CountMonthlyActiveUsers(since time.Time) (int64, error)
+	ResponseTimeStats(since time.Time) (models.ResponseTimeMetrics, error)
+	ListAuditLogs(limit int64) ([]models.AuditLog, error)
+	DBStats() (models.DBMetrics, error)
 }
 
-// - MongoDBに保存された詳細なエラーログを最新順にソートして最大50件取得する
-// - 管理者ダッシュボード下部のテーブルデータとして返却する
-func GetErrorLogsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionErrorLogs)
-	if collection == nil {
-		respondWithError(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	findOptions := options.Find().
-		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
-		SetLimit(50) // fetch latest 50 logs
-
-	// - 既定では SSE_DISCONNECT を除外する。
-	//   正常な切断 (客が画面を閉じた) は接続1本につき1件記録されるため件数が圧倒的に多く、
-	//   最新50件がこれで埋まって本当の500がウィンドウの外へ押し出される。
-	//   障害時に最初に開く画面がノイズで埋まっているのが一番困る
-	// - 件数自体はサマリ (GetErrorMetricsHandler の CountSSE) で見えるため、
-	//   ここで省いても情報は失われない
-	// - ?error_type= を付ければその種別だけを返す。SSE_DISCONNECT を明示指定すれば
-	//   切断だけを追うこともできる (error_type には idx_error_type がある)
-	filter := bson.M{"error_type": bson.M{"$ne": "SSE_DISCONNECT"}}
-	if errorType := r.URL.Query().Get("error_type"); errorType != "" {
-		filter = bson.M{"error_type": errorType}
-	}
-
-	cursor, err := collection.Find(ctx, filter, findOptions)
-	if err != nil {
-		respondWithError(w, "Failed to fetch error logs", http.StatusInternalServerError)
-		return
-	}
-	defer cursor.Close(ctx)
-
-	var logs []models.ErrorLog
-	if err = cursor.All(ctx, &logs); err != nil {
-		respondWithError(w, "Failed to decode error logs", http.StatusInternalServerError)
-		return
-	}
-
-	if logs == nil {
-		logs = []models.ErrorLog{}
-	}
-
-	respondWithJSON(w, logs, http.StatusOK)
+// AdminMetricsHandler 管理者ダッシュボードのメトリクスAPIを扱うハンドラ
+type AdminMetricsHandler struct {
+	repo AdminMetricsRepository
 }
 
-// - 直近24時間における累積要求件数、成功率、および直近1時間以内のPeak TPS統計を演算して返却するハンドラー
-func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
-	if collection == nil {
+func NewAdminMetricsHandler(repo AdminMetricsRepository) *AdminMetricsHandler {
+	return &AdminMetricsHandler{repo: repo}
+}
+
+// respondMetricsError DB未接続とそれ以外の失敗を区別してエラー応答を返す
+func respondMetricsError(w http.ResponseWriter, err error, message string) {
+	if errors.Is(err, data.ErrDatabaseUnavailable) {
 		respondWithError(w, "Database connection error", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("%s: %v", message, err)
+	respondWithError(w, message, http.StatusInternalServerError)
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+// GetErrorMetrics
+// - MongoDBからエラー発生タイプ別の合計数をリアルタイムでカウントする
+// - 管理者ダッシュボード上部サマリーカードの統計データとして返却する
+func (h *AdminMetricsHandler) GetErrorMetrics(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.repo.CountErrorsByType()
+	if err != nil {
+		respondMetricsError(w, err, "Failed to count errors")
+		return
+	}
+	respondWithJSON(w, stats, http.StatusOK)
+}
 
+// GetErrorLogs
+// - MongoDBに保存された詳細なエラーログを最新順にソートして最大50件取得する
+// - 管理者ダッシュボード下部のテーブルデータとして返却する
+// - ?error_type= を付ければその種別だけを返す (既定では SSE_DISCONNECT を除外。理由はリポジトリ側)
+func (h *AdminMetricsHandler) GetErrorLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := h.repo.ListErrorLogs(r.URL.Query().Get("error_type"), 50)
+	if err != nil {
+		respondMetricsError(w, err, "Failed to fetch error logs")
+		return
+	}
+	respondWithJSON(w, logs, http.StatusOK)
+}
+
+// GetRequestMetrics
+// - 直近24時間における累積要求件数、成功率、および直近1時間以内のPeak TPS統計を演算して返却する
+func (h *AdminMetricsHandler) GetRequestMetrics(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	yesterday := now.Add(-24 * time.Hour)
 	oneHourAgo := now.Add(-1 * time.Hour)
 
 	// - 24時間以内の総リクエスト数を集計
-	total24h, err := collection.CountDocuments(ctx, bson.M{
-		"timestamp": bson.M{"$gte": yesterday},
-	})
+	total24h, err := h.repo.CountRequestsSince(yesterday, false)
 	if err != nil {
-		log.Printf("Failed to count total requests: %v", err)
-		respondWithError(w, "Failed to calculate total requests", http.StatusInternalServerError)
+		respondMetricsError(w, err, "Failed to calculate total requests")
 		return
 	}
 
 	// - 24時間以内の成功したリクエスト数を集計 (status_code < 400)
-	success24h, err := collection.CountDocuments(ctx, bson.M{
-		"timestamp":   bson.M{"$gte": yesterday},
-		"status_code": bson.M{"$lt": 400},
-	})
+	success24h, err := h.repo.CountRequestsSince(yesterday, true)
 	if err != nil {
-		log.Printf("Failed to count success requests: %v", err)
-		respondWithError(w, "Failed to calculate success requests", http.StatusInternalServerError)
+		respondMetricsError(w, err, "Failed to calculate success requests")
 		return
 	}
 
@@ -137,102 +100,43 @@ func GetRequestMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		successRate = float64(success24h) / float64(total24h) * 100.0
 	}
 
-	// - 直近1時間における秒単位の要求数集計によるPeak TPSの算出 (Aggregationを使用)
-	pipeline := mongo.Pipeline{
-		{{Key: "$match", Value: bson.D{{Key: "timestamp", Value: bson.D{{Key: "$gte", Value: oneHourAgo}}}}}},
-		{{Key: "$project", Value: bson.D{
-			{Key: "second", Value: bson.D{
-				{Key: "$dateToString", Value: bson.D{
-					{Key: "format", Value: "%Y-%m-%d %H:%M:%S"},
-					{Key: "date", Value: "$timestamp"},
-				}},
-			}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$second"},
-			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-		}}},
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: nil},
-			{Key: "peakTPS", Value: bson.D{{Key: "$max", Value: "$count"}}},
-		}}},
-	}
-
-	var peakTPS int64 = 0
-	cursor, err := collection.Aggregate(ctx, pipeline)
+	// - 直近1時間における秒単位の要求数集計によるPeak TPSの算出
+	peakTPS, err := h.repo.PeakTPSSince(oneHourAgo)
 	if err != nil {
-		log.Printf("Peak TPS aggregation error: %v", err)
 		// - 集計エラー時は0として処理を続行
-	} else {
-		defer cursor.Close(ctx)
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err == nil && len(results) > 0 {
-			if maxVal, ok := results[0]["peakTPS"]; ok {
-				switch v := maxVal.(type) {
-				case int32:
-					peakTPS = int64(v)
-				case int64:
-					peakTPS = v
-				}
-			}
-		}
+		log.Printf("Peak TPS aggregation error: %v", err)
+		peakTPS = 0
 	}
 
-	stats := models.RequestMetrics{
+	respondWithJSON(w, models.RequestMetrics{
 		TotalRequests24h: total24h,
 		SuccessRate:      successRate,
 		PeakTPS1h:        peakTPS,
-	}
-
-	respondWithJSON(w, stats, http.StatusOK)
+	}, http.StatusOK)
 }
 
-// - MongoDBに保存された詳細なリクエストログを最新順にソートして最大50件取得するハンドラー
-func GetRequestLogsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
-	if collection == nil {
-		respondWithError(w, "Database connection error", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	findOptions := options.Find().
-		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
-		SetLimit(50)
-
-	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+// GetRequestLogs
+// - MongoDBに保存された詳細なリクエストログを最新順にソートして最大50件取得する
+func (h *AdminMetricsHandler) GetRequestLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := h.repo.ListRequestLogs(50)
 	if err != nil {
-		log.Printf("Failed to fetch request logs: %v", err)
-		respondWithError(w, "Failed to fetch request logs", http.StatusInternalServerError)
+		respondMetricsError(w, err, "Failed to fetch request logs")
 		return
 	}
-	defer cursor.Close(ctx)
-
-	var logs []models.RequestLog
-	if err = cursor.All(ctx, &logs); err != nil {
-		log.Printf("Failed to decode request logs: %v", err)
-		respondWithError(w, "Failed to decode request logs", http.StatusInternalServerError)
-		return
-	}
-
-	if logs == nil {
-		logs = []models.RequestLog{}
-	}
-
 	respondWithJSON(w, logs, http.StatusOK)
 }
 
-// - リアルタイム同時接続者数およびDAU/MAU統計を集計して返却するハンドラー
-func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
+// GetActiveUserMetrics
+// - リアルタイム同時接続者数およびDAU/MAU統計を集計して返却する
+func (h *AdminMetricsHandler) GetActiveUserMetrics(w http.ResponseWriter, r *http.Request) {
 	// 1. リアルタイム同時接続者数 (インメモリから即座に取得)
 	currentActive := metrics.GetRequestTracker().GetActiveUsersCount()
 
-	dauCollection := db.GetCollection(db.DatabaseName, db.CollectionDailyActiveUsers)
-	if dauCollection == nil {
+	// 2. 1日アクティブユーザー数 (DAU) - 本日の日付文字列を基準にユニークIP数を集計
+	dauCount, err := h.repo.CountDailyActiveUsers(time.Now().Format("2006-01-02"))
+	if errors.Is(err, data.ErrDatabaseUnavailable) {
 		// DB接続失敗時もエラーを返却せずダッシュボードのクラッシュを防ぐためにフォールバック値を提供
-		log.Println("DB connection failure in GetActiveUserMetricsHandler")
+		log.Println("DB connection failure in GetActiveUserMetrics")
 		respondWithJSON(w, models.ActiveUserMetrics{
 			CurrentActiveUsers: currentActive,
 			DailyActiveUsers:   currentActive,
@@ -240,32 +144,16 @@ func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}, http.StatusOK)
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// 2. 1日アクティブユーザー数 (DAU) - 本日の日付文字列を基準にユニークIP数を集計
-	todayStr := time.Now().Format("2006-01-02")
-	dauCount, err := dauCollection.CountDocuments(ctx, bson.M{"date": todayStr})
 	if err != nil {
 		log.Printf("Failed to count DAU: %v", err)
 		dauCount = currentActive // Fallback
 	}
 
 	// 3. 月間アクティブユーザー数 (MAU) - 直近30日以内のユニークIP数を集計
-	thirtyDaysAgo := time.Now().Add(-30 * 24 * time.Hour)
-	
-	// 重複なくユニークなclient_ipの数をカウント
-	distinctIPs, err := dauCollection.Distinct(ctx, "client_ip", bson.M{
-		"timestamp": bson.M{"$gte": thirtyDaysAgo},
-	})
-	
-	var mauCount int64
+	mauCount, err := h.repo.CountMonthlyActiveUsers(time.Now().Add(-30 * 24 * time.Hour))
 	if err != nil {
 		log.Printf("Failed to count MAU: %v", err)
 		mauCount = dauCount // Fallback to DAU
-	} else {
-		mauCount = int64(len(distinctIPs))
 	}
 
 	// もしMAUやDAUがリアルタイム同時接続者数より少ない場合は補正処理 (即時フォールバック)
@@ -276,13 +164,11 @@ func GetActiveUserMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		mauCount = dauCount
 	}
 
-	metricsData := models.ActiveUserMetrics{
+	respondWithJSON(w, models.ActiveUserMetrics{
 		CurrentActiveUsers: currentActive,
 		DailyActiveUsers:   dauCount,
 		MonthlyActiveUsers: mauCount,
-	}
-
-	respondWithJSON(w, metricsData, http.StatusOK)
+	}, http.StatusOK)
 }
 
 // GetSSEMetricsHandler は2つのSSEブローカーのリアルタイム接続状況を取得して返します
@@ -319,20 +205,13 @@ func GetSSEMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, result, http.StatusOK)
 }
 
+// GetResponseTimeMetrics
 // - クエリパラメータ ?range=5m|1h|24h を受け取り、指定期間内の
-// - 全体サマリー(avg/p95/p99/error_rate)と遅いエンドポイント上位10件を集計して返すハンドラー
-// - MongoDB 7.0以上の $percentile 演算子を使用
-func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
-	if collection == nil {
-		respondWithError(w, "Database connection error", http.StatusInternalServerError)
-		return
-	}
-
+// - 全体サマリー(avg/p95/p99/error_rate)と遅いエンドポイント上位10件を集計して返す
+func (h *AdminMetricsHandler) GetResponseTimeMetrics(w http.ResponseWriter, r *http.Request) {
 	// - クエリパラメータからtime range取得 (デフォルト: 1h)
-	rangeParam := r.URL.Query().Get("range")
 	var since time.Time
-	switch rangeParam {
+	switch r.URL.Query().Get("range") {
 	case "5m":
 		since = time.Now().UTC().Add(-5 * time.Minute)
 	case "24h":
@@ -341,223 +220,22 @@ func GetResponseTimeMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		since = time.Now().UTC().Add(-1 * time.Hour)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	matchStage := bson.D{{Key: "$match", Value: bson.D{
-		{Key: "timestamp", Value: bson.D{{Key: "$gte", Value: since}}},
-	}}}
-
-	// --- 1. エンドポイント別集計 (上位10件) ---
-	endpointPipeline := mongo.Pipeline{
-		matchStage,
-		// - path+methodごとにグループ化し、avg/p95/p99/件数/エラー件数を集計
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: bson.D{
-				{Key: "path", Value: "$path"},
-				{Key: "method", Value: "$method"},
-			}},
-			{Key: "avg_ms", Value: bson.D{{Key: "$avg", Value: "$response_time"}}},
-			{Key: "p95_ms", Value: bson.D{
-				{Key: "$percentile", Value: bson.D{
-					{Key: "input", Value: "$response_time"},
-					{Key: "p", Value: bson.A{0.95}},
-					{Key: "method", Value: "approximate"},
-				}},
-			}},
-			{Key: "p99_ms", Value: bson.D{
-				{Key: "$percentile", Value: bson.D{
-					{Key: "input", Value: "$response_time"},
-					{Key: "p", Value: bson.A{0.99}},
-					{Key: "method", Value: "approximate"},
-				}},
-			}},
-			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-			{Key: "error_count", Value: bson.D{
-				{Key: "$sum", Value: bson.D{
-					{Key: "$cond", Value: bson.A{
-						bson.D{{Key: "$gte", Value: bson.A{"$status_code", 400}}},
-						1, 0,
-					}},
-				}},
-			}},
-		}}},
-		// - avg_msの降順で上位10件に絞り込む
-		{{Key: "$sort", Value: bson.D{{Key: "avg_ms", Value: -1}}}},
-		{{Key: "$limit", Value: 10}},
-	}
-
-	endpointCursor, err := collection.Aggregate(ctx, endpointPipeline)
+	result, err := h.repo.ResponseTimeStats(since)
 	if err != nil {
-		log.Printf("Endpoint latency aggregation error: %v", err)
-		respondWithError(w, "Failed to aggregate endpoint latency", http.StatusInternalServerError)
+		respondMetricsError(w, err, "Failed to aggregate response time metrics")
 		return
 	}
-	defer endpointCursor.Close(ctx)
-
-	var rawEndpoints []bson.M
-	if err := endpointCursor.All(ctx, &rawEndpoints); err != nil {
-		log.Printf("Endpoint cursor decode error: %v", err)
-		respondWithError(w, "Failed to decode endpoint latency", http.StatusInternalServerError)
-		return
-	}
-
-	// - bson.Mから型安全なEndpointLatencyスライスへ変換
-	endpoints := make([]models.EndpointLatency, 0, len(rawEndpoints))
-	for _, raw := range rawEndpoints {
-		ep := models.EndpointLatency{}
-		if id, ok := raw["_id"].(bson.M); ok {
-			ep.Path, _ = id["path"].(string)
-			ep.Method, _ = id["method"].(string)
-		}
-		ep.AvgMs = math.Round(toFloat64(raw["avg_ms"])*10) / 10
-		// - $percentileはスライスで返すため最初の要素を取得
-		if arr, ok := raw["p95_ms"].(bson.A); ok && len(arr) > 0 {
-			ep.P95Ms = math.Round(toFloat64(arr[0])*10) / 10
-		}
-		if arr, ok := raw["p99_ms"].(bson.A); ok && len(arr) > 0 {
-			ep.P99Ms = math.Round(toFloat64(arr[0])*10) / 10
-		}
-		ep.Count = toInt64(raw["count"])
-		errorCount := toInt64(raw["error_count"])
-		if ep.Count > 0 {
-			ep.ErrorPct = math.Round(float64(errorCount)/float64(ep.Count)*100*10) / 10
-		}
-		endpoints = append(endpoints, ep)
-	}
-
-	// --- 2. 全体サマリー集計 ---
-	summaryPipeline := mongo.Pipeline{
-		matchStage,
-		{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: nil},
-			{Key: "avg_ms", Value: bson.D{{Key: "$avg", Value: "$response_time"}}},
-			{Key: "p95_ms", Value: bson.D{
-				{Key: "$percentile", Value: bson.D{
-					{Key: "input", Value: "$response_time"},
-					{Key: "p", Value: bson.A{0.95}},
-					{Key: "method", Value: "approximate"},
-				}},
-			}},
-			{Key: "p99_ms", Value: bson.D{
-				{Key: "$percentile", Value: bson.D{
-					{Key: "input", Value: "$response_time"},
-					{Key: "p", Value: bson.A{0.99}},
-					{Key: "method", Value: "approximate"},
-				}},
-			}},
-			{Key: "total", Value: bson.D{{Key: "$sum", Value: 1}}},
-			{Key: "error_count", Value: bson.D{
-				{Key: "$sum", Value: bson.D{
-					{Key: "$cond", Value: bson.A{
-						bson.D{{Key: "$gte", Value: bson.A{"$status_code", 400}}},
-						1, 0,
-					}},
-				}},
-			}},
-		}}},
-	}
-
-	summaryCursor, err := collection.Aggregate(ctx, summaryPipeline)
-	if err != nil {
-		log.Printf("Summary latency aggregation error: %v", err)
-		respondWithError(w, "Failed to aggregate summary", http.StatusInternalServerError)
-		return
-	}
-	defer summaryCursor.Close(ctx)
-
-	var summaryRaw []bson.M
-	if err := summaryCursor.All(ctx, &summaryRaw); err != nil {
-		log.Printf("Summary cursor decode error: %v", err)
-		respondWithError(w, "Failed to decode summary", http.StatusInternalServerError)
-		return
-	}
-
-	summary := models.ResponseTimeSummary{}
-	if len(summaryRaw) > 0 {
-		raw := summaryRaw[0]
-		summary.AvgMs = math.Round(toFloat64(raw["avg_ms"])*10) / 10
-		if arr, ok := raw["p95_ms"].(bson.A); ok && len(arr) > 0 {
-			summary.P95Ms = math.Round(toFloat64(arr[0])*10) / 10
-		}
-		if arr, ok := raw["p99_ms"].(bson.A); ok && len(arr) > 0 {
-			summary.P99Ms = math.Round(toFloat64(arr[0])*10) / 10
-		}
-		total := toInt64(raw["total"])
-		errorCount := toInt64(raw["error_count"])
-		if total > 0 {
-			summary.ErrorRatePct = math.Round(float64(errorCount)/float64(total)*100*10) / 10
-		}
-	}
-
-	result := models.ResponseTimeMetrics{
-		Summary:   summary,
-		Endpoints: endpoints,
-	}
-
 	respondWithJSON(w, result, http.StatusOK)
 }
 
-// - interface{}から float64へ安全に型変換するヘルパー
-func toFloat64(v interface{}) float64 {
-	switch val := v.(type) {
-	case float64:
-		return val
-	case float32:
-		return float64(val)
-	case int32:
-		return float64(val)
-	case int64:
-		return float64(val)
-	}
-	return 0
-}
-
-// - interface{}から int64へ安全に型変換するヘルパー
-func toInt64(v interface{}) int64 {
-	switch val := v.(type) {
-	case int32:
-		return int64(val)
-	case int64:
-		return val
-	case float64:
-		return int64(val)
-	}
-	return 0
-}
-
+// GetAuditLogs
 // - MongoDBの audit_logs コレクションから最新順で最大100件の監査ログを取得して返却
-func GetAuditLogsHandler(w http.ResponseWriter, r *http.Request) {
-	collection := db.GetCollection(db.DatabaseName, db.CollectionAuditLogs)
-	if collection == nil {
-		respondWithError(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	findOptions := options.Find().
-		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
-		SetLimit(100)
-
-	cursor, err := collection.Find(ctx, bson.M{}, findOptions)
+func (h *AdminMetricsHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := h.repo.ListAuditLogs(100)
 	if err != nil {
-		respondWithError(w, "Failed to fetch audit logs", http.StatusInternalServerError)
+		respondMetricsError(w, err, "Failed to fetch audit logs")
 		return
 	}
-	defer cursor.Close(ctx)
-
-	var logs []models.AuditLog
-	if err = cursor.All(ctx, &logs); err != nil {
-		respondWithError(w, "Failed to decode audit logs", http.StatusInternalServerError)
-		return
-	}
-
-	if logs == nil {
-		logs = []models.AuditLog{}
-	}
-
 	respondWithJSON(w, logs, http.StatusOK)
 }
 
@@ -593,58 +271,16 @@ func GetSystemMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, metricsData, http.StatusOK)
 }
 
-// GetDBMetricsHandler は MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
-func GetDBMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	client := db.Client()
-	if client == nil {
-		respondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
+// GetDBMetrics MongoDBのリアルタイム統計を取得します（接続数、DBサイズ、スロークエリ）
+func (h *AdminMetricsHandler) GetDBMetrics(w http.ResponseWriter, r *http.Request) {
+	metricsData, err := h.repo.DBStats()
+	if err != nil {
+		if errors.Is(err, data.ErrDatabaseUnavailable) {
+			respondWithError(w, "Database client is not initialized", http.StatusInternalServerError)
+			return
+		}
+		respondMetricsError(w, err, "Failed to fetch DB metrics")
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	var metricsData models.DBMetrics
-
-	// 1. Database Size (dbStats)
-	var dbStats bson.M
-	if err := client.Database(db.DatabaseName).RunCommand(ctx, bson.D{{Key: "dbStats", Value: 1}}).Decode(&dbStats); err == nil {
-		if dataSize, ok := dbStats["dataSize"]; ok {
-			sizeBytes := toFloat64(dataSize)
-			// Convert bytes to MB and round to 2 decimal places
-			metricsData.DatabaseSizeMB = math.Round((sizeBytes/(1024*1024))*100) / 100
-		}
-	} else {
-		log.Printf("Failed to get dbStats: %v", err)
-	}
-
-	// 2. Active Connections (serverStatus) - 権限がない場合があるため、失敗時は静かにスキップ
-	var serverStatus bson.M
-	if err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "serverStatus", Value: 1}}).Decode(&serverStatus); err == nil {
-		if conns, ok := serverStatus["connections"].(bson.M); ok {
-			if current, ok := conns["current"]; ok {
-				metricsData.ActiveConnections = toInt64(current)
-			}
-		}
-	} else {
-		log.Printf("Failed to get serverStatus (may require clusterMonitor role): %v", err)
-	}
-
-	// 3. Slow Queries (24H) - RequestLogsコレクションで応答時間200ms以上をカウント（DB負荷を減らすためのApplication Log基盤）
-	reqLogCollection := db.GetCollection(db.DatabaseName, db.CollectionRequestLogs)
-	if reqLogCollection != nil {
-		yesterday := time.Now().UTC().Add(-24 * time.Hour)
-		slowCount, err := reqLogCollection.CountDocuments(ctx, bson.M{
-			"timestamp":     bson.M{"$gte": yesterday},
-			"response_time": bson.M{"$gte": 200},
-		})
-		if err == nil {
-			metricsData.SlowQueries24h = slowCount
-		} else {
-			log.Printf("Failed to count slow queries: %v", err)
-		}
-	}
-
 	respondWithJSON(w, metricsData, http.StatusOK)
 }
-

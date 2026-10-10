@@ -16,7 +16,7 @@ sequenceDiagram
     participant Middleware as MetricsMiddleware
     participant Tracker as "RequestTracker (In-Memory)"
     participant Worker as "Batch Worker (Goroutine)"
-    participant Handler as GetResponseTimeMetricsHandler
+    participant Handler as AdminMetricsHandler.GetResponseTimeMetrics
     participant DB as "MongoDB Atlas (request_logs)"
     actor Admin as 管理者ブラウザ
 
@@ -72,7 +72,8 @@ sequenceDiagram
 | ファイル | 役割 |
 |---|---|
 | `models/response_time.go` | `ResponseTimeMetrics`, `ResponseTimeSummary`, `EndpointLatency` 構造体定義 |
-| `handlers/metrics.go` (追加) | `GetResponseTimeMetricsHandler`, `toFloat64()`, `toInt64()` ヘルパー追加 |
+| `handlers/metrics.go` (追加) | `AdminMetricsHandler.GetResponseTimeMetrics` (期間パラメータの解釈と応答) |
+| `data/admin_metrics_repo.go` (追加) | `ResponseTimeStats` (集計パイプライン)、`toFloat64()` / `toInt64()` ヘルパー |
 | `handlers/router.go` (追加) | `GET /api/admin/metrics/response-time` ルート登録 |
 | `metrics/middleware.go` (修正) | `/api/admin/metrics` パスのログ記録フィルター追加 |
 
