@@ -7,10 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -294,67 +290,6 @@ func (r *MongoStoreRepo) GetOrCreateBoardKey(storeID string) (string, error) {
 	}
 	return newKey, nil
 }
-
-type MinioClient struct {
-	S3Client *s3.Client
-	Bucket   string
-	Endpoint string
-}
-
-// MinIO クライアントを作成して初期化
-func NewMinioClient(endpoint, accessKey, secretKey, bucket string) (*MinioClient, error) {
-	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			URL:           endpoint,
-			SigningRegion: "us-east-1", // MinIO uses a single region
-			PartitionID:   "aws",
-			Source:        aws.EndpointSourceCustom,
-		}, nil
-	})
-
-	creds := credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")
-
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithEndpointResolverWithOptions(resolver),
-		config.WithCredentialsProvider(creds),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load s3 config: %w", err)
-	}
-
-	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = true // MinIO uses path-style requests
-	})
-
-	return &MinioClient{
-		S3Client: s3Client,
-		Bucket:   bucket,
-		Endpoint: endpoint,
-	}, nil
-}
-
-// ファイルを MinIO バケットにアップロード
-// func (c *MinioClient) UploadFile(file multipart.File, header *multipart.FileHeader) (string, error) {
-// 	// ファイル名衝突を回避するため、ユニークなファイル名を生成
-// 	uniqueFileName := uuid.New().String() + filepath.Ext(header.Filename)
-
-// 	_, err := c.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
-// 		Bucket:      aws.String(c.Bucket),
-// 		Key:         aws.String(uniqueFileName),
-// 		Body:        file,
-// 		ContentType: aws.String(header.Header.Get("Content-Type")),
-// 	})
-// 	if err != nil {
-// 		return "", fmt.Errorf("failed to upload file to minio: %w", err)
-// 	}
-
-// 	// ファイルの URL を生成
-// 	// 実際には Endpoint を設定ファイルから読み込む必要がある
-// 	fileURL := fmt.Sprintf("%s/%s/%s", c.Endpoint, c.Bucket, uniqueFileName)
-// 	log.Printf("Successfully uploaded file: %s", fileURL)
-
-// 	return fileURL, nil
-// }
 
 // MongoDB　の 'stores' コレクションのライセンス情報を更新
 func (r *MongoStoreRepo) UpdateStoreLicenseInfo(storeID string, imageURL string) error {

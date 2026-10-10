@@ -10,7 +10,7 @@
 | HTTP 라우터 | `gorilla/mux` |
 | DB | MongoDB Atlas |
 | 인증 | Firebase Auth |
-| 파일 스토리지 | Cloudflare R2 (MinIO 호환 클라이언트) |
+| 파일 스토리지 | Cloudflare R2 (S3 호환 클라이언트, `storage/`) |
 | 배포 | fly.io |
 | Rate Limiting | `tollbooth` (5 req/s per IP, burst 10) |
 | CORS | `rs/cors` |
@@ -58,6 +58,7 @@ yoyaku_mate_server/
 │
 ├── config/              # 환경 변수 로딩
 ├── db/                  # MongoDB 연결 관리
+├── storage/             # 파일 스토리지 (Cloudflare R2, 미설정 시 로컬 저장)
 └── safego/              # panic 보호가 붙은 고루틴 실행
 ```
 

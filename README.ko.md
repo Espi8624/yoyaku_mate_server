@@ -63,6 +63,7 @@ events/     → SSE Broker (in-memory pub/sub) 및 Heartbeat 좀비 연결 제�
 metrics/    → 에러, API 리퀘스트, 응답시간, 활성 사용자, 감사 로그, 시스템 리소스(CPU/Mem/Disk), DB 메트릭스 수집
 auth/       → Firebase 토큰 / 세션 검증, QR용 HMAC 토큰·관리자 세션 토큰 발급/검증
 models/     → Go 구조체 ↔ BSON/JSON
+storage/    → 파일 스토리지 (Cloudflare R2, 미설정 시 로컬 저장)
 safego/     → panic 보호가 붙은 고루틴 실행 (백그라운드 처리는 반드시 여기를 통과)
 ```
 

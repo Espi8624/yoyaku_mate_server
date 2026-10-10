@@ -5,10 +5,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/safego"
+	"yoyaku_mate_server/storage"
 
 	"github.com/gorilla/mux"
 )
@@ -29,9 +29,9 @@ type UploadMenuRepository interface {
 	UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error)
 }
 
-// UploadHandler は Minio クライアントを依存関係として持つ
+// UploadHandler はストレージクライアント(R2)を依存関係として持つ
 type UploadHandler struct {
-	Minio              *data.MinioClient
+	Storage            *storage.Client
 	MenuRepo           UploadMenuRepository
 	UserRepo           UploadUserRepository
 	StoreRepo          UploadStoreRepository
@@ -44,9 +44,9 @@ type UploadHandler struct {
 }
 
 // ハンドラ初期化
-func NewUploadHandler(minio *data.MinioClient, menuRepo UploadMenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
+func NewUploadHandler(storageClient *storage.Client, menuRepo UploadMenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
 	return &UploadHandler{
-		Minio:              minio,
+		Storage:            storageClient,
 		MenuRepo:           menuRepo,
 		UserRepo:           userRepo,
 		StoreRepo:          storeRepo,
@@ -61,7 +61,7 @@ func NewUploadHandler(minio *data.MinioClient, menuRepo UploadMenuRepository, us
 // 営業許可証のアップロードリクエストを処理
 func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
+	if h.Storage == nil {
 		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -93,7 +93,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileKey, err := h.Minio.UploadFile(h.BizBucketName, "", file, header)
+	fileKey, err := h.Storage.UploadFile(h.BizBucketName, "", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
 		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
@@ -123,7 +123,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 
 func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
+	if h.Storage == nil {
 		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -146,9 +146,9 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading file to Minio: %v", err)
+		log.Printf("Error uploading file to storage: %v", err)
 		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
@@ -166,7 +166,7 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 
 func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
+	if h.Storage == nil {
 		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -202,9 +202,9 @@ func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) 
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading user to Minio: %v", err)
+		log.Printf("Error uploading user to storage: %v", err)
 		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
@@ -222,7 +222,7 @@ func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) 
 
 func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
+	if h.Storage == nil {
 		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -244,9 +244,9 @@ func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request)
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading store image to Minio: %v", err)
+		log.Printf("Error uploading store image to storage: %v", err)
 		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}

@@ -10,7 +10,7 @@
 | HTTP ルーター | `gorilla/mux` |
 | DB | MongoDB Atlas |
 | 認証 | Firebase Auth |
-| ファイルストレージ | Cloudflare R2 (MinIO互換クライアント) |
+| ファイルストレージ | Cloudflare R2 (S3互換クライアント、`storage/`) |
 | デプロイ | fly.io |
 | Rate Limiting | `tollbooth` (5 req/s per IP, burst 10) |
 | CORS | `rs/cors` |
@@ -58,6 +58,7 @@ yoyaku_mate_server/
 │
 ├── config/              # 環境変数ローディング
 ├── db/                  # MongoDB接続管理
+├── storage/             # ファイルストレージ (Cloudflare R2、未設定時はローカル保存)
 └── safego/              # panic保護付きゴルーチン起動
 ```
 

@@ -75,7 +75,7 @@ func (h *StoreInfoAdminHandler) UpdateStoreStatusHandler(w http.ResponseWriter, 
 // 仮URLを返却
 func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
+	if h.Storage == nil {
 		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -86,7 +86,7 @@ func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	signedURL, err := h.Minio.GetPresignedURL(h.BizBucketName, imageKey)
+	signedURL, err := h.Storage.GetPresignedURL(h.BizBucketName, imageKey)
 	if err != nil {
 		log.Printf("Error generating presigned URL: %v", err)
 		respondWithError(w, "Could not generate image URL", http.StatusInternalServerError)

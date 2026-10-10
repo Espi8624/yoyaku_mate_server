@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/storage"
 )
 
 // mockUploadStoreRepo UploadStoreRepositoryのテスト用モック実装
@@ -44,7 +44,7 @@ func TestUploadLicense_NotifiesSlackOnSuccess(t *testing.T) {
 
 	storeRepo := &mockUploadStoreRepo{}
 	h := &UploadHandler{
-		Minio:           &data.MinioClient{},
+		Storage:         &storage.Client{},
 		StoreRepo:       storeRepo,
 		BizBucketName:   "test-biz-bucket",
 		SlackWebhookURL: slackServer.URL,
