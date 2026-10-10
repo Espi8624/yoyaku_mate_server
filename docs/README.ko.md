@@ -83,3 +83,4 @@ docs/
 |------|------|
 | [001-di-repository-pattern.ko.md](./refactoring/001-di-repository-pattern.ko.md) | 핸들러 및 미들웨어 의존성 주입(DI) 및 리포지토리 패턴 적용 |
 | [002-metrics-middleware-di.ko.md](./refactoring/002-metrics-middleware-di.ko.md) | MetricsMiddleware 인터페이스 분리(DI) 및 IP 추출 로직 단위 테스트 도입 |
+| [003-package-layout.ko.md](./refactoring/003-package-layout.ko.md) | 패키지 구성 정리: utils 해체, 시프트표 도메인 로직의 `shift/` 분리, 핸들러의 DB 직접 접근을 리포지토리로 집약 |
