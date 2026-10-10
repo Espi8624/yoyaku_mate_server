@@ -72,7 +72,15 @@ type ShiftTableRepository interface {
 
 ---
 
-## 3. 핸들러 계층 (`handlers/shift_table_handler.go`)
+## 3. 핸들러 계층 (`handlers/shift_table_handler.go`)과 도메인 계층 (`shift/`)
+
+핸들러는 인증·권한 확인·리포지토리 호출·응답 생성만 담당하고, HTTP/DB에 의존하지 않는 판정 로직은 `shift` 패키지에 둔다.
+
+| 파일 | 내용 |
+|---|---|
+| `shift/slot.go` | 입력값 검증, 시각 계산, 시프트 목록의 내용 비교 |
+| `shift/autoassign.go` | 자동 배치 (`BuildCandidates` / `AutoAssign` / `ComputeShortages`) |
+| `shift/change_request.go` | 수정 의뢰 일괄 적용 판정 (`ApplyChangeRequests`), 스태프용 가림 처리 |
 
 ### 3.1 권한 모델
 
@@ -90,8 +98,8 @@ type ShiftTableRepository interface {
 
 ### 3.2 입력값 검증
 
-* `isValidWeekStartDate`: `time.Parse("2006-01-02", ...)`로 파싱 후 `Weekday() == time.Monday`를 확인.
-* `validateShiftRequest`: 요일이 `monday`~`sunday` 중 하나인지, `start_time`/`end_time`이 정규식 `^([01]\d|2[0-3]):([0-5]\d)$`에 일치하고 `start_time < end_time`인지 확인(문자열 비교로 판정 가능한 `HH:MM` 형식이기 때문).
+* `shift.IsValidWeekStartDate`: `time.Parse("2006-01-02", ...)`로 파싱 후 `Weekday() == time.Monday`를 확인.
+* `shift.IsValidSlot`: 요일이 `monday`~`sunday` 중 하나인지, `start_time`/`end_time`이 정규식 `^([01]\d|2[0-3]):([0-5]\d)$`에 일치하고 `start_time < end_time`인지 확인(문자열 비교로 판정 가능한 `HH:MM` 형식이기 때문).
 * `validateAndBuildShift`: 위에 더해 `staffRepo.GetStoreStaffByID`로 대상 스태프가 해당 매장 소속이고 `APPROVED` 상태인지 확인한 뒤 `models.Shift`를 구성하는 공통 처리. `AddShiftHandler`/`UpdateShiftHandler` 양쪽에서 호출된다.
 
 ### 3.3 역할에 따른 응답 분기 (`GetShiftTableHandler`)
@@ -101,9 +109,9 @@ type ShiftTableRepository interface {
 * **스태프**: `PublishedAt == nil`(한 번도 확정 안 됨)이면 `404`를 반환해 「아직 작성되지 않음」과 같은 빈 상태로 클라이언트를 유도한다. 확정됐으면 `Shifts = PublishedShifts`로 실어 반환하고 초안은 일절 노출하지 않는다.
 * **매니저**: 초안을 그대로 반환하고 `has_unpublished_changes`를 덧붙인다.
 
-### 3.4 미확정 판정 (`hasUnpublishedChanges` / `shiftsContentEqual`)
+### 3.4 미확정 판정 (`hasUnpublishedChanges` / `shift.ContentEqual`)
 
-`updated_at`과 `published_at`의 시각 비교가 아니라 시프트의 **내용 비교**로 판정한다. 삭제 후 같은 내용을 다시 만들면 `_id`만 바뀌므로, 시각으로 보면 「실질적으로 아무것도 안 바꿨는데 미확정」으로 잘못 표시되기 때문이다. `shiftsContentEqual`은 `staff_id|day|start|end` 키를 양쪽에서 만들어 정렬 후 비교한다(`_id`는 보지 않음).
+`updated_at`과 `published_at`의 시각 비교가 아니라 시프트의 **내용 비교**로 판정한다. 삭제 후 같은 내용을 다시 만들면 `_id`만 바뀌므로, 시각으로 보면 「실질적으로 아무것도 안 바꿨는데 미확정」으로 잘못 표시되기 때문이다. `shift.ContentEqual`은 `staff_id|day|start|end` 키를 양쪽에서 만들어 정렬 후 비교한다(`_id`는 보지 않음).
 
 여기에 더해 `applied` 상태의 수정의뢰가 1건이라도 있으면 `true`를 반환한다. 출고 재요청(superseded)이나 진부화(stale) 의뢰는 시프트표를 바꾸지 않고 상태만 변하므로, 이를 잡지 않으면 확정 버튼이 나오지 않아 `applied`인 채로 계속 남는다.
 
@@ -123,7 +131,7 @@ type ShiftTableRepository interface {
 `pending` → `applied` → `resolved` 3단계. `applied`는 「초안에 반영됐지만 미확정」을 나타내는 중간 상태로, 매니저에게만 보인다.
 
 * `ApplyShiftChangeRequestsHandler`는 반영한 의뢰를 `MarkRequestApplied`로 `applied`로 만든다(이전에는 곧바로 `resolved`로 했다). superseded / stale 정리도 마찬가지로 `applied`에서 멈춘다.
-* `GetShiftChangeRequestsHandler`는 호출자가 매니저가 아니면 `maskAppliedAsPending`으로 `applied`를 `pending`으로 가려 반환한다. 적용만 했는데 「대응 완료」로 보이면, 스태프의 시프트표는 그대로인데 대응이 끝났다고 오해하기 때문이다. 가리는 처리는 복사본에 하며 인자로 받은 슬라이스는 변경하지 않는다.
+* `GetShiftChangeRequestsHandler`는 호출자가 매니저가 아니면 `shift.MaskAppliedAsPending`으로 `applied`를 `pending`으로 가려 반환한다. 적용만 했는데 「대응 완료」로 보이면, 스태프의 시프트표는 그대로인데 대응이 끝났다고 오해하기 때문이다. 가리는 처리는 복사본에 하며 인자로 받은 슬라이스는 변경하지 않는다.
 
 ### 3.7 시프트표 미생성 시 처리
 

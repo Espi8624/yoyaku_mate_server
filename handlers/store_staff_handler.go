@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/shift"
 
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -36,7 +37,7 @@ func validateAvailability(a models.Availability) bool {
 			if r.AllDay {
 				continue
 			}
-			if !timeFormatPattern.MatchString(r.StartTime) || !timeFormatPattern.MatchString(r.EndTime) {
+			if !shift.IsValidTime(r.StartTime) || !shift.IsValidTime(r.EndTime) {
 				return false
 			}
 			if r.StartTime >= r.EndTime {

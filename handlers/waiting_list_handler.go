@@ -15,6 +15,7 @@ import (
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
 	"yoyaku_mate_server/safego"
+	"yoyaku_mate_server/shift"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -415,14 +416,14 @@ func redactItemForPublic(item models.WaitingList) models.WaitingList {
 }
 
 // isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
-// - 定休日(closed_days.regular_weekly、shift_table_handler.goのisClosedDayと共通ロジック)なら false
+// - 定休日(closed_days.regular_weekly、shift.IsClosedDay を共用)なら false
 // - 24時間営業なら true
 // - 当日の営業時間データが無い/不正な場合は、既存店舗の設定不備で誤って受付停止にしないよう true (制限しない)
 // - 閉店時刻が開始時刻以下の場合は日をまたぐ営業(例: 18:00〜翌2:00)とみなして判定する
 func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
 	weekday := strings.ToLower(now.Weekday().String())
 
-	if isClosedDay(weekday, settings.ClosedDays) {
+	if shift.IsClosedDay(weekday, settings.ClosedDays) {
 		return false
 	}
 
@@ -435,8 +436,8 @@ func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
 		return true
 	}
 
-	startMin, okStart := parseTimeToMinutes(hours.Start)
-	endMin, okEnd := parseTimeToMinutes(hours.End)
+	startMin, okStart := shift.ParseTimeToMinutes(hours.Start)
+	endMin, okEnd := shift.ParseTimeToMinutes(hours.End)
 	if !okStart || !okEnd {
 		return true
 	}

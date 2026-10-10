@@ -72,7 +72,15 @@ type ShiftTableRepository interface {
 
 ---
 
-## 3. ハンドラー層 (`handlers/shift_table_handler.go`)
+## 3. ハンドラー層 (`handlers/shift_table_handler.go`) とドメイン層 (`shift/`)
+
+ハンドラーは認証・権限確認・リポジトリ呼び出し・レスポンス生成だけを担い、HTTP/DBに依存しない判定ロジックは `shift` パッケージに置く。
+
+| ファイル | 内容 |
+|---|---|
+| `shift/slot.go` | 入力値検証、時刻計算、シフト一覧の内容比較 |
+| `shift/autoassign.go` | 自動配置 (`BuildCandidates` / `AutoAssign` / `ComputeShortages`) |
+| `shift/change_request.go` | 修正依頼の一括適用判定 (`ApplyChangeRequests`)、スタッフ向けの伏せ字化 |
 
 ### 3.1 権限モデル
 
@@ -90,8 +98,8 @@ type ShiftTableRepository interface {
 
 ### 3.2 入力値検証
 
-* `isValidWeekStartDate`: `time.Parse("2006-01-02", ...)` でパース後、`Weekday() == time.Monday` を確認。
-* `validateShiftRequest`: 曜日が `monday`〜`sunday` のいずれかであること、`start_time`/`end_time` が正規表現 `^([01]\d|2[0-3]):([0-5]\d)$` に一致し `start_time < end_time` であることを確認(文字列比較で判定可能な `HH:MM` 形式のため)。
+* `shift.IsValidWeekStartDate`: `time.Parse("2006-01-02", ...)` でパース後、`Weekday() == time.Monday` を確認。
+* `shift.IsValidSlot`: 曜日が `monday`〜`sunday` のいずれかであること、`start_time`/`end_time` が正規表現 `^([01]\d|2[0-3]):([0-5]\d)$` に一致し `start_time < end_time` であることを確認(文字列比較で判定可能な `HH:MM` 形式のため)。
 * `validateAndBuildShift`: 上記に加え、`staffRepo.GetStoreStaffByID` で対象スタッフが当該店舗に所属し `APPROVED` 状態であることを確認してから `models.Shift` を構築する共通処理。`AddShiftHandler`/`UpdateShiftHandler` の両方から呼ばれる。
 
 ### 3.3 役割による応答の出し分け (`GetShiftTableHandler`)
@@ -101,9 +109,9 @@ type ShiftTableRepository interface {
 * **スタッフ**: `PublishedAt == nil` (一度も確定していない) なら `404` を返し、「まだ作成されていない」と同じ空状態にクライアントを寄せる。確定済みなら `Shifts = PublishedShifts` に載せ替えて返し、下書きは一切漏らさない。
 * **マネージャー**: 下書きをそのまま返し、`hasUnpublishedChanges` を添える。
 
-### 3.4 未確定判定 (`hasUnpublishedChanges` / `shiftsContentEqual`)
+### 3.4 未確定判定 (`hasUnpublishedChanges` / `shift.ContentEqual`)
 
-`updated_at` と `published_at` の時刻比較ではなく、シフトの**内容比較**で判定する。削除して同じ内容を作り直すと `_id` だけが変わるため、時刻で見ると「実質何も変えていないのに未確定」と誤表示されるため。`shiftsContentEqual` は `staff_id|day|start|end` のキーを両者で作ってソートし比較する(`_id` は見ない)。
+`updated_at` と `published_at` の時刻比較ではなく、シフトの**内容比較**で判定する。削除して同じ内容を作り直すと `_id` だけが変わるため、時刻で見ると「実質何も変えていないのに未確定」と誤表示されるため。`shift.ContentEqual` は `staff_id|day|start|end` のキーを両者で作ってソートし比較する(`_id` は見ない)。
 
 加えて `applied` な修正依頼が1件でもあれば `true` を返す。出し直し(superseded)や陳腐化(stale)の依頼はシフト表を変えずにステータスだけが変わるため、これを拾わないと確定ボタンが出ず `applied` のまま残り続ける。
 
@@ -123,7 +131,7 @@ type ShiftTableRepository interface {
 `pending` → `applied` → `resolved` の3状態。`applied` は「下書きへ反映済みだが未確定」を表す中間状態で、マネージャーにしか見えない。
 
 * `ApplyShiftChangeRequestsHandler` は反映できた依頼を `MarkRequestApplied` で `applied` にする(以前は直接 `resolved` にしていた)。superseded / stale の片付けも同様に `applied` 止まりにする。
-* `GetShiftChangeRequestsHandler` は、呼び出し元がマネージャーでなければ `maskAppliedAsPending` で `applied` を `pending` に伏せて返す。適用しただけで「対応済み」と見せると、スタッフのシフト表は変わっていないのに対応が完了したと誤解されるため。伏せる処理はコピーに対して行い、引数のスライスは書き換えない。
+* `GetShiftChangeRequestsHandler` は、呼び出し元がマネージャーでなければ `shift.MaskAppliedAsPending` で `applied` を `pending` に伏せて返す。適用しただけで「対応済み」と見せると、スタッフのシフト表は変わっていないのに対応が完了したと誤解されるため。伏せる処理はコピーに対して行い、引数のスライスは書き換えない。
 
 ### 3.7 シフト表未作成時のハンドリング
 

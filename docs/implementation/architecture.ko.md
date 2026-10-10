@@ -58,6 +58,7 @@ yoyaku_mate_server/
 │
 ├── config/              # 환경 변수 로딩
 ├── db/                  # MongoDB 연결 관리
+├── shift/               # 시프트표 도메인 로직 (검증·자동 배치·수정 의뢰 적용 판정)
 ├── storage/             # 파일 스토리지 (Cloudflare R2, 미설정 시 로컬 저장)
 └── safego/              # panic 보호가 붙은 고루틴 실행
 ```

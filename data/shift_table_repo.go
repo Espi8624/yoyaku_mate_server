@@ -7,6 +7,7 @@ import (
 	"time"
 	"yoyaku_mate_server/db"
 	"yoyaku_mate_server/models"
+	"yoyaku_mate_server/shift"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -280,7 +281,7 @@ func (r *MongoShiftTableRepo) GetStaffPairCounts(storeID, beforeWeekStartDate st
 						continue
 					}
 					if shiftTimesOverlap(shifts[i], shifts[j]) {
-						counts[pairKey(shifts[i].StaffID, shifts[j].StaffID)]++
+						counts[shift.PairKey(shifts[i].StaffID, shifts[j].StaffID)]++
 					}
 				}
 			}
@@ -308,18 +309,6 @@ func parseHHMM(t string) (int, bool) {
 		return 0, false
 	}
 	return h*60 + m, true
-}
-
-// pairKey 2人分のIDから、順序に依存しない一意なマップキーを作る("aHex|bHex"、必ず
-// 小さい方が先)。handlers側(shift_table_handler.go)にも全く同じフォーマットの
-// pairKeyがあり、シフト実績からの初期値(このファイル)と自動配置実行中の累積値
-// (handlers側)でキーが一致する必要があるため、フォーマットを変更する際は両方合わせること
-func pairKey(a, b primitive.ObjectID) string {
-	aHex, bHex := a.Hex(), b.Hex()
-	if aHex > bHex {
-		aHex, bHex = bHex, aHex
-	}
-	return aHex + "|" + bHex
 }
 
 // DeleteShift は、シフト表内の特定シフト1件を削除

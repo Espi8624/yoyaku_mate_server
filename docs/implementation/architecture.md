@@ -58,6 +58,7 @@ yoyaku_mate_server/
 │
 ├── config/              # 環境変数ローディング
 ├── db/                  # MongoDB接続管理
+├── shift/               # シフト表のドメインロジック (検証・自動配置・修正依頼の適用判定)
 ├── storage/             # ファイルストレージ (Cloudflare R2、未設定時はローカル保存)
 └── safego/              # panic保護付きゴルーチン起動
 ```
