@@ -34,7 +34,10 @@ func RegisterRoutes(
 
 	// - 外部の死活監視サービス(UptimeRobot等)がpingするための無認証ヘルスチェック。
 	//   /api配下ではなくルート直下に置き、業務APIと明確に区別する
-	r.HandleFunc("/health", HealthHandler).Methods("GET")
+	// - UptimeRobot は既定で HEAD で問い合わせるため HEAD も許可する。GETのみだと405になり、
+	//   監視の度にエラーとして記録されてエラー率アラートが鳴り続ける
+	//   (HEAD の応答ボディは net/http が自動で捨てるため、ハンドラ側の対応は不要)
+	r.HandleFunc("/health", HealthHandler).Methods("GET", "HEAD")
 
 	// API endpoints
 	api := r.PathPrefix("/api").Subrouter()
