@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"github.com/gorilla/mux"
 )
@@ -37,7 +36,7 @@ func (h *StoreInfoAdminHandler) GetStoresHandler(w http.ResponseWriter, r *http.
 
 	stores, err := h.repo.GetStoresByStatus(status)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to retrieve stores", http.StatusInternalServerError)
+		respondWithError(w, "Failed to retrieve stores", http.StatusInternalServerError)
 		return
 	}
 
@@ -45,7 +44,7 @@ func (h *StoreInfoAdminHandler) GetStoresHandler(w http.ResponseWriter, r *http.
 		stores = []models.StoreWithLicense{}
 	}
 
-	utils.RespondWithJSON(w, stores, http.StatusOK)
+	respondWithJSON(w, stores, http.StatusOK)
 }
 
 func (h *StoreInfoAdminHandler) UpdateStoreStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +53,7 @@ func (h *StoreInfoAdminHandler) UpdateStoreStatusHandler(w http.ResponseWriter, 
 
 	var payload updateStatusPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -63,37 +62,37 @@ func (h *StoreInfoAdminHandler) UpdateStoreStatusHandler(w http.ResponseWriter, 
 	err := h.repo.UpdateLicenseStatus(storeId, payload.Status, payload.Comment)
 	if err != nil {
 		metrics.SetAuditContext(r, action, fmt.Sprintf("Store ID: %s", storeId), payload.Comment)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// - 監査イベントコンテキストの注入
 	metrics.SetAuditContext(r, action, fmt.Sprintf("Store ID: %s", storeId), payload.Comment)
 
-	utils.RespondWithJSON(w, map[string]string{"message": "Store status updated successfully"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"message": "Store status updated successfully"}, http.StatusOK)
 }
 
 // 仮URLを返却
 func (h *UploadHandler) GetLicenseImageURLHandler(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+	if h.Storage == nil {
+		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	imageKey := r.URL.Query().Get("key")
 	if imageKey == "" {
-		utils.RespondWithError(w, "Image key is required", http.StatusBadRequest)
+		respondWithError(w, "Image key is required", http.StatusBadRequest)
 		return
 	}
 
-	signedURL, err := h.Minio.GetPresignedURL(h.BizBucketName, imageKey)
+	signedURL, err := h.Storage.GetPresignedURL(h.BizBucketName, imageKey)
 	if err != nil {
 		log.Printf("Error generating presigned URL: %v", err)
-		utils.RespondWithError(w, "Could not generate image URL", http.StatusInternalServerError)
+		respondWithError(w, "Could not generate image URL", http.StatusInternalServerError)
 		return
 	}
 
 	response := map[string]string{"url": signedURL}
-	utils.RespondWithJSON(w, response, http.StatusOK)
+	respondWithJSON(w, response, http.StatusOK)
 }

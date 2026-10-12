@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -34,12 +33,12 @@ func NewStoreSettingsHandler(storeRepo StoreSettingsRepository, userRepo UserRep
 func (h *StoreSettingsHandler) GetStoreSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 	settings, err := h.storeRepo.GetSettings(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Store settings not found", http.StatusNotFound)
+		respondWithError(w, "Store settings not found", http.StatusNotFound)
 		return
 	}
 
@@ -50,7 +49,7 @@ func (h *StoreSettingsHandler) GetStoreSettingsHandler(w http.ResponseWriter, r 
 		}
 	}
 
-	utils.RespondWithJSON(w, settings, http.StatusOK)
+	respondWithJSON(w, settings, http.StatusOK)
 }
 
 // UpdateStoreSettingsHandler 店舗設定の更新 (PUT) - 認証が必要なエンドポイント
@@ -60,40 +59,40 @@ func (h *StoreSettingsHandler) GetStoreSettingsHandler(w http.ResponseWriter, r 
 func (h *StoreSettingsHandler) UpdateStoreSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	// - ミドルウェアで格納された認証済みユーザーを取得
 	authUser, ok := GetUserFromContext(r.Context())
 	if !ok {
-		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	// - 権限チェック: マネージャーまたは承認済みスタッフのみ更新可能
 	hasPermission, err := h.userRepo.CheckStorePermission(authUser.ID, storeID, authUser.Role, "")
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasPermission {
-		utils.RespondWithError(w, "この店舗の設定を変更する権限がありません。", http.StatusForbidden)
+		respondWithError(w, "この店舗の設定を変更する権限がありません。", http.StatusForbidden)
 		return
 	}
 
 	var reqBody map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.storeRepo.UpsertStoreSettings(storeID, reqBody); err != nil {
-		utils.RespondWithError(w, "Failed to update store settings", http.StatusInternalServerError)
+		respondWithError(w, "Failed to update store settings", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
+	respondWithJSON(w, map[string]bool{"success": true}, http.StatusOK)
 }
 
 // GetBoardKeyHandler board_keyの取得(未設定なら生成) - 認証必須、当該店舗の権限チェックあり
@@ -101,33 +100,33 @@ func (h *StoreSettingsHandler) UpdateStoreSettingsHandler(w http.ResponseWriter,
 func (h *StoreSettingsHandler) GetBoardKeyHandler(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	// - ミドルウェアで格納された認証済みユーザーを取得
 	authUser, ok := GetUserFromContext(r.Context())
 	if !ok {
-		utils.RespondWithError(w, "Unauthorized", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	// - 権限チェック: マネージャーまたは承認済みスタッフのみ取得可能
 	hasPermission, err := h.userRepo.CheckStorePermission(authUser.ID, storeID, authUser.Role, "")
 	if err != nil {
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasPermission {
-		utils.RespondWithError(w, "この店舗の設定を取得する権限がありません。", http.StatusForbidden)
+		respondWithError(w, "この店舗の設定を取得する権限がありません。", http.StatusForbidden)
 		return
 	}
 
 	boardKey, err := h.storeRepo.GetOrCreateBoardKey(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to get board key", http.StatusInternalServerError)
+		respondWithError(w, "Failed to get board key", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"board_key": boardKey}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"board_key": boardKey}, http.StatusOK)
 }

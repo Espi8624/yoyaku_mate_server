@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"yoyaku_mate_server/utils"
+	"yoyaku_mate_server/safego"
 )
 
 // WaitingUserBroker は、個別待機顧客のSSEクライアントを管理し、メッセージをブロードキャストします
@@ -42,7 +42,7 @@ func GetWaitingUserBroker() *WaitingUserBroker {
 			Clients:     make(map[string]map[chan string]bool),
 			connectedAt: make(map[chan string]time.Time),
 		}
-		utils.GoForever("sse_user_broker_heartbeat", waitingUserBrokerInstance.startHeartbeat)
+		safego.GoForever("sse_user_broker_heartbeat", waitingUserBrokerInstance.startHeartbeat)
 	})
 	return waitingUserBrokerInstance
 }

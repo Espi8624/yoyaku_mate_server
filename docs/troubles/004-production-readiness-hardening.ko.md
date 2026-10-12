@@ -2,7 +2,7 @@
 
 > 작성일: 2026-09-18
 > 상태: 코드 측은 해결됨 (Resolved) / 자격증명 로테이션은 미실시
-> 관련 파일: [`db/mongo.go`](../../db/mongo.go), [`utils/safego.go`](../../utils/safego.go), [`handlers/waiting_list_handler.go`](../../handlers/waiting_list_handler.go), [`main.go`](../../main.go)
+> 관련 파일: [`db/mongo.go`](../../db/mongo.go), [`safego/safego.go`](../../safego/safego.go), [`handlers/waiting_list_handler.go`](../../handlers/waiting_list_handler.go), [`main.go`](../../main.go)
 
 ---
 
@@ -92,7 +92,7 @@ func (h *WaitingListHandler) HandleStream(...) {   // ← 여기는 recover됨
 
 ### 해결책
 
-`utils.Go` / `utils.GoForever`를 추가하고 모든 기동 지점을 여기에 통과시켰다.
+`safego.Go` / `safego.GoForever`를 추가하고 모든 기동 지점을 여기에 통과시켰다.
 
 **`GoForever`가 단순 recover가 아니라 "재개"하는 이유**가 중요하다.
 recover하고 종료만 하면 워커가 조용히 멈춘 채 프로세스는 계속 살아 있다.

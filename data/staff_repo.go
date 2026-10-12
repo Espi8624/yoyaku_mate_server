@@ -13,17 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type StaffRepository interface {
-	CheckStoreStaffExists(userID primitive.ObjectID, storeID string) (bool, error)
-	CreateStoreStaffInfo(staffInfo models.StoreStaffInfo) error
-	GetStoreStaffByStoreID(storeID string) ([]map[string]interface{}, error)
-	GetStoreStaffByUserAndStore(userID primitive.ObjectID, storeID string) (*models.StoreStaffInfo, error)
-	GetStoreStaffByID(staffID string) (*models.StoreStaffInfo, error)
-	UpdateStoreStaffStatus(staffID, status string) error
-	UpdateStoreStaffPermissions(staffID string, permissions []string) error
-	UpdateStoreStaffAvailability(staffID string, availability models.Availability) error
-}
-
 type MongoStaffRepo struct{}
 
 // decodeStoreStaffInfoWithRepair は FindOne の結果を models.StoreStaffInfo にデコードする。

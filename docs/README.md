@@ -84,3 +84,4 @@ docs/
 |------|------|
 | [001-di-repository-pattern.md](./refactoring/001-di-repository-pattern.md) | ハンドラーおよびミドルウェアの依存性注入(DI)・リポジトリパターンの適用 |
 | [002-metrics-middleware-di.md](./refactoring/002-metrics-middleware-di.md) | MetricsMiddlewareのインターフェース分離(DI)およびIP抽出ロジックの単体テスト導入 |
+| [003-package-layout.md](./refactoring/003-package-layout.md) | パッケージ構成の整理: utils解体、シフト表ドメインロジックの `shift/` 切り出し、ハンドラのDB直接アクセスをリポジトリへ集約 |

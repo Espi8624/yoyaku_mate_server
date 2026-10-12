@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"yoyaku_mate_server/data"
-	"yoyaku_mate_server/utils"
 )
 
 // StoreListRepository ユーザーの店舗リスト取得を抽象化するインターフェース
@@ -30,28 +29,28 @@ func (h *StoreListHandler) GetMyStoresHandler(w http.ResponseWriter, r *http.Req
 	// Authorizationヘッダーからトークンを抽出
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
 	if idToken == authHeader { // "Bearer "が含まれていない場合
-		utils.RespondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
+		respondWithError(w, "Invalid Authorization header format", http.StatusUnauthorized)
 		return
 	}
 
 	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
 	stores, err := h.storeRepo.GetStoresByFirebaseUID(firebaseUID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to retrieve stores", http.StatusInternalServerError)
+		respondWithError(w, "Failed to retrieve stores", http.StatusInternalServerError)
 		return
 	}
 
 	// データ形式: {"data": [...]}
-	utils.RespondWithJSON(w, map[string]interface{}{"data": stores}, http.StatusOK)
+	respondWithJSON(w, map[string]interface{}{"data": stores}, http.StatusOK)
 }

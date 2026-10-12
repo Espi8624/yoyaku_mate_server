@@ -14,18 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// MenuRepository メニューのCRUD操作を抽象化するインターフェース
-type MenuRepository interface {
-	GetMenuListData(storeID string) ([]models.MenuList, error)
-	InsertMenuListData(storeID string, menuData []map[string]interface{}) ([]models.MenuList, error)
-	UpdateSingleMenu(menuData map[string]interface{}) (*models.MenuList, error)
-	DeleteSingleMenu(menuID string) error
-	BulkUpdateMenuCategory(storeID, oldCategory, newCategory string, categoryTranslations map[string]string) (int64, error)
-	BulkDeleteMenuCategory(storeID, category string) (int64, error)
-	BulkDeleteAllMenus(storeID string) (int64, error)
-	UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error)
-}
-
 // MongoMenuRepo メニューリストのMongoDBリポジトリ実装
 type MongoMenuRepo struct{}
 

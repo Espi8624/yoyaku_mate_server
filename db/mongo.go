@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 	"yoyaku_mate_server/config"
-	"yoyaku_mate_server/utils"
+	"yoyaku_mate_server/safego"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -144,7 +144,7 @@ func connectOnce(attempts int) error {
 		// - インデックス作成はリクエスト処理をブロックしないようバックグラウンドで実行
 		//   (Fly.ioのコールドスタート時、起動からリスニング開始までの時間を最短化するため。
 		//    以前は同期実行しており、10個超のインデックスを順次作成する間ProxyがTimeoutしていた)
-		utils.Go("mongo_ensure_indexes", func() {
+		safego.Go("mongo_ensure_indexes", func() {
 			if err := EnsureIndexes(); err != nil {
 				log.Printf("Failed to create indexes: %v", err)
 				// Index creation failure should not stop server startup, but warn loudly
@@ -168,7 +168,7 @@ func connectOnce(attempts int) error {
 //   - 接続確立後の一時的な切断はドライバ自身がトポロジを監視して復旧するため、
 //     ここでは扱わない。このワーカーが面倒を見るのは「一度も繋がっていない」状態だけ
 func StartReconnectWatcher() {
-	utils.GoForever("mongo_reconnect_watcher", func() {
+	safego.GoForever("mongo_reconnect_watcher", func() {
 		for {
 			if IsReady() {
 				return

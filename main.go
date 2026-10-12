@@ -17,6 +17,7 @@ import (
 	"yoyaku_mate_server/events"
 	handlers "yoyaku_mate_server/handlers"
 	"yoyaku_mate_server/metrics"
+	"yoyaku_mate_server/storage"
 
 	"github.com/didip/tollbooth/v7"
 	"github.com/gorilla/mux"
@@ -47,27 +48,15 @@ func main() {
 	//   (SLACK_WEBHOOK_URL未設定時は内部で無効化される)
 	metrics.StartAlertWorker(cfg.SlackWebhookURL)
 
-	// MinIO クライアント初期化
-	// minioClient, err := data.NewMinioClient(
-	// 	"http://localhost:9000",
-	// 	"minioadmin",
-	// 	"minioadmin",
-	// 	"yoyaku-mate-biz", // MinIO バケット名
-	// )
-	// if err != nil {
-	// 	log.Fatalf("Could not initialize Minio client: %v", err)
-	// }
-	// uploadHandler := handlers.NewUploadHandler(minioClient)
-
-	var storageClient *data.MinioClient
+	var storageClient *storage.Client
 	if cfg.R2.AccountID == "" {
 		// R2_ACCOUNT_IDが設定されていない場合、ローカルストレージを使用するため空のインスタンスを生成
 		log.Println("Warning: R2_ACCOUNT_ID is not set. Using local file storage.")
-		storageClient = &data.MinioClient{}
+		storageClient = &storage.Client{}
 	} else {
 		r2Endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2.AccountID)
 		var r2Err error
-		storageClient, r2Err = data.NewMinioClient(
+		storageClient, r2Err = storage.NewClient(
 			r2Endpoint,
 			cfg.R2.AccessKey,
 			cfg.R2.SecretKey,
@@ -133,7 +122,10 @@ func main() {
 	storeAiContextHandler := handlers.NewStoreAIContextHandler(storeRepo, &data.MongoWaitingListRepo{}, menuRepo)
 	adminHandler := handlers.NewStoreInfoAdminHandler(storeRepo)
 	storeLicenseCallHandler := handlers.NewStoreLicenseCallHandler(storeRepo)
-	statisticsHandler := handlers.NewStatisticsHandler(userRepo, storeRepo)
+	waitingListRepo := &data.MongoWaitingListRepo{}
+	statisticsHandler := handlers.NewStatisticsHandler(userRepo, storeRepo, waitingListRepo)
+	signUpHandler := handlers.NewSignUpHandler(&data.MongoSignUpRepo{})
+	adminMetricsHandler := handlers.NewAdminMetricsHandler(&data.MongoAdminMetricsRepo{})
 
 	// Register routes
 	handlers.RegisterRoutes(
@@ -154,6 +146,8 @@ func main() {
 		adminHandler,
 		storeLicenseCallHandler,
 		statisticsHandler,
+		signUpHandler,
+		adminMetricsHandler,
 	)
 
 	// Configure CORS

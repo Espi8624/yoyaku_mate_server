@@ -137,14 +137,14 @@ IDの再生成とINSERTだけを行う。
 
 ```go
 // 形式: YYYYMMDD-HHMMSS-xxxxxx (JST、末尾はcrypto/randベースの6文字)
-suffix := utils.GenerateRandomString(6)
+suffix := auth.GenerateRandomString(6)
 return time.Now().In(jst).Format("20060102-150405") + "-" + suffix, nil
 ```
 
 以前は `YYYYMMDD-HHMMSS-mmm` とミリ秒までの時刻のみで、**同一ミリ秒に登録が重なると衝突した**。
 ユニークインデックスを張った以上、衝突は静かな二重登録ではなく登録の失敗として表に出る。
 
-`utils.GenerateRandomString` はcrypto/randの失敗時に空文字を返すため、そこでエラーにしている。
+`auth.GenerateRandomString` はcrypto/randの失敗時に空文字を返すため、そこでエラーにしている。
 気づかずに進むと接尾辞なしのIDが量産され、衝突が復活する。
 
 > **フォールバックIDは冪等性を保証しない。** 再送のたびに別のIDになるため、

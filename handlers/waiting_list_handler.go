@@ -11,9 +11,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"yoyaku_mate_server/auth"
 	"yoyaku_mate_server/events"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
+	"yoyaku_mate_server/safego"
+	"yoyaku_mate_server/shift"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -134,14 +136,14 @@ func (h *WaitingListHandler) Handle(w http.ResponseWriter, r *http.Request) {
 func (h *WaitingListHandler) HandlePolling(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 	if err != nil {
 		log.Printf("Error fetching waiting list data: %v", err)
-		utils.RespondWithError(w, "Internal server error", http.StatusInternalServerError)
+		respondWithError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -149,7 +151,7 @@ func (h *WaitingListHandler) HandlePolling(w http.ResponseWriter, r *http.Reques
 		waitingList = redactForPublic(waitingList)
 	}
 
-	utils.RespondWithJSON(w, waitingList, http.StatusOK)
+	respondWithJSON(w, waitingList, http.StatusOK)
 }
 
 // HandleStream リアルタイム待機リスト更新のためのServer-Sent Eventsを処理
@@ -182,7 +184,7 @@ func (h *WaitingListHandler) HandleStream(w http.ResponseWriter, r *http.Request
 	// - 送り先はこの接続だけ (SendTo)。以前はBroadcastしており、客が1人接続するたびに
 	//   同じ店舗の全接続へ全件が再送されていた。接続数に比例して転送量が増えるため、
 	//   混むほど遅くなる構造になっていた
-	utils.Go("sse_stream_initial_data", func() {
+	safego.Go("sse_stream_initial_data", func() {
 		waitingList, err := h.waitingRepo.GetWaitingList(storeID)
 		if err == nil {
 			jsonData, _ := json.Marshal(waitingList)
@@ -251,14 +253,14 @@ func (h *WaitingListHandler) filterStreamMessage(msg string, isStaff bool) strin
 //   転送量が増え、他の客のnotesやmenu_itemsまで配信されていた
 func (h *WaitingListHandler) HandleWaitingUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	storeID := r.URL.Query().Get("store_id")
 	waitingID := r.URL.Query().Get("waiting_id")
 	if storeID == "" || waitingID == "" {
-		utils.RespondWithError(w, "Missing store_id or waiting_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id or waiting_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -268,15 +270,15 @@ func (h *WaitingListHandler) HandleWaitingUser(w http.ResponseWriter, r *http.Re
 		//   「登録が存在しない」と解釈してキャンセル画面へ遷移するため、
 		//   一時的な障害を404にしてしまうと誤って登録を失わせることになる
 		if errors.Is(err, errWaitingItemNotFound) {
-			utils.RespondWithError(w, "Waiting item not found", http.StatusNotFound)
+			respondWithError(w, "Waiting item not found", http.StatusNotFound)
 			return
 		}
 		log.Printf("Failed to build waiting user response: %v", err)
-		utils.RespondWithError(w, "Failed to fetch waiting item", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch waiting item", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, res, http.StatusOK)
+	respondWithJSON(w, res, http.StatusOK)
 }
 
 func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +307,7 @@ func (h *WaitingListHandler) HandleWaitingItemStream(w http.ResponseWriter, r *h
 	// - 接続時に初期データを送信 (HandleStreamと同じくpanic保護が必要)
 	// - 送り先はこの接続だけ。こちらのキーは (店舗ID:待機ID) なので通常は1接続だが、
 	//   客が複数タブを開いていると全タブに再送されることになる
-	utils.Go("sse_user_stream_initial_data", func() {
+	safego.Go("sse_user_stream_initial_data", func() {
 		res, err := h.getWaitingUserResponse(storeID, waitingID)
 		if err == nil {
 			jsonData, _ := json.Marshal(res)
@@ -356,7 +358,7 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 	waitingListData, err := h.waitingRepo.GetWaitingList(storeID)
 	if err != nil {
 		log.Printf("Failed to fetch waiting list: %v", err)
-		utils.RespondWithError(w, "Failed to fetch waiting list", http.StatusInternalServerError)
+		respondWithError(w, "Failed to fetch waiting list", http.StatusInternalServerError)
 		return
 	}
 
@@ -367,7 +369,7 @@ func (h *WaitingListHandler) handleGetWaitingList(w http.ResponseWriter, r *http
 		waitingListData = redactForPublic(waitingListData)
 	}
 
-	utils.RespondWithJSON(w, waitingListData, http.StatusOK)
+	respondWithJSON(w, waitingListData, http.StatusOK)
 }
 
 // hasActiveStaffSession X-Session-Idヘッダーの有効セッション有無でスタッフ由来かを簡易判定する
@@ -414,14 +416,14 @@ func redactItemForPublic(item models.WaitingList) models.WaitingList {
 }
 
 // isStoreOpenNow 現在時刻が指定店舗の営業時間内かどうかを判定する。
-// - 定休日(closed_days.regular_weekly、shift_table_handler.goのisClosedDayと共通ロジック)なら false
+// - 定休日(closed_days.regular_weekly、shift.IsClosedDay を共用)なら false
 // - 24時間営業なら true
 // - 当日の営業時間データが無い/不正な場合は、既存店舗の設定不備で誤って受付停止にしないよう true (制限しない)
 // - 閉店時刻が開始時刻以下の場合は日をまたぐ営業(例: 18:00〜翌2:00)とみなして判定する
 func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
 	weekday := strings.ToLower(now.Weekday().String())
 
-	if isClosedDay(weekday, settings.ClosedDays) {
+	if shift.IsClosedDay(weekday, settings.ClosedDays) {
 		return false
 	}
 
@@ -434,8 +436,8 @@ func isStoreOpenNow(settings *models.Settings, now time.Time) bool {
 		return true
 	}
 
-	startMin, okStart := parseTimeToMinutes(hours.Start)
-	endMin, okEnd := parseTimeToMinutes(hours.End)
+	startMin, okStart := shift.ParseTimeToMinutes(hours.Start)
+	endMin, okEnd := shift.ParseTimeToMinutes(hours.End)
 	if !okStart || !okEnd {
 		return true
 	}
@@ -478,7 +480,7 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 	newWaiting.Source = "web"
 
 	// - HMACトークンの検証
-	if !utils.VerifyHMACDateToken(newWaiting.StoreID, dateStr, vToken) {
+	if !auth.VerifyHMACDateToken(newWaiting.StoreID, dateStr, vToken) {
 		log.Printf("Invalid v_token for store %s: %s (Expected for %s)", newWaiting.StoreID, vToken, dateStr)
 		http.Error(w, "QRコードが正しくないか、期限切れです。再度スキャンして下さい。", http.StatusForbidden)
 		return
@@ -546,7 +548,7 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		idToken := authHeader[len("Bearer "):]
 		firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 		if err != nil {
-			utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+			respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
@@ -554,7 +556,7 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 		if err != nil || user == nil {
 			log.Printf("Failed to get user by Firebase UID: %v", err)
-			utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+			respondWithError(w, "User not found", http.StatusUnauthorized)
 			return
 		}
 
@@ -567,12 +569,12 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 		hasPermission, err := h.userRepo.CheckStorePermission(user.ID, newWaiting.StoreID, user.Role, "")
 		if err != nil {
 			log.Printf("Failed to check user permission: %v", err)
-			utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+			respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 			return
 		}
 		if !hasPermission {
 			log.Printf("User %s does not have permission for store %s", user.ID.Hex(), newWaiting.StoreID)
-			utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。スタッフとして承認されていることを確認してください。", http.StatusForbidden)
+			respondWithError(w, "この店舗の待機リストを管理する権限がありません。スタッフとして承認されていることを確認してください。", http.StatusForbidden)
 			return
 		}
 		// - スタッフ/マネージャーによるAppからの登録
@@ -623,11 +625,11 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 	if newWaiting.Source == "web" {
 		responseItem = redactItemForPublic(responseItem)
 	}
-	utils.RespondWithJSON(w, responseItem, http.StatusCreated)
+	respondWithJSON(w, responseItem, http.StatusCreated)
 
 	// - DBの一貫性確保のため少し待機してから通知
 	storeIDForNotify := newWaiting.StoreID
-	utils.Go("waiting_create_notify", func() {
+	safego.Go("waiting_create_notify", func() {
 		time.Sleep(100 * time.Millisecond)
 		h.notifyStore(storeIDForNotify)
 	})
@@ -636,27 +638,27 @@ func (h *WaitingListHandler) handleCreateWaitingList(w http.ResponseWriter, r *h
 // handleClearWaitingList 待機リストをクリアするリクエストを処理
 func (h *WaitingListHandler) handleClearWaitingList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		respondWithError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// - Firebase認証チェック
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+		respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 		return
 	}
 
 	idToken := authHeader[len("Bearer "):]
 	firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+		respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -664,7 +666,7 @@ func (h *WaitingListHandler) handleClearWaitingList(w http.ResponseWriter, r *ht
 	user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 	if err != nil || user == nil {
 		log.Printf("Failed to get user by Firebase UID: %v", err)
-		utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+		respondWithError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
@@ -677,23 +679,23 @@ func (h *WaitingListHandler) handleClearWaitingList(w http.ResponseWriter, r *ht
 	hasPermission, err := h.userRepo.CheckStorePermission(user.ID, storeID, user.Role, "")
 	if err != nil {
 		log.Printf("Failed to check user permission: %v", err)
-		utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+		respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 		return
 	}
 	if !hasPermission {
 		log.Printf("User %s does not have permission for store %s", user.ID.Hex(), storeID)
-		utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
+		respondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
 		return
 	}
 
 	// - 待機リストをクリア
 	if err := h.waitingRepo.ClearList(storeID); err != nil {
 		log.Printf("Failed to clear waiting list: %v", err)
-		utils.RespondWithError(w, "Failed to clear waiting list", http.StatusInternalServerError)
+		respondWithError(w, "Failed to clear waiting list", http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
+	respondWithJSON(w, map[string]string{"message": "Waiting list cleared successfully"}, http.StatusOK)
 	h.notifyStore(storeID)
 }
 
@@ -707,7 +709,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 
 	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
 		log.Printf("Error decoding request body: %v", err)
-		utils.RespondWithError(w, "Invalid request body", http.StatusBadRequest)
+		respondWithError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -717,7 +719,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 	if authHeader == "" {
 		// - キャンセル以外の操作は認証が必要
 		if updateRequest.Status != "cancelled" {
-			utils.RespondWithError(w, "Authorization header is required", http.StatusUnauthorized)
+			respondWithError(w, "Authorization header is required", http.StatusUnauthorized)
 			return
 		}
 		// - status == "cancelled" の場合は認証スキップ (ゲストによるキャンセル)
@@ -726,7 +728,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 		idToken := authHeader[len("Bearer "):]
 		firebaseUID, err := h.authSvc.VerifyIDToken(r.Context(), idToken)
 		if err != nil {
-			utils.RespondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
+			respondWithError(w, "Invalid or expired token", http.StatusUnauthorized)
 			return
 		}
 
@@ -734,7 +736,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 		user, err := h.userRepo.GetByFirebaseUID(firebaseUID)
 		if err != nil || user == nil {
 			log.Printf("Failed to get user by Firebase UID: %v", err)
-			utils.RespondWithError(w, "User not found", http.StatusUnauthorized)
+			respondWithError(w, "User not found", http.StatusUnauthorized)
 			return
 		}
 
@@ -747,12 +749,12 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 		hasPermission, err := h.userRepo.CheckStorePermission(user.ID, updateRequest.StoreID, user.Role, "")
 		if err != nil {
 			log.Printf("Failed to check user permission: %v", err)
-			utils.RespondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
+			respondWithError(w, "Failed to verify permissions", http.StatusInternalServerError)
 			return
 		}
 		if !hasPermission {
 			log.Printf("User %s does not have permission for store %s", user.ID.Hex(), updateRequest.StoreID)
-			utils.RespondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
+			respondWithError(w, "この店舗の待機リストを管理する権限がありません。", http.StatusForbidden)
 			return
 		}
 	}
@@ -766,7 +768,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 		"no_show":   true,
 	}
 	if !validStatuses[updateRequest.Status] {
-		utils.RespondWithError(w, "Invalid status value", http.StatusBadRequest)
+		respondWithError(w, "Invalid status value", http.StatusBadRequest)
 		return
 	}
 
@@ -777,7 +779,7 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 		return
 	}
 
-	utils.RespondWithJSON(w, map[string]string{
+	respondWithJSON(w, map[string]string{
 		"message": "Status updated successfully",
 		"status":  updateRequest.Status,
 	}, http.StatusOK)
@@ -788,13 +790,13 @@ func (h *WaitingListHandler) handleUpdateWaitingStatus(w http.ResponseWriter, r 
 func (h *WaitingListHandler) handleGetAverageWaitingTime(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
 	avgSec, err := h.waitingRepo.GetAverageWaitingTime(storeID)
 	if err != nil {
-		utils.RespondWithError(w, "Failed to calculate average waiting time", http.StatusInternalServerError)
+		respondWithError(w, "Failed to calculate average waiting time", http.StatusInternalServerError)
 		return
 	}
 
@@ -809,7 +811,7 @@ func (h *WaitingListHandler) handleGetAverageWaitingTime(w http.ResponseWriter, 
 		}
 	}
 
-	utils.RespondWithJSON(w, models.AverageWaitingTimeResponse{
+	respondWithJSON(w, models.AverageWaitingTimeResponse{
 		AverageSeconds: avgSec,
 		AverageText:    avgText,
 	}, http.StatusOK)
@@ -819,7 +821,7 @@ func (h *WaitingListHandler) handleGetAverageWaitingTime(w http.ResponseWriter, 
 func (h *WaitingListHandler) handleGetQRToken(w http.ResponseWriter, r *http.Request) {
 	storeID := r.URL.Query().Get("store_id")
 	if storeID == "" {
-		utils.RespondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
+		respondWithError(w, "Missing store_id parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -829,7 +831,7 @@ func (h *WaitingListHandler) handleGetQRToken(w http.ResponseWriter, r *http.Req
 	settings, err := h.storeRepo.GetSettings(storeID)
 	if err != nil || boardKey == "" || settings.BoardKey == nil ||
 		subtle.ConstantTimeCompare([]byte(boardKey), []byte(*settings.BoardKey)) != 1 {
-		utils.RespondWithError(w, "Invalid board_key", http.StatusForbidden)
+		respondWithError(w, "Invalid board_key", http.StatusForbidden)
 		return
 	}
 
@@ -839,9 +841,9 @@ func (h *WaitingListHandler) handleGetQRToken(w http.ResponseWriter, r *http.Req
 	businessDate := h.waitingRepo.GetBusinessDayCutoff(storeID, now)
 	dateStr := businessDate.Format("20060102")
 
-	token := utils.GenerateHMACDateToken(storeID, dateStr)
+	token := auth.GenerateHMACDateToken(storeID, dateStr)
 
-	utils.RespondWithJSON(w, map[string]string{
+	respondWithJSON(w, map[string]string{
 		"v_token": token,
 		"date":    dateStr,
 	}, http.StatusOK)

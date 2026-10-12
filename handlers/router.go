@@ -26,6 +26,8 @@ func RegisterRoutes(
 	adminHandler *StoreInfoAdminHandler,
 	storeLicenseCallHandler *StoreLicenseCallHandler,
 	statisticsHandler *StatisticsHandler,
+	signUpHandler *SignUpHandler,
+	adminMetricsHandler *AdminMetricsHandler,
 ) {
 	// ローカルファイルアップロードの静的ファイルサービングを設定
 	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
@@ -66,14 +68,14 @@ func RegisterRoutes(
 	api.HandleFunc("/provider_store", storeInfoHandler.GetStoreHandler).Methods("GET", "OPTIONS")
 
 	// - 会員登録・重複チェックはログイン前に呼ばれるため認証・セッションともに不要
-	api.HandleFunc("/auth/signup", SignUpHandler)
-	api.HandleFunc("/auth/check-store", StoreExistsHandler)
-	api.HandleFunc("/auth/check-email", EmailCheckHandler)
-	api.HandleFunc("/auth/check-phone", PhoneCheckHandler)
+	api.HandleFunc("/auth/signup", signUpHandler.SignUp)
+	api.HandleFunc("/auth/check-store", signUpHandler.StoreExists)
+	api.HandleFunc("/auth/check-email", signUpHandler.EmailCheck)
+	api.HandleFunc("/auth/check-phone", signUpHandler.PhoneCheck)
 
 	// - 会員登録直後(セッション確立前)の店舗作成・参加・営業許可証アップロード。
 	//   Firebase認証はハンドラ内で行うが、セッション検証を課すと登録フローが成立しないため対象外
-	api.HandleFunc("/stores/add", AddNewStoreHandler)
+	api.HandleFunc("/stores/add", signUpHandler.AddNewStore)
 	api.HandleFunc("/stores/join", storeStaffHandler.JoinStoreHandler)
 	api.HandleFunc("/stores/upload-license", uploadHandler.UploadLicense)
 
@@ -100,16 +102,16 @@ func RegisterRoutes(
 	adminApi.HandleFunc("/stores", adminHandler.GetStoresHandler)
 	adminApi.HandleFunc("/stores/{storeId}/status", adminHandler.UpdateStoreStatusHandler).Methods("PATCH", "OPTIONS")
 	adminApi.HandleFunc("/license-image-url", uploadHandler.GetLicenseImageURLHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/errors", GetErrorMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/error-logs", GetErrorLogsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/requests", GetRequestMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/request-logs", GetRequestLogsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/active-users", GetActiveUserMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/errors", adminMetricsHandler.GetErrorMetrics).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/error-logs", adminMetricsHandler.GetErrorLogs).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/requests", adminMetricsHandler.GetRequestMetrics).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/request-logs", adminMetricsHandler.GetRequestLogs).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/active-users", adminMetricsHandler.GetActiveUserMetrics).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/sse-status", GetSSEMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/response-time", GetResponseTimeMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/audit-logs", GetAuditLogsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/response-time", adminMetricsHandler.GetResponseTimeMetrics).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/audit-logs", adminMetricsHandler.GetAuditLogs).Methods("GET", "OPTIONS")
 	adminApi.HandleFunc("/metrics/system", GetSystemMetricsHandler).Methods("GET", "OPTIONS")
-	adminApi.HandleFunc("/metrics/db", GetDBMetricsHandler).Methods("GET", "OPTIONS")
+	adminApi.HandleFunc("/metrics/db", adminMetricsHandler.GetDBMetrics).Methods("GET", "OPTIONS")
 
 	// ============================================================
 	// 点主アプリ専用ルート (Firebase認証 + 端末セッション検証)

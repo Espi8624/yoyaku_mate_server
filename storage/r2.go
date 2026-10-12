@@ -1,4 +1,6 @@
-package data
+// Package storage はファイルストレージ(Cloudflare R2、S3互換API)へのアクセスを扱う。
+// R2未設定時(S3Client == nil)はローカルディスクの ./uploads へ保存するフォールバックで動く
+package storage
 
 import (
 	"context"
@@ -12,11 +14,53 @@ import (
 	"yoyaku_mate_server/config"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 )
 
-func (c *MinioClient) UploadFile(bucketName, publicDomain string, file multipart.File, header *multipart.FileHeader) (string, error) {
+// Client R2(S3互換)クライアント
+type Client struct {
+	S3Client *s3.Client
+	Bucket   string
+	Endpoint string
+}
+
+// NewClient R2(S3互換)クライアントを作成して初期化する
+func NewClient(endpoint, accessKey, secretKey, bucket string) (*Client, error) {
+	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+		return aws.Endpoint{
+			URL:           endpoint,
+			SigningRegion: "us-east-1", // MinIO uses a single region
+			PartitionID:   "aws",
+			Source:        aws.EndpointSourceCustom,
+		}, nil
+	})
+
+	creds := credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithEndpointResolverWithOptions(resolver),
+		awsconfig.WithCredentialsProvider(creds),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load s3 config: %w", err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true // MinIO uses path-style requests
+	})
+
+	return &Client{
+		S3Client: s3Client,
+		Bucket:   bucket,
+		Endpoint: endpoint,
+	}, nil
+}
+
+// UploadFile ファイルをバケットへアップロードする (R2未設定時はローカル保存)
+func (c *Client) UploadFile(bucketName, publicDomain string, file multipart.File, header *multipart.FileHeader) (string, error) {
 	// ファイル名衝突を回避するため、ユニークなファイル名を生成
 	uniqueFileName := uuid.New().String() + filepath.Ext(header.Filename)
 
@@ -81,7 +125,7 @@ func (c *MinioClient) UploadFile(bucketName, publicDomain string, file multipart
 }
 
 // 非公開バケット内のオブジェクトに対する一時的なアクセスURLを生成
-func (c *MinioClient) GetPresignedURL(bucketName, objectKey string) (string, error) {
+func (c *Client) GetPresignedURL(bucketName, objectKey string) (string, error) {
 	// - R2(S3互換)クライアントが設定されている場合は署名付きURLを発行する
 	if c.S3Client != nil {
 		presignClient := s3.NewPresignClient(c.S3Client)

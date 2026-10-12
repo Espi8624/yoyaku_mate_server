@@ -5,10 +5,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"yoyaku_mate_server/data"
 	"yoyaku_mate_server/metrics"
 	"yoyaku_mate_server/models"
-	"yoyaku_mate_server/utils"
+	"yoyaku_mate_server/safego"
+	"yoyaku_mate_server/storage"
 
 	"github.com/gorilla/mux"
 )
@@ -24,10 +24,15 @@ type UploadStoreRepository interface {
 	UpdateLicenseInfoAfterUpload(storeID string, imageURL string) (*models.StoreLicense, error)
 }
 
-// UploadHandler は Minio クライアントを依存関係として持つ
+// UploadMenuRepository メニュー画像更新を抽象化するインターフェース
+type UploadMenuRepository interface {
+	UpdateMenuImageURL(menuID string, imageURL string) (*models.MenuList, error)
+}
+
+// UploadHandler はストレージクライアント(R2)を依存関係として持つ
 type UploadHandler struct {
-	Minio              *data.MinioClient
-	MenuRepo           data.MenuRepository
+	Storage            *storage.Client
+	MenuRepo           UploadMenuRepository
 	UserRepo           UploadUserRepository
 	StoreRepo          UploadStoreRepository
 	AuthSvc            AuthService
@@ -39,9 +44,9 @@ type UploadHandler struct {
 }
 
 // ハンドラ初期化
-func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
+func NewUploadHandler(storageClient *storage.Client, menuRepo UploadMenuRepository, userRepo UploadUserRepository, storeRepo UploadStoreRepository, authSvc AuthService, assetsBucket, assetsPublicDomain, bizBucket, slackWebhookURL string) *UploadHandler {
 	return &UploadHandler{
-		Minio:              minio,
+		Storage:            storageClient,
 		MenuRepo:           menuRepo,
 		UserRepo:           userRepo,
 		StoreRepo:          storeRepo,
@@ -56,42 +61,42 @@ func NewUploadHandler(minio *data.MinioClient, menuRepo data.MenuRepository, use
 // 営業許可証のアップロードリクエストを処理
 func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+	if h.Storage == nil {
+		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		utils.RespondWithError(w, "Invalid request method", http.StatusMethodNotAllowed)
+		respondWithError(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// formData をパース (最大 10MB)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		respondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 
 	// formData から 'storeId' を取得
 	storeID := r.FormValue("storeId")
 	if storeID == "" {
-		utils.RespondWithError(w, "Invalid storeId", http.StatusBadRequest)
+		respondWithError(w, "Invalid storeId", http.StatusBadRequest)
 		return
 	}
 
 	// formData から 'licenseImage' ファイルを取得
 	file, header, err := r.FormFile("licenseImage")
 	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file", http.StatusBadRequest)
+		respondWithError(w, "Could not get uploaded file", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileKey, err := h.Minio.UploadFile(h.BizBucketName, "", file, header)
+	fileKey, err := h.Storage.UploadFile(h.BizBucketName, "", file, header)
 	if err != nil {
 		log.Printf("Error uploading file: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
 
@@ -99,7 +104,7 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 	updatedLicense, err := h.StoreRepo.UpdateLicenseInfoAfterUpload(storeID, fileKey)
 	if err != nil {
 		log.Printf("Error updating database: %v", err)
-		utils.RespondWithError(w, "Could not update store information", http.StatusInternalServerError)
+		respondWithError(w, "Could not update store information", http.StatusInternalServerError)
 		return
 	}
 
@@ -108,18 +113,18 @@ func (h *UploadHandler) UploadLicense(w http.ResponseWriter, r *http.Request) {
 		":clipboard: 新しい営業許可証の承認リクエストが届きました\n店舗ID: %s\n管理画面のLicense Approvalから確認してください。",
 		storeID,
 	)
-	utils.Go("slack_license_request_notify", func() {
+	safego.Go("slack_license_request_notify", func() {
 		metrics.SendSlackMessage(h.SlackWebhookURL, slackMessage)
 	})
 
 	// REST 標準: POST レスポンスに更新後のリソースを返却 (200 OK)
-	utils.RespondWithJSON(w, updatedLicense, http.StatusOK)
+	respondWithJSON(w, updatedLicense, http.StatusOK)
 }
 
 func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+	if h.Storage == nil {
+		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -129,22 +134,22 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 
 	// 'menuImage'ファイルをマルチパートフォームから取得
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		respondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 
 	file, header, err := r.FormFile("menuImage")
 	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'menuImage'", http.StatusBadRequest)
+		respondWithError(w, "Could not get uploaded file named 'menuImage'", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading file to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		log.Printf("Error uploading file to storage: %v", err)
+		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
 
@@ -152,55 +157,55 @@ func (h *UploadHandler) UploadMenuImage(w http.ResponseWriter, r *http.Request) 
 	updatedMenu, err := h.MenuRepo.UpdateMenuImageURL(menuId, fileURL)
 	if err != nil {
 		log.Printf("Error updating menu image URL in database: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, updatedMenu, http.StatusOK)
+	respondWithJSON(w, updatedMenu, http.StatusOK)
 }
 
 func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+	if h.Storage == nil {
+		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
 	// 認証情報取得と検証
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		utils.RespondWithError(w, "Unauthorized: Authorization header not found", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized: Authorization header not found", http.StatusUnauthorized)
 		return
 	}
 
 	idToken := strings.TrimPrefix(authHeader, "Bearer ")
 	if idToken == authHeader {
-		utils.RespondWithError(w, "Unauthorized: Invalid token format", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized: Invalid token format", http.StatusUnauthorized)
 		return
 	}
 
 	firebaseUID, err := h.AuthSvc.VerifyIDToken(r.Context(), idToken)
 	if err != nil {
-		utils.RespondWithError(w, "Unauthorized: Invalid ID token", http.StatusUnauthorized)
+		respondWithError(w, "Unauthorized: Invalid ID token", http.StatusUnauthorized)
 		return
 	}
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		respondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("userImage")
 	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'userImage'", http.StatusBadRequest)
+		respondWithError(w, "Could not get uploaded file named 'userImage'", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading user to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		log.Printf("Error uploading user to storage: %v", err)
+		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
 
@@ -208,17 +213,17 @@ func (h *UploadHandler) UploadUserImage(w http.ResponseWriter, r *http.Request) 
 	updatedUser, err := h.UserRepo.UpdateUserImageURL(firebaseUID, fileURL)
 	if err != nil {
 		log.Printf("Error updating user image URL in DB: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, updatedUser, http.StatusOK)
+	respondWithJSON(w, updatedUser, http.StatusOK)
 }
 
 func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request) {
 	// ストレージクライアントの初期化確認
-	if h.Minio == nil {
-		utils.RespondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
+	if h.Storage == nil {
+		respondWithError(w, "Storage service is not configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -228,21 +233,21 @@ func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request)
 
 	// 'storeImage'ファイルをマルチパートフォームから取得
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		utils.RespondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
+		respondWithError(w, "Could not parse multipart form", http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("storeImage")
 	if err != nil {
-		utils.RespondWithError(w, "Could not get uploaded file named 'storeImage'", http.StatusBadRequest)
+		respondWithError(w, "Could not get uploaded file named 'storeImage'", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	// MinIOにアップロード
-	fileURL, err := h.Minio.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
+	fileURL, err := h.Storage.UploadFile(h.AssetsBucketName, h.AssetsPublicDomain, file, header)
 	if err != nil {
-		log.Printf("Error uploading store image to Minio: %v", err)
-		utils.RespondWithError(w, "Could not upload file", http.StatusInternalServerError)
+		log.Printf("Error uploading store image to storage: %v", err)
+		respondWithError(w, "Could not upload file", http.StatusInternalServerError)
 		return
 	}
 
@@ -250,9 +255,9 @@ func (h *UploadHandler) UploadStoreImage(w http.ResponseWriter, r *http.Request)
 	updatedStore, err := h.StoreRepo.UpdateStoreImageURL(storeId, fileURL)
 	if err != nil {
 		log.Printf("Error updating store image URL in DB: %v", err)
-		utils.RespondWithError(w, err.Error(), http.StatusInternalServerError)
+		respondWithError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	utils.RespondWithJSON(w, updatedStore, http.StatusOK)
+	respondWithJSON(w, updatedStore, http.StatusOK)
 }
